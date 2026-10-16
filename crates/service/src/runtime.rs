@@ -59,6 +59,7 @@ impl Runtime {
         let handler = Arc::new(ControlHandler {
             sas: opts.sas.clone(),
             helper: shared.helper.clone(),
+            cable_mic: shared.cable_mic.clone(),
         });
         tokio.spawn(pipe_server::serve(
             opts.control_pipe.clone(),

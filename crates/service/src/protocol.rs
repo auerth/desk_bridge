@@ -1,7 +1,8 @@
 //! Wire protocol of the two service pipes (portable, no OS calls).
 //!
 //! * `\\.\pipe\deskbridge-helper`  agent -> secure-desktop helper: input injection
-//! * `\\.\pipe\deskbridge-service` agent -> service: `ping`, `send_sas`, `helper_status`
+//! * `\\.\pipe\deskbridge-service` agent -> service: `ping`, `send_sas`, `helper_status`,
+//!   `cable_mic`
 //!
 //! Framing: `u16` little-endian payload length, then the payload; `payload[0]` is the tag and the
 //! remaining bytes are fixed-size little-endian fields. Injection requests are fire-and-forget (no
@@ -29,6 +30,12 @@ pub enum Request {
     SendSas,
     /// State of the secure-desktop helper (service pipe only).
     HelperStatus,
+    /// Enable/disable the virtual cable microphone (service pipe only). `managed`: the service
+    /// keeps it disabled while the agent is not running; `false` hands it back enabled.
+    CableMic {
+        enabled: bool,
+        managed: bool,
+    },
     /// Key by USB HID usage (helper pipe only from here on).
     Key {
         hid: u16,
@@ -59,7 +66,10 @@ impl Request {
     /// Injection commands are fire-and-forget.
     #[must_use]
     pub fn expects_response(&self) -> bool {
-        matches!(self, Self::Ping | Self::SendSas | Self::HelperStatus)
+        matches!(
+            self,
+            Self::Ping | Self::SendSas | Self::HelperStatus | Self::CableMic { .. }
+        )
     }
 
     /// True for the commands that inject input (served by the helper only).
@@ -150,6 +160,7 @@ mod tag {
     pub const PING: u8 = 0x01;
     pub const SEND_SAS: u8 = 0x02;
     pub const HELPER_STATUS: u8 = 0x03;
+    pub const CABLE_MIC: u8 = 0x04;
     pub const KEY: u8 = 0x10;
     pub const MOUSE_REL: u8 = 0x11;
     pub const MOUSE_ABS: u8 = 0x12;
@@ -223,6 +234,11 @@ impl Request {
             Self::Ping => p.push(tag::PING),
             Self::SendSas => p.push(tag::SEND_SAS),
             Self::HelperStatus => p.push(tag::HELPER_STATUS),
+            Self::CableMic { enabled, managed } => {
+                p.push(tag::CABLE_MIC);
+                p.push(u8::from(enabled));
+                p.push(u8::from(managed));
+            }
             Self::Key { hid, down } => {
                 p.push(tag::KEY);
                 p.extend_from_slice(&hid.to_le_bytes());
@@ -266,6 +282,10 @@ impl Request {
             tag::PING => Self::Ping,
             tag::SEND_SAS => Self::SendSas,
             tag::HELPER_STATUS => Self::HelperStatus,
+            tag::CABLE_MIC => Self::CableMic {
+                enabled: r.bool()?,
+                managed: r.bool()?,
+            },
             tag::KEY => Self::Key {
                 hid: r.u16()?,
                 down: r.bool()?,
@@ -414,6 +434,10 @@ mod tests {
             Request::Ping,
             Request::SendSas,
             Request::HelperStatus,
+            Request::CableMic {
+                enabled: true,
+                managed: false,
+            },
             Request::Key {
                 hid: 0x04,
                 down: true,
@@ -474,7 +498,10 @@ mod tests {
     #[test]
     fn injection_is_fire_and_forget() {
         for r in all_requests() {
-            let control = matches!(r, Request::Ping | Request::SendSas | Request::HelperStatus);
+            let control = matches!(
+                r,
+                Request::Ping | Request::SendSas | Request::HelperStatus | Request::CableMic { .. }
+            );
             assert_eq!(r.expects_response(), control, "{r:?}");
             assert_eq!(r.is_injection(), !control);
         }

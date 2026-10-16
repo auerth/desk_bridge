@@ -830,6 +830,9 @@ impl Engine {
             self.dirty = true;
         }
 
+        if self.tick_count.is_multiple_of(8) {
+            self.report_mic_stats();
+        }
         if let Some(s) = &mut self.session {
             // heartbeat every 500 ms
             if self.tick_count.is_multiple_of(2) {

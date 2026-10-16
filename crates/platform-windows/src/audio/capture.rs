@@ -27,9 +27,10 @@ const MAX_CHUNK_FRAMES: usize = (RATE / 100) as usize;
 const WAIT_MS: u32 = 10;
 /// Loopback produces nothing while the render endpoint is idle; fill after this much silence.
 const SILENCE_AFTER_US: u64 = 20_000;
-/// Mixed loopback: an output joins the mix once this much of it is buffered (absorbs packet
-/// jitter between the endpoints).
-const MIX_PREBUF_FRAMES: usize = 720;
+/// Mixed loopback: an output joins the mix once this much of it is buffered beyond the chunk
+/// being mixed (absorbs wake-up jitter; the engine delivers loopback packets every 10 ms very
+/// regularly, so 5 ms is enough and keeps the added latency small).
+const MIX_PREBUF_FRAMES: usize = 240;
 /// Mixed loopback: an output whose backlog grows beyond this (clock drift) is trimmed back.
 const MIX_MAX_BACKLOG_FRAMES: usize = 2_400;
 /// Mixed loopback: smallest chunk emitted per wake-up (5 ms).
@@ -478,6 +479,45 @@ mod tests {
     use crate::audio::WasapiDevices;
     use deskbridge_platform::audio::AudioDevices;
     use std::time::{Duration, Instant};
+
+    /// Manual diagnostics (`--ignored --nocapture`): packet cadence of the default
+    /// communications microphone. Only counts frames and gaps; no audio is kept.
+    #[test]
+    #[ignore = "manual: records the default microphone for 4 s"]
+    fn mic_capture_timing() {
+        let (tx, mut rx) = deskbridge_platform::unbounded_channel();
+        let handle = WasapiCapture::new()
+            .start(CaptureSource::Microphone(None), tx)
+            .expect("microphone");
+        let t0 = Instant::now();
+        let mut arrivals = Vec::new();
+        while t0.elapsed() < Duration::from_secs(4) {
+            while let Ok(f) = rx.try_recv() {
+                arrivals.push((t0.elapsed(), f.samples.len(), f.ts_us));
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        drop(handle);
+        let frames: usize = arrivals.iter().map(|a| a.1).sum();
+        let mut max_gap = Duration::ZERO;
+        let mut ts_backwards = 0;
+        for w in arrivals.windows(2) {
+            max_gap = max_gap.max(w[1].0 - w[0].0);
+            if w[1].2 < w[0].2 {
+                ts_backwards += 1;
+            }
+        }
+        let sizes: std::collections::BTreeMap<usize, usize> =
+            arrivals.iter().fold(Default::default(), |mut m, a| {
+                *m.entry(a.1).or_default() += 1;
+                m
+            });
+        eprintln!(
+            "frames={frames} (expected ~{}), chunks={}, sizes={sizes:?}, max_gap={max_gap:?}, ts_backwards={ts_backwards}",
+            48_000 * 4,
+            arrivals.len()
+        );
+    }
 
     /// Device-dependent and silent: the default loopback mixes every real output and must keep a
     /// steady ~100 frames/s cadence with monotonic timestamps even while all outputs are idle.

@@ -124,6 +124,19 @@ pub trait VirtualAudio: Send + Sync {
         ))
     }
     fn mic_in_use(&self) -> bool;
+    /// Diagnostics: how the microphone is played into the virtual device (stream, formats).
+    fn mic_output_info(&self) -> Option<String> {
+        None
+    }
+    /// Enables or disables the virtual microphone endpoint (like "Disable" in the Sound control
+    /// panel), so apps fall back to another microphone while Desk Bridge does not feed it.
+    /// `managed`: Desk Bridge owns the state and keeps the endpoint off while it is not running;
+    /// `false` hands it back (left enabled).
+    fn set_mic_enabled(&self, _enabled: bool, _managed: bool) -> Result<()> {
+        Err(crate::PlatformError::Unsupported(
+            "virtual microphone switching",
+        ))
+    }
     fn watch_mic_in_use(&self, tx: UnboundedSender<MicUsage>) -> Result<()>;
     /// Makes the virtual microphone the system default recording device (all roles). Returns the
     /// defaults it replaced.

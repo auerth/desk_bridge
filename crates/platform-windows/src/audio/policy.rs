@@ -131,6 +131,20 @@ pub fn set_default_device(device_id: &str, role: DefaultRole) -> Result<()> {
     Ok(())
 }
 
+/// Enables or disables an endpoint, like "Disable" / "Enable" in the Sound control panel. A
+/// disabled endpoint disappears from every application's device list.
+///
+/// This changes a system setting; only call it behind an explicit user opt-in.
+pub fn set_endpoint_enabled(device_id: &str, enabled: bool) -> Result<()> {
+    let _com = ComGuard::init();
+    let h = HSTRING::from(device_id);
+    let policy = policy_config().map_err(|e| os_ctx("create IPolicyConfig", e))?;
+    // SAFETY: `h` is a valid NUL-terminated id; `policy` is a live COM object.
+    unsafe { policy.SetEndpointVisibility(PCWSTR(h.as_ptr()), BOOL::from(enabled)) }
+        .ok()
+        .map_err(|e| os_ctx("SetEndpointVisibility", e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

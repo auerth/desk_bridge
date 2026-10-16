@@ -31,13 +31,13 @@ mod stream;
 pub mod util;
 mod wasapi;
 
-pub use cable::CableVirtualAudio;
+pub use cable::{CableVirtualAudio, MicEndpointSwitch, cable_mic_endpoint, set_cable_mic_enabled};
 pub use capture::{CaptureHandle, WasapiCapture};
 pub use devices::{
     DeviceDetails, EndpointVolume, WasapiDevices, WinLocalOutput, endpoint_volume, set_render_mute,
 };
 pub use playback::{PlaybackHandle, PlaybackInfo, WasapiPlayback};
-pub use policy::{DefaultRole, policy_config_available, set_default_device};
+pub use policy::{DefaultRole, policy_config_available, set_default_device, set_endpoint_enabled};
 pub use sessions::{MicSession, mic_session_enumeration};
 pub use stream::StreamEvent;
 

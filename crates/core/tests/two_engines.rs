@@ -505,18 +505,20 @@ async fn microphone_flows_only_while_the_laptop_uses_it() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn virtual_mic_is_the_laptop_default_only_while_the_headset_mic_is_on() {
+async fn virtual_mic_is_enabled_and_default_only_while_the_headset_mic_is_on() {
     use std::sync::atomic::Ordering::SeqCst;
     let pc = node("PC", true, 2560, 1440).await;
     let lp = node("Laptop", false, 1920, 1080).await;
     lp.m.virtual_audio.available.store(true, SeqCst);
     let (pc, lp) = connect_nodes(pc, lp).await;
-    wait_for("virtual mic becomes the default", || {
-        lp.m.virtual_audio.default_claimed.load(SeqCst)
+    let va = &lp.m.virtual_audio;
+    let state = || (*va.mic_endpoint.lock(), va.default_claimed.load(SeqCst));
+    wait_for("virtual mic enabled and default", || {
+        state() == (Some((true, true)), true)
     })
     .await;
 
-    // Mic switched off in the software → the laptop gets its own microphone back.
+    // Mic switched off in the software: the laptop gets its own microphone back.
     let mut cfg: deskbridge_core::config::Config =
         serde_json::from_value(pc.h.request(UiRequest::GetConfig).await.unwrap()).unwrap();
     cfg.audio.mic_to_laptop.enabled = false;
@@ -525,25 +527,38 @@ async fn virtual_mic_is_the_laptop_default_only_while_the_headset_mic_is_on() {
     })
     .await
     .unwrap();
-    wait_for("previous default restored", || {
-        !lp.m.virtual_audio.default_claimed.load(SeqCst)
+    wait_for("virtual mic disabled, default restored", || {
+        state() == (Some((false, true)), false)
+    })
+    .await;
+
+    // "Set as default" off: the endpoint is handed back enabled and left alone.
+    cfg.audio.mic_to_laptop.set_as_default = false;
+    pc.h.request(UiRequest::SetConfig {
+        config: Box::new(cfg.clone()),
+    })
+    .await
+    .unwrap();
+    wait_for("virtual mic unmanaged", || {
+        state() == (Some((true, false)), false)
     })
     .await;
 
     cfg.audio.mic_to_laptop.enabled = true;
+    cfg.audio.mic_to_laptop.set_as_default = true;
     pc.h.request(UiRequest::SetConfig {
         config: Box::new(cfg),
     })
     .await
     .unwrap();
-    wait_for("virtual mic default again", || {
-        lp.m.virtual_audio.default_claimed.load(SeqCst)
+    wait_for("virtual mic managed again", || {
+        state() == (Some((true, true)), true)
     })
     .await;
 
     pc.h.stop(); // connection gone
-    wait_for("default restored on disconnect", || {
-        !lp.m.virtual_audio.default_claimed.load(SeqCst)
+    wait_for("disabled on disconnect", || {
+        state() == (Some((false, true)), false)
     })
     .await;
     lp.h.stop();

@@ -1144,6 +1144,7 @@ dependencies = [
  "deskbridge-platform",
  "deskbridge-platform-windows",
  "parking_lot",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-appender",

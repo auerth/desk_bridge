@@ -17,6 +17,8 @@ pub mod cli;
 pub mod protocol;
 
 #[cfg(windows)]
+pub mod cable_mic;
+#[cfg(windows)]
 pub mod client;
 #[cfg(windows)]
 pub mod control;

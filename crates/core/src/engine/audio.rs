@@ -68,12 +68,21 @@ pub(crate) struct AudioState {
     /// Virtual microphone stream clocked by the device (preferred over the writer thread).
     mic_playback: Option<Box<dyn StreamHandle>>,
     mic_watch_started: bool,
-    /// Laptop: the headset side asks for the virtual mic to be the default recording device.
+    /// Laptop: the headset microphone is switched on (route from the headset side).
     mic_route_wanted: bool,
+    /// Laptop: the headset side wants the virtual mic managed (on/off + default); `None` until the
+    /// first route arrived. Kept across disconnects.
+    mic_manage: Option<bool>,
+    /// Laptop: last state handed to `set_mic_enabled`: `(enabled, managed)`.
+    mic_endpoint: Option<(bool, bool)>,
     /// Laptop: the defaults the virtual mic replaced (restored when the route ends).
     mic_default_prev: Option<MicDefaults>,
-    /// PC: last `MicToLaptop` route sent to the laptop.
-    mic_route_sent: Option<bool>,
+    /// PC: last `MicToLaptop` route sent to the laptop: `(enabled, manage_device)`.
+    mic_route_sent: Option<(bool, bool)>,
+    /// Laptop: packet count at the last microphone stats report.
+    mic_stats_packets: u64,
+    /// PC: last microphone playout report of the laptop.
+    mic_stats: Option<pb::MicStats>,
     tone: Option<Box<dyn StreamHandle>>,
 }
 
@@ -263,6 +272,7 @@ impl Engine {
                 .send_control(pb::control::Msg::AudioRoute(pb::AudioRoute {
                     stream: stream as i32,
                     enabled,
+                    manage_device: false,
                 }));
         }
     }
@@ -374,11 +384,14 @@ impl Engine {
         if !va.available() || !self.peer_has_cap(deskbridge_proto::caps::AUDIO_HEADSET) {
             return;
         }
+        // The laptop is often on Wi-Fi, where downlink packets can arrive in bursts: allow the
+        // buffer to grow further than towards the PC instead of running dry again and again
+        // (it only grows when the measured jitter demands it and shrinks back slowly).
         let Ok(rx) = AudioReceiver::new(ReceiverConfig {
             channels_in: 1,
             wired: true,
             min_ms: 5.0,
-            max_ms: 60.0,
+            max_ms: 150.0,
         }) else {
             return;
         };
@@ -453,18 +466,41 @@ impl Engine {
         self.paths.data_dir.join("mic-default.json")
     }
 
-    /// Laptop: while the headset microphone is switched on (and "set as default" is chosen on the
-    /// headset side), the virtual microphone is the default recording device, so Teams & co.
-    /// follow it without manual switching. Otherwise (mic off, disconnected, agent stopped) the
-    /// previous defaults come back. The previous defaults are also kept on disk, so a crash cannot
-    /// leave the laptop on the virtual microphone.
+    /// Laptop: while the headset microphone is switched on, "CABLE Output" is enabled and the
+    /// default recording device, so Teams & co. use it. Otherwise (mic switched off, disconnected)
+    /// the previous defaults come back and the endpoint is disabled, so apps fall back to the
+    /// laptop's own microphone; while the agent is not running the service keeps it disabled.
+    /// Only with "set as default" on the headset side (`manage_device`); without it the endpoint
+    /// is left enabled and the defaults untouched. The previous defaults are also kept on disk,
+    /// so a crash cannot leave the laptop on the virtual microphone.
     pub(crate) fn sync_mic_default(&mut self) {
-        let want = self.session.is_some()
-            && self.cfg.device.stream_source
-            && self.audio.mic_route_wanted
-            && self.platform.virtual_audio.available();
-        if want && self.audio.mic_default_prev.is_none() {
-            match self.platform.virtual_audio.claim_default_mic() {
+        if !self.cfg.device.stream_source {
+            return;
+        }
+        let Some(manage) = self.audio.mic_manage else {
+            return;
+        };
+        let va = self.platform.virtual_audio.clone();
+        if !va.available() {
+            return;
+        }
+        let on = self.session.is_some() && self.audio.mic_route_wanted;
+        let claim = manage && on;
+        let endpoint = (!manage || on, manage);
+        if !claim && let Some(prev) = self.audio.mic_default_prev.take() {
+            if let Err(e) = va.release_default_mic(&prev) {
+                tracing::warn!("could not restore the default microphone: {e}");
+            }
+            let _ = std::fs::remove_file(self.mic_default_backup_file());
+        }
+        if self.audio.mic_endpoint != Some(endpoint) {
+            match va.set_mic_enabled(endpoint.0, endpoint.1) {
+                Ok(()) => self.audio.mic_endpoint = Some(endpoint),
+                Err(e) => tracing::warn!("could not switch the virtual microphone: {e}"),
+            }
+        }
+        if claim && self.audio.mic_default_prev.is_none() {
+            match va.claim_default_mic() {
                 Ok(prev) => {
                     let _ = std::fs::write(
                         self.mic_default_backup_file(),
@@ -478,12 +514,36 @@ impl Engine {
                 }
                 Err(e) => tracing::warn!("could not make the virtual mic the default: {e}"),
             }
-        } else if !want && let Some(prev) = self.audio.mic_default_prev.take() {
-            if let Err(e) = self.platform.virtual_audio.release_default_mic(&prev) {
-                tracing::warn!("could not restore the default microphone: {e}");
-            }
-            let _ = std::fs::remove_file(self.mic_default_backup_file());
         }
+    }
+
+    /// Laptop: every 2 s while the microphone stream flows, report its playout health to the
+    /// headset side (logged there, so problems on the laptop are visible on the PC).
+    pub(crate) fn report_mic_stats(&mut self) {
+        let (Some(rx), Some(s)) = (&self.audio.mic_rx, &self.session) else {
+            return;
+        };
+        let st = rx.stats();
+        if st.packets == self.audio.mic_stats_packets {
+            return;
+        }
+        self.audio.mic_stats_packets = st.packets;
+        s.link
+            .send_control(pb::control::Msg::MicStats(pb::MicStats {
+                fill_ms: st.fill_ms,
+                target_ms: st.target_ms,
+                jitter_ms: st.jitter_ms,
+                loss_pct: st.loss_pct,
+                underruns: st.underruns,
+                overruns: st.overruns,
+                plc: st.plc_count,
+                drift_ppm: st.drift_ppm,
+                output: self
+                    .platform
+                    .virtual_audio
+                    .mic_output_info()
+                    .unwrap_or_default(),
+            }));
     }
 
     pub(crate) fn on_mic_usage(&mut self, u: deskbridge_platform::audio::MicUsage) {
@@ -514,11 +574,21 @@ impl Engine {
         } else if !should && self.audio.mic_tx.is_some() {
             self.audio.mic_tx = None;
         }
-        // The laptop makes its virtual mic the default only while the headset mic is switched on.
-        let route = supported && cfg.enabled && cfg.set_as_default && !self.audio.mic_missing;
-        if self.audio.mic_route_sent != Some(route) {
+        // The laptop offers its virtual mic only while the headset mic is switched on and present.
+        let route = (
+            supported && cfg.enabled && !self.audio.mic_missing,
+            cfg.set_as_default,
+        );
+        if self.audio.mic_route_sent != Some(route)
+            && let Some(s) = &self.session
+        {
             self.audio.mic_route_sent = Some(route);
-            self.send_route(pb::Stream::MicToLaptop, route);
+            s.link
+                .send_control(pb::control::Msg::AudioRoute(pb::AudioRoute {
+                    stream: pb::Stream::MicToLaptop as i32,
+                    enabled: route.0,
+                    manage_device: route.1,
+                }));
         }
         self.dirty = true;
     }
@@ -602,6 +672,7 @@ impl Engine {
                 }
                 if r.stream == pb::Stream::MicToLaptop as i32 && self.cfg.device.stream_source {
                     self.audio.mic_route_wanted = r.enabled;
+                    self.audio.mic_manage = Some(r.manage_device);
                     self.sync_mic_default();
                 }
                 true
@@ -610,6 +681,31 @@ impl Engine {
                 self.audio.mic_in_use =
                     Some((m.in_use, (!m.process.is_empty()).then(|| m.process.clone())));
                 self.sync_mic_sender();
+                true
+            }
+            M::MicStats(m) => {
+                let glitches = |x: &pb::MicStats| x.underruns + x.overruns + x.plc;
+                let new = self
+                    .audio
+                    .mic_stats
+                    .as_ref()
+                    .map_or(u64::MAX, |p| glitches(m).saturating_sub(glitches(p)));
+                if new > 0 {
+                    tracing::info!(
+                        fill_ms = m.fill_ms,
+                        target_ms = m.target_ms,
+                        jitter_ms = m.jitter_ms,
+                        loss_pct = m.loss_pct,
+                        underruns = m.underruns,
+                        overruns = m.overruns,
+                        plc = m.plc,
+                        drift_ppm = m.drift_ppm,
+                        output = %m.output,
+                        "laptop microphone playout"
+                    );
+                }
+                self.audio.mic_stats = Some(m.clone());
+                self.dirty = true;
                 true
             }
             M::AudioCodec(c) => {
@@ -676,7 +772,9 @@ impl Engine {
     fn on_forwarded_output_event(&mut self, ev: &DeviceEvent) {
         let render = match ev {
             DeviceEvent::Added(d) => d.kind == DeviceKind::Render,
-            DeviceEvent::Removed { .. } => true,
+            // Render endpoint ids start with "{0.0.0.", capture ones with "{0.0.1." (the
+            // virtual microphone being switched off must not interrupt the laptop sound).
+            DeviceEvent::Removed { id } => !id.starts_with("{0.0.1."),
             DeviceEvent::DefaultChanged { kind, .. } => *kind == DeviceKind::Render,
         };
         if !render {
@@ -913,6 +1011,13 @@ impl Engine {
                     m.base.detail = Some(format!("Laptop nutzt dein Mikro ({name})"));
                 } else {
                     m.base.detail = Some("Laptop nutzt dein Mikro".into());
+                }
+                if let (Some(d), Some(st)) = (&mut m.base.detail, &self.audio.mic_stats) {
+                    d.push_str(&format!(
+                        " · Laptop-Puffer {:.0} ms, {} Aussetzer",
+                        st.fill_ms,
+                        st.underruns + st.overruns
+                    ));
                 }
             }
             m.device_missing = self.audio.mic_missing;

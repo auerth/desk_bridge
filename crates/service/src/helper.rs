@@ -45,10 +45,9 @@ impl Handler for HelperHandler {
                 version: PROTOCOL_VERSION,
                 pid: std::process::id(),
             }),
-            Request::SendSas | Request::HelperStatus => Some(Response::error(
-                ErrorCode::BadRequest,
-                "not served by the helper pipe",
-            )),
+            Request::SendSas | Request::HelperStatus | Request::CableMic { .. } => Some(
+                Response::error(ErrorCode::BadRequest, "not served by the helper pipe"),
+            ),
             injection => {
                 // A closed channel means the worker died; the helper process is restarted by the
                 // service, nothing sensible to answer for fire-and-forget commands.
@@ -125,7 +124,7 @@ pub fn apply(inj: &dyn InputInjector, req: &Request) {
         Request::Button { button, down } => inj.button(button, down),
         Request::Wheel { dx, dy } => inj.wheel(dx, dy),
         Request::ReleaseAll => inj.release_all(),
-        Request::Ping | Request::SendSas | Request::HelperStatus => {}
+        Request::Ping | Request::SendSas | Request::HelperStatus | Request::CableMic { .. } => {}
     }
 }
 

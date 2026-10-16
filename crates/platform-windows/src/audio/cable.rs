@@ -28,6 +28,99 @@ use std::time::Duration;
 
 const RENDER_NAME: &str = "CABLE Input";
 const CAPTURE_NAME: &str = "CABLE Output";
+
+/// The cable's capture endpoint ("CABLE Output") as `(id, enabled)`, also found while it is
+/// disabled.
+#[must_use]
+pub fn cable_mic_endpoint() -> Option<(String, bool)> {
+    use super::wasapi::{ComGuard, device_id, enumerator};
+    use windows::Win32::Media::Audio::{
+        DEVICE_STATE, DEVICE_STATE_ACTIVE, DEVICE_STATE_DISABLED, eCapture,
+    };
+    let _com = ComGuard::init();
+    let en = enumerator().ok()?;
+    // SAFETY: standard enumeration; the collection and devices are released on drop.
+    unsafe {
+        let coll = en
+            .EnumAudioEndpoints(
+                eCapture,
+                DEVICE_STATE(DEVICE_STATE_ACTIVE.0 | DEVICE_STATE_DISABLED.0),
+            )
+            .ok()?;
+        for i in 0..coll.GetCount().ok()? {
+            let Ok(dev) = coll.Item(i) else { continue };
+            if !super::devices::friendly_name(&dev).contains(CAPTURE_NAME) {
+                continue;
+            }
+            let id = device_id(&dev).ok()?;
+            let active = dev.GetState().ok()? == DEVICE_STATE_ACTIVE;
+            return Some((id, active));
+        }
+    }
+    None
+}
+
+/// Enables or disables "CABLE Output" (no-op if it already is in that state). A disabled cable
+/// microphone vanishes from Teams & co., which then fall back to the laptop's own microphone.
+/// Waits up to 2 s until the endpoint reports the new state.
+pub fn set_cable_mic_enabled(enabled: bool) -> Result<()> {
+    let (id, active) =
+        cable_mic_endpoint().ok_or_else(|| PlatformError::DeviceNotFound(CAPTURE_NAME.into()))?;
+    if active == enabled {
+        return Ok(());
+    }
+    super::set_endpoint_enabled(&id, enabled)?;
+    for _ in 0..40 {
+        if cable_mic_endpoint().is_some_and(|(_, a)| a == enabled) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    tracing::info!(enabled, "virtual cable microphone switched");
+    Ok(())
+}
+
+/// Shared-mode mix formats of both cable endpoints, e.g. "CABLE Input 48000 Hz 2 ch, CABLE
+/// Output 44100 Hz 2 ch" (different rates on the two sides are a known cause of crackling).
+fn cable_formats() -> String {
+    use super::wasapi::{ComGuard, enumerator, open_device};
+    use windows::Win32::Media::Audio::{IAudioClient, eConsole};
+    use windows::Win32::System::Com::{CLSCTX_ALL, CoTaskMemFree};
+    let _com = ComGuard::init();
+    let describe = |kind: DeviceKind, name: &str| -> String {
+        let id = match kind {
+            DeviceKind::Render => CableVirtualAudio::find(kind, name),
+            DeviceKind::Capture => cable_mic_endpoint().filter(|e| e.1).map(|e| e.0),
+        };
+        let Some(id) = id else {
+            return format!("{name} off");
+        };
+        let fmt = enumerator().ok().and_then(|en| {
+            let dev = open_device(&en, kind, Some(&id), eConsole).ok()?;
+            // SAFETY: the mix format is allocated by the engine and freed right here.
+            unsafe {
+                let client: IAudioClient = dev.Activate(CLSCTX_ALL, None).ok()?;
+                let p = client.GetMixFormat().ok()?;
+                let r = ((*p).nSamplesPerSec, (*p).nChannels);
+                CoTaskMemFree(Some(p.cast()));
+                Some(r)
+            }
+        });
+        match fmt {
+            Some((rate, ch)) => format!("{name} {rate} Hz {ch} ch"),
+            None => format!("{name} ?"),
+        }
+    };
+    format!(
+        "{}, {}",
+        describe(DeviceKind::Render, RENDER_NAME),
+        describe(DeviceKind::Capture, CAPTURE_NAME)
+    )
+}
+
+/// Switches "CABLE Output" on/off; `managed` tells a supervising service that Desk Bridge owns
+/// the state (and keeps it off while the agent is not running).
+pub type MicEndpointSwitch = Arc<dyn Fn(bool, bool) -> Result<()> + Send + Sync>;
 /// Never buffer more than 200 ms of audio (a stalled render stream must not add latency).
 const MAX_RING_SAMPLES: usize = 48_000 / 5 * 2;
 
@@ -47,6 +140,9 @@ struct Inner {
     playback: Mutex<Option<Box<dyn StreamHandle>>>,
     watcher_started: AtomicBool,
     watchers: Mutex<Vec<UnboundedSender<MicUsage>>>,
+    switch: Option<MicEndpointSwitch>,
+    /// Diagnostics of the last microphone render stream into the cable.
+    output_info: Mutex<Option<String>>,
 }
 
 /// Cheap to clone; all clones share the stream.
@@ -70,8 +166,21 @@ impl CableVirtualAudio {
                 playback: Mutex::new(None),
                 watcher_started: AtomicBool::new(false),
                 watchers: Mutex::new(Vec::new()),
+                switch: None,
+                output_info: Mutex::new(None),
             }),
         }
+    }
+
+    /// Routes "CABLE Output" on/off through `switch` (the elevated service) instead of calling
+    /// `IPolicyConfig` from this process.
+    #[must_use]
+    pub fn with_endpoint_switch(switch: MicEndpointSwitch) -> Self {
+        let mut v = Self::new();
+        if let Some(inner) = Arc::get_mut(&mut v.inner) {
+            inner.switch = Some(switch);
+        }
+        v
     }
 
     fn find(kind: DeviceKind, needle: &str) -> Option<String> {
@@ -105,8 +214,15 @@ impl CableVirtualAudio {
 
 impl VirtualAudio for CableVirtualAudio {
     fn available(&self) -> bool {
-        Self::find(DeviceKind::Render, RENDER_NAME).is_some()
-            && Self::find(DeviceKind::Capture, CAPTURE_NAME).is_some()
+        // "CABLE Output" counts while disabled: Desk Bridge switches it on when needed.
+        Self::find(DeviceKind::Render, RENDER_NAME).is_some() && cable_mic_endpoint().is_some()
+    }
+
+    fn set_mic_enabled(&self, enabled: bool, managed: bool) -> Result<()> {
+        match &self.inner.switch {
+            Some(switch) => switch(enabled, managed),
+            None => set_cable_mic_enabled(enabled),
+        }
     }
 
     fn start_speaker_capture(
@@ -148,11 +264,27 @@ impl VirtualAudio for CableVirtualAudio {
         let id = Self::find(DeviceKind::Render, RENDER_NAME)
             .ok_or_else(|| PlatformError::DeviceNotFound(RENDER_NAME.into()))?;
         let h = WasapiPlayback::new().start_concrete(Some(&id), source)?;
+        let i = h.info();
+        let info = format!(
+            "render low_latency={} period={} buffer={} fill={} latency={:.1}ms; mix formats: {}",
+            i.low_latency,
+            i.period_frames,
+            i.buffer_frames,
+            i.fill_target_frames,
+            i.latency_ms,
+            cable_formats()
+        );
+        tracing::info!("virtual microphone stream: {info}");
+        *self.inner.output_info.lock() = Some(info);
         Ok(Box::new(h))
     }
 
     fn mic_in_use(&self) -> bool {
         !Self::active_processes().is_empty()
+    }
+
+    fn mic_output_info(&self) -> Option<String> {
+        self.inner.output_info.lock().clone()
     }
 
     fn claim_default_mic(&self) -> Result<MicDefaults> {

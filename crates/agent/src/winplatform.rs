@@ -16,8 +16,20 @@ use std::sync::Arc;
 /// microphone feature honestly reports "not available" (ADR 0003). The cable backend checks for
 /// the driver on every call, so a cable installed (or enumerated late at logon) after the agent
 /// started is picked up with the next connection.
+///
+/// "CABLE Output" is switched on/off through the service (LocalSystem, also keeps it off while
+/// the agent is not running); without the service (dev runs, older service) directly.
 fn virtual_audio() -> Arc<dyn deskbridge_platform::audio::VirtualAudio> {
-    Arc::new(CableVirtualAudio::new())
+    let service = ServiceClient::new();
+    Arc::new(CableVirtualAudio::with_endpoint_switch(Arc::new(
+        move |enabled, managed| match service.set_cable_mic(enabled, managed) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                tracing::debug!("cable mic via service failed ({e}); switching directly");
+                deskbridge_platform_windows::audio::set_cable_mic_enabled(enabled || !managed)
+            }
+        },
+    )))
 }
 
 pub fn build() -> Platform {

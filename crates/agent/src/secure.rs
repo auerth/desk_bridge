@@ -86,6 +86,20 @@ impl ServiceClient {
     }
 }
 
+impl ServiceClient {
+    /// Asks the service to switch the virtual cable microphone (it runs as LocalSystem).
+    pub fn set_cable_mic(&self, enabled: bool, managed: bool) -> Result<()> {
+        match self.call(&Request::CableMic { enabled, managed }) {
+            Ok(Response::Ok) => Ok(()),
+            Ok(Response::Error { text, .. }) => Err(PlatformError::Other(text)),
+            Ok(other) => Err(PlatformError::Other(format!(
+                "unexpected service answer: {other:?}"
+            ))),
+            Err(e) => Err(PlatformError::Other(format!("service pipe: {e}"))),
+        }
+    }
+}
+
 impl Default for ServiceClient {
     fn default() -> Self {
         Self::new()
@@ -650,6 +664,7 @@ mod tests {
         let handler = Arc::new(ControlHandler {
             sas: Arc::new(sas),
             helper: Arc::new(parking_lot::Mutex::new(HelperStatus::default())),
+            cable_mic: deskbridge_service::cable_mic::CableMic::load(),
         });
         tokio::spawn(deskbridge_service::pipe_server::serve(
             name.to_string(),

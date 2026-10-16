@@ -1,4 +1,5 @@
-//! The service control pipe (`\\.\pipe\deskbridge-service`): `ping`, `send_sas`, `helper_status`.
+//! The service control pipe (`\\.\pipe\deskbridge-service`): `ping`, `send_sas`, `helper_status`,
+//! `cable_mic`.
 
 use crate::pipe_server::Handler;
 use crate::protocol::{ErrorCode, PROTOCOL_VERSION, Request, Response};
@@ -135,6 +136,7 @@ pub type SharedHelperStatus = Arc<Mutex<HelperStatus>>;
 pub struct ControlHandler {
     pub sas: Arc<dyn SasSender>,
     pub helper: SharedHelperStatus,
+    pub cable_mic: Arc<crate::cable_mic::CableMic>,
 }
 
 impl Handler for ControlHandler {
@@ -166,6 +168,12 @@ impl Handler for ControlHandler {
                     running: s.running,
                     pid: s.pid,
                     session: s.session,
+                }
+            }
+            Request::CableMic { enabled, managed } => {
+                match self.cable_mic.request(enabled, managed) {
+                    Ok(()) => Response::Ok,
+                    Err(e) => Response::error(ErrorCode::Failed, e),
                 }
             }
             _ => Response::error(ErrorCode::BadRequest, "not served by the service pipe"),
@@ -206,6 +214,7 @@ mod tests {
         let h = ControlHandler {
             sas: sas.clone(),
             helper,
+            cable_mic: crate::cable_mic::CableMic::load(),
         };
         assert!(matches!(
             h.handle(Request::Ping),
@@ -230,6 +239,7 @@ mod tests {
         let h = ControlHandler {
             sas: Arc::new(DisabledSas),
             helper: Arc::new(Mutex::new(HelperStatus::default())),
+            cable_mic: crate::cable_mic::CableMic::load(),
         };
         assert!(matches!(
             h.handle(Request::SendSas),

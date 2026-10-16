@@ -515,6 +515,8 @@ pub struct MockVirtualAudio {
     pub mic_written: Mutex<Vec<f32>>,
     /// The virtual microphone is the system default recording device.
     pub default_claimed: std::sync::atomic::AtomicBool,
+    /// Last `set_mic_enabled` call: `(enabled, managed)`.
+    pub mic_endpoint: Mutex<Option<(bool, bool)>>,
     in_use: std::sync::atomic::AtomicBool,
     watchers: Mutex<Vec<UnboundedSender<MicUsage>>>,
 }
@@ -560,6 +562,11 @@ impl VirtualAudio for MockVirtualAudio {
 
     fn watch_mic_in_use(&self, tx: UnboundedSender<MicUsage>) -> Result<()> {
         self.watchers.lock().push(tx);
+        Ok(())
+    }
+
+    fn set_mic_enabled(&self, enabled: bool, managed: bool) -> Result<()> {
+        *self.mic_endpoint.lock() = Some((enabled, managed));
         Ok(())
     }
 

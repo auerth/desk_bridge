@@ -146,3 +146,16 @@ https://github.com/VirtualDrivers/Virtual-Audio-Driver/issues/15
 Silent switches: https://forum.vb-audio.com/viewtopic.php?p=7129 (forum posts, `-i -h`, driver prompt reported; vendor staff: installing a driver normally asks for user agreement).
 
 Confidence: **High** – Microsoft signature of VB-CABLE, failure of the Virtual-Audio-Driver signature under kernel policy, no data path in the latter, licence texts as quoted. **Medium** – that VB-CABLE installs with Secure Boot on without any prompt through our own SetupAPI path (expected for WHQL/attestation catalogs, not tested); session-based mic detection. **Not verified** – cable latency, exclusive-mode apps, reboot need, VAC/Voicemeeter signatures, VB-Audio's answer to the redistribution question.
+
+## Amendment 2026-10-16: automatic microphone switching
+
+With "Als Standardgerät setzen" on the headset side (default on), the PC sends
+`AudioRoute{MIC_TO_LAPTOP, enabled, manage_device}`. While the headset mic is switched on and
+present, the laptop enables "CABLE Output" (`IPolicyConfig::SetEndpointVisibility`) and makes it
+the default recording device; otherwise it restores the previous defaults and disables the
+endpoint, so Teams (which only offers fixed device choices) falls back to the laptop microphone.
+The switch goes through the service (LocalSystem), which also keeps the endpoint disabled while no
+agent runs and re-enables it when the service stops (update/uninstall). Management state:
+`%ProgramData%\softwelop\DeskBridge\cable-mic.json`. The mic is played into "CABLE Input" by the
+cable's own render stream straight from the jitter buffer (no timer thread); the laptop reports its
+playout health (`MicStats`) to the PC every 2 s, logged there as "laptop microphone playout".

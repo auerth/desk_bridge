@@ -205,8 +205,23 @@ message StreamStats {
 // Audio control
 // ---------------------------------------------------------------------------
 
-message AudioRoute { Stream stream = 1; bool enabled = 2; }
+// manage_device (MIC_TO_LAPTOP only): the target switches its virtual microphone on/off with
+// `enabled` and makes it the default meanwhile; false leaves it enabled and untouched.
+message AudioRoute { Stream stream = 1; bool enabled = 2; bool manage_device = 3; }
 message MicInUse { bool in_use = 1; string process = 2; }
+// Stream source -> headset side, every 2 s while the microphone flows: playout health of the
+// microphone into the virtual cable (logged on the headset side for diagnostics).
+message MicStats {
+  float fill_ms = 1;
+  float target_ms = 2;
+  float jitter_ms = 3;
+  float loss_pct = 4;
+  uint64 underruns = 5;
+  uint64 overruns = 6;
+  uint64 plc = 7;
+  float drift_ppm = 8;
+  string output = 9; // render stream into the cable and the cable's formats
+}
 message AudioCodecChoice { Stream stream = 1; bool opus = 2; uint32 bitrate_kbps = 3; }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +327,7 @@ message Control {
     AudioRoute audio_route = 20;
     MicInUse mic_in_use = 21;
     AudioCodecChoice audio_codec = 22;
+    MicStats mic_stats = 24;
     ClipboardOffer clipboard_offer = 30;
     ClipboardRequest clipboard_request = 31;
     ClipboardClear clipboard_clear = 32;

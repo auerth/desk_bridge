@@ -221,6 +221,7 @@ async fn control_pipe_ping_sas_and_helper_status() {
         Arc::new(ControlHandler {
             sas: sas.clone(),
             helper,
+            cable_mic: deskbridge_service::cable_mic::CableMic::load(),
         }),
     );
     let name = server.name.clone();
@@ -294,7 +295,14 @@ async fn client_times_out_on_a_silent_server_and_reports_missing_pipes() {
 async fn server_drops_clients_that_send_garbage_and_keeps_serving() {
     let sas = Arc::new(CountingSas(Mutex::new(0)));
     let helper: SharedHelperStatus = Arc::new(Mutex::new(HelperStatus::default()));
-    let server = Server::start("garbage", Arc::new(ControlHandler { sas, helper }));
+    let server = Server::start(
+        "garbage",
+        Arc::new(ControlHandler {
+            sas,
+            helper,
+            cable_mic: deskbridge_service::cable_mic::CableMic::load(),
+        }),
+    );
     let name = server.name.clone();
     blocking(move || {
         use std::io::{Read, Write};

@@ -160,6 +160,8 @@ pub struct Shared {
     pub user_sid: Mutex<Option<String>>,
     /// Wakes the control pipe so it rebuilds its pending instance with the new ACL.
     pub sid_changed: Arc<Notify>,
+    /// Keeps the virtual cable microphone off while no agent runs.
+    pub cable_mic: Arc<crate::cable_mic::CableMic>,
 }
 
 impl Shared {
@@ -169,6 +171,7 @@ impl Shared {
             helper: Arc::new(Mutex::new(HelperStatus::default())),
             user_sid: Mutex::new(None),
             sid_changed: Arc::new(Notify::new()),
+            cable_mic: crate::cable_mic::CableMic::load(),
         })
     }
 
@@ -220,6 +223,8 @@ pub struct Supervisor {
     agent_last_start: Option<Instant>,
     agent_seen_alive: bool,
     agent_suppressed: bool,
+    /// Agent liveness at the previous tick (for the cable microphone guard).
+    agent_was_alive: Option<bool>,
     // helper
     helper: Option<(Tracked, SessionKey)>,
     helper_backoff: Backoff,
@@ -239,6 +244,7 @@ impl Supervisor {
             agent_last_start: None,
             agent_seen_alive: false,
             agent_suppressed: false,
+            agent_was_alive: None,
             helper: None,
             helper_backoff: Backoff::default(),
             helper_last_exit: None,
@@ -269,6 +275,7 @@ impl Supervisor {
         }
         self.stop_helper("service stopping");
         self.publish_helper();
+        self.shared.cable_mic.on_service_stop();
         tracing::info!("supervisor stopped");
     }
 
@@ -302,6 +309,18 @@ impl Supervisor {
         if self.opts.manage_agent {
             self.tick_agent(now);
         }
+        self.guard_cable_mic();
+    }
+
+    /// Without a running agent nobody feeds the virtual cable microphone: keep it disabled so
+    /// Teams & co. use the laptop's own microphone (also right after boot, before the agent).
+    fn guard_cable_mic(&mut self) {
+        let alive =
+            self.key.is_some() && (self.agent.is_some() || launch::mutex_exists(AGENT_MUTEX));
+        if !alive && self.agent_was_alive != Some(false) {
+            self.shared.cable_mic.on_agent_down();
+        }
+        self.agent_was_alive = Some(alive);
     }
 
     // ---- agent --------------------------------------------------------------------------
