@@ -223,6 +223,11 @@ pub fn install(ctx: &Ctx, args: &InstallArgs) -> Result<i32> {
             && step(&mut failures, "service", || service::install(&exe)).unwrap_or(false)
         {
             manifest.service = Some(SERVICE_NAME.to_owned());
+            // The installer stopped the service to replace its files; bring it back up.
+            ctx.plan(&format!("start service {SERVICE_NAME}"));
+            if let Err(e) = service::start() {
+                tracing::warn!("service did not start: {e:#}");
+            }
         }
     }
 
