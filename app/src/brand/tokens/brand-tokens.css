@@ -1,0 +1,59 @@
+/* =============================================================
+   softwelop – Brand Tokens (Stand: Brand Guidelines 2025)
+   Einbinden:  <link rel="stylesheet" href="/brand/tokens/brand-tokens.css">
+   ============================================================= */
+
+@font-face {
+  font-family: "Gilmer";
+  src: url("../fonts/gilmer-bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat";
+  src: url("../fonts/Montserrat-Light.ttf") format("truetype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Blautöne */
+  --sw-bright-code: #A3C7EB;   /* helles Tech-Blau – Zugänglichkeit, digitale Offenheit */
+  --sw-core-logic: #194093;    /* kräftiges Blau – Interfaces, Hervorhebungen, Grafiken */
+  --sw-deep-trust: #21264E;    /* Dunkelblau – Textfarbe, erdet das System */
+
+  /* Orangetöne */
+  --sw-soft-spark: #F7AE67;    /* warm & optimistisch – zugängliche Highlights */
+  --sw-signal-orange: #F18557; /* energetisch – zieht Aufmerksamkeit */
+  --sw-powerline-red: #E36150; /* Koralle – kräftige Akzente */
+
+  /* Neutrale */
+  --sw-cream: #F6E9DF;         /* Creme – Verlaufs-/Flächenton */
+  --sw-white: #FFFFFF;         /* primäre Hintergrundfarbe */
+
+  /* Semantische Zuordnung */
+  --sw-text: var(--sw-deep-trust);
+  --sw-background: var(--sw-white);
+  --sw-accent: var(--sw-signal-orange);
+  --sw-link: var(--sw-core-logic);
+
+  /* Verläufe */
+  --sw-gradient-deep: linear-gradient(180deg, #21264E 0%, #194093 100%);
+  --sw-gradient-sunset: linear-gradient(180deg, #F18557 0%, #F7AE67 45%, #F6E9DF 72%, #A3C7EB 100%);
+  --sw-gradient-coral: linear-gradient(180deg, #E36150 0%, #F7AE67 50%, #F6E9DF 100%);
+
+  /* Typografie */
+  --sw-font-heading: "Gilmer", "Montserrat", Arial, sans-serif;
+  --sw-font-body: "Montserrat", Arial, sans-serif;
+  --sw-size-title: 36pt;       /* Titel: Gilmer Bold, Versalien */
+  --sw-size-subtitle: 18pt;    /* Untertitel: Montserrat Medium, Versalien */
+  --sw-size-body: 18pt;        /* Fließtext: Montserrat Light, 14–18 pt */
+  --sw-line-height-body: 1.5;  /* 140–160 % */
+
+  /* Logo-Mindestgrößen */
+  --sw-logo-min-digital: 70px;
+  --sw-icon-min-digital: 21px;
+}

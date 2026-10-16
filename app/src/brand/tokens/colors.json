@@ -1,0 +1,23 @@
+{
+  "brand": "softwelop",
+  "version": "2025",
+  "colors": [
+    { "name": "Bright Code",     "token": "sw-bright-code",     "hex": "#A3C7EB", "rgb": [163, 199, 235], "group": "Blau",    "usage": "Helles Tech-Blau – steht für Zugänglichkeit und digitale Offenheit." },
+    { "name": "Core Logic",      "token": "sw-core-logic",      "hex": "#194093", "rgb": [25, 64, 147],   "group": "Blau",    "usage": "Kräftiges, intelligentes Blau für Interfaces, Hervorhebungen und Grafiken." },
+    { "name": "Deep Trust",      "token": "sw-deep-trust",      "hex": "#21264E", "rgb": [33, 38, 78],    "group": "Blau",    "usage": "Textfarbe; erdet das visuelle System." },
+    { "name": "Soft Spark",      "token": "sw-soft-spark",      "hex": "#F7AE67", "rgb": [247, 174, 103], "group": "Orange",  "usage": "Warm und optimistisch – für zugängliche Highlights." },
+    { "name": "Signal Orange",   "token": "sw-signal-orange",   "hex": "#F18557", "rgb": [241, 133, 87],  "group": "Orange",  "usage": "Energetisch und lebendig – sorgt für Aufmerksamkeit." },
+    { "name": "Powerline Red",   "token": "sw-powerline-red",   "hex": "#E36150", "rgb": [227, 97, 80],   "group": "Orange",  "usage": "Dynamisches Korall-Orange für kräftige Akzente." },
+    { "name": "Creme",           "token": "sw-cream",           "hex": "#F6E9DF", "rgb": [246, 233, 223], "group": "Neutral", "usage": "Weicher Flächen- und Verlaufston." },
+    { "name": "Pure White",      "token": "sw-white",           "hex": "#FFFFFF", "rgb": [255, 255, 255], "group": "Neutral", "usage": "Primäre Hintergrundfarbe." }
+  ],
+  "gradients": [
+    { "name": "Deep",   "css": "linear-gradient(180deg, #21264E 0%, #194093 100%)" },
+    { "name": "Sunset", "css": "linear-gradient(180deg, #F18557 0%, #F7AE67 45%, #F6E9DF 72%, #A3C7EB 100%)" },
+    { "name": "Coral",  "css": "linear-gradient(180deg, #E36150 0%, #F7AE67 50%, #F6E9DF 100%)" }
+  ],
+  "fonts": {
+    "heading": { "family": "Gilmer", "weight": 700, "file": "fonts/gilmer-bold.otf" },
+    "body":    { "family": "Montserrat", "weight": 300, "file": "fonts/Montserrat-Light.ttf", "fallback": "Arial" }
+  }
+}
