@@ -65,7 +65,7 @@ rcgen = "0.13"
 sha2 = "0.10"
 spake2 = "0.4"
 hkdf = "0.12"
-hmac = "0.12"
+hmac = "0.13"
 rand = "0.8"
 uuid = { version = "1", features = ["v7", "serde"] }
 mdns-sd = "0.11"
