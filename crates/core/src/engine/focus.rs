@@ -138,8 +138,6 @@ struct ViewerShared {
     loss_permille: AtomicU32,
     /// peer_clock - our_clock (µs), kept fresh by the actor.
     clock_offset_us: AtomicI64,
-    /// Last known presenter rectangle (window mode can be moved).
-    rect: Mutex<Option<(i32, i32, u32, u32)>>,
     last_text: Mutex<String>,
 }
 
@@ -316,7 +314,9 @@ impl Engine {
                 hz,
             },
             layout,
-            PlanOptions::default(),
+            // Odd widths (3413/1707) were rounded differently by the encoder negotiation, so
+            // stream, virtual mode and pointer region disagreed by a pixel.
+            PlanOptions { even_widths: true },
         )
         .map_err(|e| format!("Monitormodus nicht nutzbar: {e}"))?;
         let want_fps = if self.cfg.focus.fps == 0 {
@@ -456,7 +456,10 @@ impl Engine {
         let link_t = link.clone();
         let thread = std::thread::Builder::new()
             .name("focus-decode".into())
-            .spawn(move || viewer_thread(cmd_rx_plain, decoder, presenter, sh, link_t))
+            .spawn({
+                let msg = self.msg_tx.clone();
+                move || viewer_thread(cmd_rx_plain, decoder, presenter, sh, link_t, msg)
+            })
             .ok();
         let Some(thread) = thread else {
             self.abort_focus("Decoder-Thread konnte nicht gestartet werden");
@@ -482,24 +485,21 @@ impl Engine {
             }
         });
 
-        // pointer mapping: absolute onto the laptop screen
-        let (rx, ry, rw, rh) = plan.presenter.rect();
-        let (px, py, pw, ph) = if matches!(plan.presenter, PresenterMode::Window { .. }) {
-            // window mode follows the window; refreshed on tick
-            (rx, ry, rw, rh)
-        } else {
-            (rx, ry, rw, rh)
-        };
-        let peer = link.peer.id;
-        let actions = self.router.set_region(Some(AbsRegion {
-            device: peer,
-            screen: r.screen_id,
-            x: px,
-            y: py,
-            w: pw as i32,
-            h: ph as i32,
-        }));
-        self.exec_actions(actions, true);
+        // Pointer mapping: absolute onto the laptop screen. The viewer thread reports the real
+        // picture rectangle within ~50 ms (appbar-trimmed split, moved window); until then the
+        // planned one is used. A window has no position yet: no region until it reports one.
+        if !matches!(plan.presenter, PresenterMode::Window { .. }) {
+            let (px, py, pw, ph) = plan.presenter.rect();
+            let actions = self.router.set_region(Some(AbsRegion {
+                device: link.peer.id,
+                screen: r.screen_id,
+                x: px,
+                y: py,
+                w: pw as i32,
+                h: ph as i32,
+            }));
+            self.exec_actions(actions, true);
+        }
 
         let hint = format!("Fokusmodus beenden: {}", self.focus_exit_keys());
         let _ = cmd_tx_plain.send(ViewerCmd::Hint(Some(hint.clone())));
@@ -976,20 +976,39 @@ impl Engine {
         if let Some(s) = &self.session {
             s.link.send_control(pb::control::Msg::StreamStats(st));
         }
-        // window mode: the window can be moved
-        if self.focus.mode == "window"
-            && let (Some(rect), Some(s)) = (*sh.rect.lock(), &self.session)
-        {
-            let actions = self.router.set_region(Some(AbsRegion {
-                device: s.link.peer.id,
-                screen: self.focus.screen_id,
-                x: rect.0,
-                y: rect.1,
-                w: rect.2 as i32,
-                h: rect.3 as i32,
-            }));
-            let _ = actions; // region update only; no enter/leave side effects while unchanged
+    }
+
+    /// The viewer window changed: picture rectangle, closed, covered by another window.
+    pub(crate) fn on_focus_viewer_update(&mut self, u: ViewerUpdate) {
+        if self.focus.viewer.is_none() {
+            return;
         }
+        if u.closed {
+            tracing::info!("focus mode: viewer window closed by the user");
+            self.stop_focus("Fokusmodus beendet", true);
+            return;
+        }
+        let Some(s) = &self.session else { return };
+        let peer = s.link.peer.id;
+        if u.rect.is_none() && self.focus.mode != "window" {
+            // Full screen and split cannot be minimised; a presenter that reports no
+            // rectangle keeps the planned one.
+            return;
+        }
+        // Minimised (no rectangle): nothing on the PC maps to the laptop.
+        let region = u.rect.map(|(x, y, w, h)| AbsRegion {
+            device: peer,
+            screen: self.focus.screen_id,
+            x,
+            y,
+            w: w as i32,
+            h: h as i32,
+        });
+        let mut actions = self.router.set_region(region);
+        if self.focus.mode == "window" && region.is_some() {
+            actions.extend(self.router.set_region_hover(u.hover));
+        }
+        self.exec_actions(actions, true);
     }
 
     /// Why the viewer should give up: no first picture, or the stream stopped arriving.
@@ -1069,20 +1088,53 @@ fn codec_name(c: VideoCodec) -> &'static str {
 
 // --- viewer decode thread -----------------------------------------------------------------------
 
+/// What the viewer window looks like now (sent to the actor on every change).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ViewerUpdate {
+    /// Picture rectangle on the PC desktop; `None` while minimised.
+    pub rect: Option<(i32, i32, u32, u32)>,
+    pub closed: bool,
+    /// Pointer over the window itself (not over a window on top of it).
+    pub hover: Option<bool>,
+}
+
 fn viewer_thread(
     rx: std_mpsc::Receiver<ViewerCmd>,
     mut decoder: Box<dyn VideoDecoder>,
     mut presenter: Box<dyn VideoPresenter>,
     sh: Arc<ViewerShared>,
     link: PeerLink,
+    msg: tokio::sync::mpsc::UnboundedSender<super::Msg>,
 ) {
     let epoch = Instant::now();
     let mut filter = LateFrameFilter::new();
     let mut interval = Instant::now();
     let mut overlay_on = false;
+    let mut last_update: Option<ViewerUpdate> = None;
     // Every frame must be decoded (P-frames depend on each other) but only the newest one of a
     // backlog is presented, so a stall never turns into seconds of latency.
-    'outer: while let Ok(first) = rx.recv() {
+    'outer: loop {
+        // Wake up regularly even without frames: window moves and clicks on the close button
+        // must reach the pointer mapping quickly.
+        let first = match rx.recv_timeout(Duration::from_millis(40)) {
+            Ok(c) => Some(c),
+            Err(std_mpsc::RecvTimeoutError::Timeout) => None,
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        let now_state = ViewerUpdate {
+            rect: presenter.window_rect(),
+            closed: presenter.is_closed(),
+            hover: presenter.pointer_over(),
+        };
+        if last_update != Some(now_state) {
+            last_update = Some(now_state);
+            if msg.send(super::Msg::FocusViewer(now_state)).is_err() {
+                break;
+            }
+        }
+        let Some(first) = first else {
+            continue;
+        };
         let mut batch = vec![first];
         batch.extend(rx.try_iter());
         let last_frame = batch
@@ -1159,7 +1211,6 @@ fn viewer_thread(
                 (filter.take_interval_loss_pct() * 10.0) as u32,
                 Ordering::Relaxed,
             );
-            *sh.rect.lock() = presenter.window_rect();
             if filter.poll_retry(epoch.elapsed().as_millis() as u64) {
                 link.send_control(pb::control::Msg::KeyframeRequest(pb::KeyframeRequest {}));
             }

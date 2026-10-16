@@ -389,6 +389,15 @@ impl VideoPresenter for D3dPresenter {
     fn set_stats_overlay(&mut self, on: bool, text: &str) {
         D3dPresenter::set_stats_overlay(self, on, text);
     }
+
+    fn is_closed(&self) -> bool {
+        D3dPresenter::is_closed(self)
+    }
+
+    fn pointer_over(&self) -> Option<bool> {
+        // Set by WM_MOUSEMOVE, cleared by WM_MOUSELEAVE (also when another window covers us).
+        Some(self.shared.pointer.lock().is_some())
+    }
 }
 
 impl Drop for D3dPresenter {

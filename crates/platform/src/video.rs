@@ -113,4 +113,13 @@ pub trait VideoPresenter: Send {
     }
     /// Shows or hides the stats overlay with the given text (Ctrl+Alt+Shift+I).
     fn set_stats_overlay(&mut self, _on: bool, _text: &str) {}
+    /// The user closed the window.
+    fn is_closed(&self) -> bool {
+        false
+    }
+    /// Whether the pointer is over the window itself, i.e. not over a window on top of it
+    /// (`None` = not tracked).
+    fn pointer_over(&self) -> Option<bool> {
+        None
+    }
 }

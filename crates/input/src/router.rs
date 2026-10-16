@@ -100,6 +100,9 @@ pub struct Router {
     bump: Option<(Edge, Instant, bool)>,
     region: Option<AbsRegion>,
     region_inside: bool,
+    /// Window mode: is the viewer window itself under the pointer (another window may lie on
+    /// top of it)? `None` = not tracked, the rectangle alone decides.
+    region_hover: Option<bool>,
     /// Last absolute cursor position seen (the cursor stays put while it is pushed against an edge).
     last_pos: Option<Point>,
 }
@@ -125,6 +128,7 @@ impl Router {
             bump: None,
             region: None,
             region_inside: false,
+            region_hover: None,
             last_pos: None,
         }
     }
@@ -163,12 +167,61 @@ impl Router {
     /// Enables absolute pointer mapping for focus mode (split or full). `None` disables it.
     pub fn set_region(&mut self, region: Option<AbsRegion>) -> Vec<Action> {
         let mut out = Vec::new();
-        if region.is_none() && self.region_inside {
+        if region.is_none() {
+            self.region_hover = None;
+            if self.region_inside {
+                self.region_inside = false;
+                out.push(Action::Send(Ev::Leave(pb::Leave {})));
+                out.push(Action::SetGrab(GrabMode::None));
+                out.push(Action::Osd(Location::Local));
+            }
+            self.region = None;
+            return out;
+        }
+        // A moved or resized picture: decide again where the (unmoved) pointer is now.
+        self.region = region;
+        self.reevaluate_region()
+    }
+
+    /// Window mode: whether the viewer window is the topmost window under the pointer.
+    pub fn set_region_hover(&mut self, hover: Option<bool>) -> Vec<Action> {
+        if self.region_hover == hover {
+            return Vec::new();
+        }
+        self.region_hover = hover;
+        self.reevaluate_region()
+    }
+
+    fn reevaluate_region(&mut self) -> Vec<Action> {
+        match self.last_pos {
+            Some(p) if self.region.is_some() => self.update_region_inside(p.x, p.y),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Enter/leave the region for a pointer at (x, y); the caller adds the `Abs` event.
+    fn update_region_inside(&mut self, x: i32, y: i32) -> Vec<Action> {
+        let Some(region) = self.region else {
+            return Vec::new();
+        };
+        let inside = region.contains(x, y) && self.region_hover.unwrap_or(true);
+        let mut out = Vec::new();
+        if inside && !self.region_inside {
+            self.region_inside = true;
+            out.push(Action::SetGrab(GrabMode::KeyboardOnly));
+            out.push(Action::Send(Ev::Enter(pb::Enter {
+                screen_id: region.screen,
+                rel_pos: 0.5,
+                edge: Edge::Unspecified as i32,
+                toggles: Some(self.toggles),
+            })));
+            out.push(Action::Osd(Location::Remote));
+        } else if !inside && self.region_inside {
             self.region_inside = false;
             out.push(Action::Send(Ev::Leave(pb::Leave {})));
             out.push(Action::SetGrab(GrabMode::None));
+            out.push(Action::Osd(Location::Local));
         }
-        self.region = region;
         out
     }
 
@@ -234,7 +287,7 @@ impl Router {
         // found no edge until a slow sideways wiggle happened to report x = 0. Clamp like
         // Windows does.
         let ev = match ev {
-            CaptureEvent::MouseMove { x, y } if self.region.is_none() => {
+            CaptureEvent::MouseMove { x, y } => {
                 let p = self.clamp_to_screens(Point { x, y });
                 CaptureEvent::MouseMove { x: p.x, y: p.y }
             }
@@ -422,25 +475,8 @@ impl Router {
         let region = self.region.expect("checked by caller");
         match ev {
             CaptureEvent::MouseMove { x, y } => {
-                let inside = region.contains(x, y);
-                let mut out = Vec::new();
-                if inside && !self.region_inside {
-                    self.region_inside = true;
-                    out.push(Action::SetGrab(GrabMode::KeyboardOnly));
-                    out.push(Action::Send(Ev::Enter(pb::Enter {
-                        screen_id: region.screen,
-                        rel_pos: 0.5,
-                        edge: Edge::Unspecified as i32,
-                        toggles: Some(self.toggles),
-                    })));
-                    out.push(Action::Osd(Location::Remote));
-                } else if !inside && self.region_inside {
-                    self.region_inside = false;
-                    out.push(Action::Send(Ev::Leave(pb::Leave {})));
-                    out.push(Action::SetGrab(GrabMode::None));
-                    out.push(Action::Osd(Location::Local));
-                }
-                if inside {
+                let mut out = self.update_region_inside(x, y);
+                if self.region_inside {
                     out.push(Action::Send(Ev::Abs(pb::MouseAbs {
                         x: ((x - region.x) as f32 + 0.5) / region.w as f32,
                         y: ((y - region.y) as f32 + 0.5) / region.h as f32,
@@ -870,9 +906,9 @@ mod tests {
         let _ = r.set_region(Some(AbsRegion {
             device: lp(),
             screen: 0,
-            x: 2560,
+            x: 1280,
             y: 0,
-            w: 2560,
+            w: 1280,
             h: 1440,
         }));
         // outside → nothing
@@ -883,7 +919,7 @@ mod tests {
         // inside → enter + grab + abs
         let a = r.on_capture(
             CaptureEvent::MouseMove {
-                x: 2560 + 1280,
+                x: 1280 + 640,
                 y: 720,
             },
             Instant::now(),
@@ -924,6 +960,67 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    fn split_right(r: &mut Router) {
+        let _ = r.set_region(Some(AbsRegion {
+            device: lp(),
+            screen: 0,
+            x: 1280,
+            y: 0,
+            w: 1280,
+            h: 1440,
+        }));
+    }
+
+    #[test]
+    fn region_edge_overshoot_stays_inside() {
+        let mut r = router(RouterConfig::default());
+        split_right(&mut r);
+        assert!(has_enter(&r.on_capture(
+            CaptureEvent::MouseMove { x: 2000, y: 700 },
+            Instant::now()
+        )));
+        // Pushing into the outer right edge: the hook reports x beyond the monitor.
+        let a = r.on_capture(CaptureEvent::MouseMove { x: 2575, y: 5 }, Instant::now());
+        assert!(!a.contains(&Action::Send(Ev::Leave(pb::Leave {}))), "{a:?}");
+        let a = r.on_capture(
+            CaptureEvent::Button {
+                button: deskbridge_platform::input::Button::Left,
+                down: true,
+            },
+            Instant::now(),
+        );
+        assert!(!a.is_empty(), "click on the far edge must reach the laptop");
+    }
+
+    #[test]
+    fn moving_the_region_away_releases_the_keyboard() {
+        let mut r = router(RouterConfig::default());
+        split_right(&mut r);
+        r.on_capture(CaptureEvent::MouseMove { x: 2000, y: 700 }, Instant::now());
+        let a = r.set_region(Some(AbsRegion {
+            device: lp(),
+            screen: 0,
+            x: 0,
+            y: 0,
+            w: 1000,
+            h: 600,
+        }));
+        assert!(a.contains(&Action::SetGrab(GrabMode::None)), "{a:?}");
+    }
+
+    #[test]
+    fn covered_window_does_not_take_the_pointer() {
+        let mut r = router(RouterConfig::default());
+        split_right(&mut r);
+        let _ = r.set_region_hover(Some(false));
+        let a = r.on_capture(CaptureEvent::MouseMove { x: 2000, y: 700 }, Instant::now());
+        assert!(!has_enter(&a));
+        // the viewer window reports the pointer: enter without another move
+        assert!(has_enter(&r.set_region_hover(Some(true))));
+        let a = r.set_region_hover(Some(false));
+        assert!(a.contains(&Action::SetGrab(GrabMode::None)));
     }
 
     #[allow(dead_code)]
