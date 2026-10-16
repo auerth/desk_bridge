@@ -1,4 +1,4 @@
-//! Logging to stderr and to `%LOCALAPPDATA%\softwelop\DeskBridge\logs\setup.log`.
+//! Logging to stderr and to `setup.log` in `%ProgramData%` and `%LOCALAPPDATA%` (`softwelop\DeskBridge\logs`).
 
 use std::fs::OpenOptions;
 use std::path::PathBuf;
@@ -25,7 +25,10 @@ pub fn init(quiet: bool) -> Option<PathBuf> {
         .without_time()
         .with_filter(stderr_level);
 
-    let file = crate::paths::setup_log_file().and_then(|path| {
+    // The same log goes to the user's profile and to %ProgramData% (the installer may run under
+    // an admin account whose profile is not the user's).
+    let open = |path: Option<PathBuf>| {
+        let path = path?;
         std::fs::create_dir_all(path.parent()?).ok()?;
         let f = OpenOptions::new()
             .create(true)
@@ -33,7 +36,16 @@ pub fn init(quiet: bool) -> Option<PathBuf> {
             .open(&path)
             .ok()?;
         Some((path, f))
-    });
+    };
+    let mut files: Vec<(PathBuf, std::fs::File)> = Vec::new();
+    files.extend(open(crate::paths::machine_log_file()));
+    files.extend(open(crate::paths::setup_log_file()));
+    let file = if files.is_empty() {
+        None
+    } else {
+        let primary = files[0].0.clone();
+        Some((primary, Tee(files.into_iter().map(|(_, f)| f).collect())))
+    };
 
     match file {
         Some((path, f)) => {
@@ -52,5 +64,24 @@ pub fn init(quiet: bool) -> Option<PathBuf> {
             let _ = tracing_subscriber::registry().with(stderr_layer).try_init();
             None
         }
+    }
+}
+
+/// Writes every line to all log files.
+struct Tee(Vec<std::fs::File>);
+
+impl std::io::Write for Tee {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        for f in &mut self.0 {
+            let _ = f.write_all(buf);
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        for f in &mut self.0 {
+            let _ = f.flush();
+        }
+        Ok(())
     }
 }

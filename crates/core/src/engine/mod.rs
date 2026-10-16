@@ -814,16 +814,16 @@ impl Engine {
                     .send_control(pb::control::Msg::Ping(pb::Ping { t0_us: now_us() }));
             }
             let silent = now.duration_since(s.last_pong);
-            let new_state = if silent > Duration::from_secs(6) {
+            let new_state = if silent > Duration::from_secs(3) {
                 None
-            } else if silent > Duration::from_secs(3) {
+            } else if silent > Duration::from_millis(1200) {
                 Some(ConnState::Degraded)
             } else {
                 Some(ConnState::Connected)
             };
             match new_state {
                 None => {
-                    tracing::warn!("no heartbeat for 6 s, dropping session");
+                    tracing::warn!("no heartbeat for 3 s, dropping session");
                     self.close_session("heartbeat timeout");
                 }
                 Some(st) => {

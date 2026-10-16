@@ -38,6 +38,19 @@ pub fn setup_log_file() -> Option<PathBuf> {
     local_data_dir().map(|p| p.join("logs").join("setup.log"))
 }
 
+/// Machine-wide copy of the setup log: the installer may run under another (admin) account
+/// than the user's, and then `%LOCALAPPDATA%` is not where the user looks.
+#[must_use]
+pub fn machine_log_file() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| {
+        PathBuf::from(p)
+            .join(COMPANY)
+            .join(PRODUCT_DIR)
+            .join("logs")
+            .join("setup.log")
+    })
+}
+
 #[must_use]
 pub fn lid_backup_file() -> Option<PathBuf> {
     local_data_dir().map(|p| p.join(crate::brand::LID_BACKUP_FILE))

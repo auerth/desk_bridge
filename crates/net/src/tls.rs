@@ -160,13 +160,13 @@ pub fn client_config(id: &Identity, alpn: &[u8]) -> Result<quinn::ClientConfig> 
     Ok(cc)
 }
 
-/// QUIC transport tuning: keep-alive 1 s, idle timeout 10 s, generous datagram buffers.
+/// QUIC transport tuning: keep-alive 500 ms, idle timeout 4 s, generous datagram buffers.
 #[must_use]
 pub fn transport_config() -> quinn::TransportConfig {
     let mut t = quinn::TransportConfig::default();
-    t.keep_alive_interval(Some(std::time::Duration::from_secs(1)));
+    t.keep_alive_interval(Some(std::time::Duration::from_millis(500)));
     t.max_idle_timeout(Some(
-        std::time::Duration::from_secs(10)
+        std::time::Duration::from_secs(4)
             .try_into()
             .expect("idle timeout fits"),
     ));
