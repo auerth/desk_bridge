@@ -187,6 +187,7 @@ export const de = {
   'audio.virtualTag': 'virtuell',
   'audio.volume': 'Lautstärke',
   'audio.mute': 'Ton am PC-Headset stumm',
+  'audio.mutedNow': 'Stumm – im Headset nichts zu hören',
   'audio.level': 'Pegel',
   'audio.latency': 'Latenz',
   'audio.latencyValue': '{n} ms',

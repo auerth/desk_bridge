@@ -405,16 +405,28 @@ impl WinDisplayManager {
         let path_of = |topo: &SavedTopology| topo.paths.iter().position(|p| p.target_key() == key);
         let mut active = ccd::query_active_saved()?;
         if path_of(&active).is_none() {
-            tracing::info!("virtual display is not active yet; extending the desktop onto it");
-            ccd::extend_all()?;
-            active = self
-                .wait_until(self.tuning.verify_timeout, || {
+            tracing::info!("virtual display is not active yet; adding it to the desktop");
+            let wait_active = || {
+                self.wait_until(self.tuning.verify_timeout, || {
                     let t = ccd::query_active_saved().ok()?;
                     path_of(&t).map(|_| t)
                 })
-                .ok_or_else(|| {
-                    PlatformError::other("the virtual display could not be activated")
-                })?;
+            };
+            let mut got = match ccd::activate_target(target.adapter, target.id) {
+                Ok(()) => wait_active(),
+                Err(e) => {
+                    tracing::warn!(error = %e, "activating the virtual monitor path failed");
+                    None
+                }
+            };
+            if got.is_none() {
+                tracing::info!("falling back to extending the desktop onto every monitor");
+                ccd::extend_all()?;
+                got = wait_active();
+            }
+            active = got.ok_or_else(|| {
+                PlatformError::other("the virtual display could not be activated")
+            })?;
         }
         let idx = path_of(&active)
             .ok_or_else(|| PlatformError::other("virtual display path vanished"))?;

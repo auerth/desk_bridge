@@ -92,6 +92,7 @@ export function Audio() {
         <Row title={t('audio.level')}>
           <div className="meter-row">
             <Meter level={lap.level} label={t('audio.level')} dim={cfg.laptop_to_pc.mute || !online} />
+            {cfg.laptop_to_pc.mute && <Pill tone="warn">{t('audio.mutedNow')}</Pill>}
             <span className="num muted meter-row__val">{lap.latency_ms != null && online ? t('audio.latencyValue', { n: Math.round(lap.latency_ms) }) : '–'}</span>
           </div>
         </Row>

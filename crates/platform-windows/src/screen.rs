@@ -4,10 +4,13 @@
 //! virtual-desktop position, independent of the process DPI awareness); `EnumDisplayMonitors` /
 //! `GetMonitorInfoW` provide the monitor handles, the primary flag and the GDI device names.
 //!
-//! Ids are stable for the lifetime of the process: every physical monitor (identified by its PnP
-//! device id, falling back to the GDI name) gets the next free small id the first time it is seen
-//! and keeps it when monitors are re-ordered or re-plugged. Output order is "primary first, then by
-//! position".
+//! Ids are stable across restarts: every physical monitor (identified by its PnP device id,
+//! falling back to the GDI name) gets the next free small id the first time it is seen and keeps
+//! it when monitors are re-ordered or re-plugged. The table lives in
+//! `%LOCALAPPDATA%\softwelop\DeskBridge\screen-ids.txt`, because the layout placements are keyed
+//! by these ids: an id that depended on start-up order (e.g. a virtual monitor still present at
+//! start) moved the screen to its default spot after every update. Output order is "primary
+//! first, then by position".
 
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -68,6 +71,7 @@ struct IdTable {
 }
 
 impl IdTable {
+    #[cfg(test)]
     const fn new() -> Self {
         Self { keys: Vec::new() }
     }
@@ -81,7 +85,37 @@ impl IdTable {
     }
 }
 
-static IDS: Mutex<IdTable> = Mutex::new(IdTable::new());
+static IDS: Mutex<Option<IdTable>> = Mutex::new(None);
+
+/// Location of the persisted id table.
+fn ids_path() -> std::path::PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    base.join("softwelop")
+        .join("DeskBridge")
+        .join("screen-ids.txt")
+}
+
+impl IdTable {
+    /// One monitor key per line; the line number is the id.
+    fn load(path: &std::path::Path) -> Self {
+        let keys = std::fs::read_to_string(path)
+            .map(|t| t.lines().map(str::to_owned).collect())
+            .unwrap_or_default();
+        Self { keys }
+    }
+
+    fn save(&self, path: &std::path::Path) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let mut text = self.keys.join("\n");
+        text.push('\n');
+        if let Err(e) = std::fs::write(path, text) {
+            tracing::warn!("could not save the screen ids: {e}");
+        }
+    }
+}
 
 /// Orders (primary first, then left-to-right, top-to-bottom) and assigns ids.
 fn finalize(mut raw: Vec<RawScreen>, ids: &mut IdTable) -> Vec<ScreenInfo> {
@@ -283,7 +317,16 @@ fn read_raw_screens() -> Vec<RawScreen> {
 }
 
 fn snapshot() -> Vec<ScreenInfo> {
-    finalize(read_raw_screens(), &mut IDS.lock())
+    let raw = read_raw_screens();
+    let mut guard = IDS.lock();
+    let path = ids_path();
+    let ids = guard.get_or_insert_with(|| IdTable::load(&path));
+    let known = ids.keys.len();
+    let out = finalize(raw, ids);
+    if ids.keys.len() != known {
+        ids.save(&path);
+    }
+    out
 }
 
 struct WatchCtx {

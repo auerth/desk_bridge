@@ -764,6 +764,9 @@ impl Engine {
             }
             if self.audio.out_missing {
                 a.base.detail = Some("Headset nicht verfügbar – Wiedergabe pausiert".into());
+            } else if cfg.laptop_to_pc.mute && a.base.state == Live::Live {
+                // The meter shows the incoming signal; say plainly that nothing reaches the ear.
+                a.base.detail = Some("Stummgeschaltet – im Headset ist nichts zu hören".into());
             }
         } else if let Some(p) = &self.audio.speaker_tx {
             a.level = p.level();

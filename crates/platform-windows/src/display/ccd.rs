@@ -665,6 +665,64 @@ pub(super) fn restore(saved: Option<&SavedTopology>) -> Result<&'static str> {
     ))
 }
 
+/// `DISPLAYCONFIG_PATH_ACTIVE`.
+const PATH_ACTIVE: u32 = 0x1;
+/// `DISPLAYCONFIG_PATH_MODE_IDX_INVALID` (legacy, not virtual-mode-aware layout).
+const MODE_IDX_INVALID: u32 = 0xffff_ffff;
+
+/// Adds the path of one target to the active configuration and keeps every active path as it
+/// is. Unlike `SDC_TOPOLOGY_EXTEND` this does not depend on what Windows remembered for this set
+/// of monitors: once a monitor was stored as "not part of the desktop" (an earlier rollback or
+/// focus session), EXTEND leaves it off and the virtual monitor never came up.
+pub(super) fn activate_target(adapter: Luid, target_id: u32) -> Result<()> {
+    let raw = query(true, false)?;
+    let is_active = |p: &DISPLAYCONFIG_PATH_INFO| p.flags & PATH_ACTIVE != 0;
+    let target_of = |p: &DISPLAYCONFIG_PATH_INFO| (luid_to(p.targetInfo.adapterId), p.targetInfo.id);
+    if raw
+        .paths
+        .iter()
+        .any(|p| is_active(p) && target_of(p) == (adapter, target_id))
+    {
+        return Ok(());
+    }
+    let mut paths: Vec<DISPLAYCONFIG_PATH_INFO> =
+        raw.paths.iter().copied().filter(is_active).collect();
+    let used_sources: Vec<(Luid, u32)> = paths
+        .iter()
+        .map(|p| (luid_to(p.sourceInfo.adapterId), p.sourceInfo.id))
+        .collect();
+    // Every (source, target) combination is listed; take one whose source is still free.
+    let mut new = *raw
+        .paths
+        .iter()
+        .filter(|p| !is_active(p) && target_of(p) == (adapter, target_id))
+        .filter(|p| p.targetInfo.targetAvailable.as_bool())
+        .find(|p| !used_sources.contains(&(luid_to(p.sourceInfo.adapterId), p.sourceInfo.id)))
+        .ok_or_else(|| PlatformError::other("no free display source for the virtual monitor"))?;
+    new.flags |= PATH_ACTIVE;
+    new.sourceInfo.Anonymous.modeInfoIdx = MODE_IDX_INVALID;
+    new.targetInfo.Anonymous.modeInfoIdx = MODE_IDX_INVALID;
+    paths.push(new);
+    let mut last = 0;
+    for flags in [
+        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES,
+        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE,
+    ] {
+        // SAFETY: the slices are valid for the call; the OS copies the data. Mode indices of the
+        // kept paths refer to `raw.modes`, the new path has none (the OS picks the modes).
+        let rc = unsafe { SetDisplayConfig(Some(&paths), Some(&raw.modes), flags) };
+        if rc == 0 {
+            return Ok(());
+        }
+        last = rc;
+        tracing::warn!(rc, "SetDisplayConfig rejected the activation of the virtual monitor");
+    }
+    Err(os_err(
+        i64::from(last),
+        "SetDisplayConfig(activate virtual monitor)",
+    ))
+}
+
 /// Activates every connected target (`SDC_TOPOLOGY_EXTEND`).
 pub(super) fn extend_all() -> Result<()> {
     // SDC_ALLOW_CHANGES must not be combined with a topology flag (ERROR_INVALID_PARAMETER, 87;

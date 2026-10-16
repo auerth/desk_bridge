@@ -373,9 +373,61 @@ impl Engine {
                 y: p.y,
             })
             .collect();
+        // Remember the side the user put the other device on: a screen the layout has no
+        // placement for yet (new monitor, changed id) then lands there, not on the right.
+        if let Some(side) = self.placed_side() {
+            self.cfg.layout.default_side = side.into();
+        }
         self.cfg.layout.revision += 1;
         self.persist_config();
         self.rebuild_layout(true);
+    }
+
+    /// Side of the local screens on which the peer's primary screen is placed.
+    fn placed_side(&self) -> Option<&'static str> {
+        let s = self.session.as_ref()?;
+        let own = self.own_id().to_string();
+        let peer = s.link.peer.id.to_string();
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for p in self.cfg.layout.placement.iter().filter(|p| p.device_id == own) {
+            let Some((w, h)) = self
+                .local_screens
+                .iter()
+                .find(|x| x.id == p.screen_id)
+                .map(deskbridge_input::layout::layout_size)
+            else {
+                continue;
+            };
+            x0 = x0.min(f64::from(p.x));
+            y0 = y0.min(f64::from(p.y));
+            x1 = x1.max(f64::from(p.x) + w);
+            y1 = y1.max(f64::from(p.y) + h);
+        }
+        let primary = s
+            .remote_screens
+            .iter()
+            .find(|x| x.primary)
+            .or_else(|| s.remote_screens.first())?;
+        let p = self
+            .cfg
+            .layout
+            .placement
+            .iter()
+            .find(|p| p.device_id == peer && p.screen_id == primary.id)?;
+        if x0 > x1 {
+            return None;
+        }
+        let (w, h) = deskbridge_input::layout::layout_size(primary);
+        let (cx, cy) = (f64::from(p.x) + w / 2.0, f64::from(p.y) + h / 2.0);
+        Some(if cx < x0 {
+            "left"
+        } else if cx > x1 {
+            "right"
+        } else if cy < y0 {
+            "top"
+        } else {
+            "bottom"
+        })
     }
 
     /// Converts the remote hello screens (kept for tests).

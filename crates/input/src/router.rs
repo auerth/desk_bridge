@@ -229,6 +229,17 @@ impl Router {
             }
             _ => {}
         }
+        // The low-level hook reports where the cursor *would* go, before Windows clamps it to
+        // the desktop: a fast push to the left arrives as x = -6, which lies on no screen and
+        // found no edge until a slow sideways wiggle happened to report x = 0. Clamp like
+        // Windows does.
+        let ev = match ev {
+            CaptureEvent::MouseMove { x, y } if self.region.is_none() => {
+                let p = self.clamp_to_screens(Point { x, y });
+                CaptureEvent::MouseMove { x: p.x, y: p.y }
+            }
+            other => other,
+        };
         if let CaptureEvent::MouseMove { x, y } = ev {
             self.last_pos = Some(Point { x, y });
         }
@@ -252,6 +263,25 @@ impl Router {
             }
             State::Remote { .. } => self.on_capture_remote(ev),
         }
+    }
+
+    /// `p` itself if it lies on a local screen, else the nearest point of the nearest screen.
+    fn clamp_to_screens(&self, p: Point) -> Point {
+        if self.screens.is_empty() || self.screens.iter().any(|s| s.contains(p)) {
+            return p;
+        }
+        self.screens
+            .iter()
+            .map(|s| {
+                let c = Point {
+                    x: p.x.clamp(s.x, s.right() - 1),
+                    y: p.y.clamp(s.y, s.bottom() - 1),
+                };
+                let d = i64::from(c.x - p.x).pow(2) + i64::from(c.y - p.y).pow(2);
+                (d, c)
+            })
+            .min_by_key(|(d, _)| *d)
+            .map_or(p, |(_, c)| c)
     }
 
     /// Is `p` on an outer screen edge and does the motion (dx, dy) push against it?
@@ -640,6 +670,32 @@ mod tests {
         let a = r.on_capture(
             CaptureEvent::MouseRel { dx: 12, dy: 0 },
             t + Duration::from_millis(80),
+        );
+        assert!(has_enter(&a), "{a:?}");
+    }
+
+    #[test]
+    fn overshooting_hook_position_still_switches() {
+        // A fast flick: the hook reports a point beyond the screen, never the edge pixel itself.
+        let mut r = router(RouterConfig::default());
+        let a = r.on_capture(
+            CaptureEvent::MouseMove { x: 2571, y: 720 },
+            Instant::now(),
+        );
+        assert!(has_enter(&a), "{a:?}");
+        // Same with a dwell time: the follow-up raw deltas keep pushing against the edge.
+        let mut r = router(RouterConfig {
+            switch_delay: Duration::from_millis(50),
+            ..Default::default()
+        });
+        let t = Instant::now();
+        assert!(
+            r.on_capture(CaptureEvent::MouseMove { x: 2590, y: 720 }, t)
+                .is_empty()
+        );
+        let a = r.on_capture(
+            CaptureEvent::MouseRel { dx: 9, dy: 0 },
+            t + Duration::from_millis(60),
         );
         assert!(has_enter(&a), "{a:?}");
     }

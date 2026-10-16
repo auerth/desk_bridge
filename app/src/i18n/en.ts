@@ -187,6 +187,7 @@ export const en: Record<MessageKey, string> = {
   'audio.virtualTag': 'virtual',
   'audio.volume': 'Volume',
   'audio.mute': 'Mute in the PC headset',
+  'audio.mutedNow': 'Muted – nothing in the headset',
   'audio.level': 'Level',
   'audio.latency': 'Latency',
   'audio.latencyValue': '{n} ms',
