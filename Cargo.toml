@@ -64,7 +64,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rcgen = "0.13"
 sha2 = "0.10"
 spake2 = "0.4"
-hkdf = "0.12"
+hkdf = "0.13"
 hmac = "0.12"
 rand = "0.8"
 uuid = { version = "1", features = ["v7", "serde"] }
