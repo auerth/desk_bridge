@@ -53,6 +53,22 @@ pub(crate) type AudioSlots = Arc<
     )>,
 >;
 
+/// Name of the monitor created by the bundled virtual display driver.
+const VIRTUAL_MONITOR_NAME: &str = "VDD by MTT";
+
+/// The screens that take part in the layout. The virtual monitor is only meaningful on the
+/// laptop (the stream source); on the PC it would be a phantom screen next to the real one and
+/// push the laptop's placement into it.
+fn usable_screens(
+    mut screens: Vec<deskbridge_platform::screen::ScreenInfo>,
+    stream_source: bool,
+) -> Vec<deskbridge_platform::screen::ScreenInfo> {
+    if !stream_source {
+        screens.retain(|s| !s.name.starts_with(VIRTUAL_MONITOR_NAME));
+    }
+    screens
+}
+
 /// Messages processed by the actor.
 pub(crate) enum Msg {
     Ui {
@@ -301,6 +317,14 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
             Ok(Err(e)) => tracing::warn!("display recovery failed: {e}"),
             Err(e) => tracing::warn!("display recovery task failed: {e}"),
         }
+        // The virtual monitor only exists while focus mode runs. A driver install (or a crash)
+        // can leave it enabled: it would extend the desktop by a phantom 5120x1440 screen.
+        let dm = platform.display.clone();
+        match tokio::task::spawn_blocking(move || dm.disable_virtual()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::debug!("virtual display left as is: {e}"),
+            Err(e) => tracing::warn!("virtual display cleanup task failed: {e}"),
+        }
     }
     let peers = PeerStore::load(paths.peers_file())?;
     let transport = Arc::new(Transport::bind(identity.clone(), peers.clone(), bind)?);
@@ -312,7 +336,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
     let shutdown = Arc::new(tokio::sync::Notify::new());
 
     let own_id = identity.device_id;
-    let local_screens = platform.screens.screens();
+    let local_screens = usable_screens(platform.screens.screens(), config.device.stream_source);
     let router = Router::new(own_id, router_config(&config));
 
     let mut discovery = None;
@@ -746,7 +770,10 @@ impl Engine {
     }
 
     fn on_screens_changed(&mut self) {
-        self.local_screens = self.platform.screens.screens();
+        self.local_screens = usable_screens(
+            self.platform.screens.screens(),
+            self.cfg.device.stream_source,
+        );
         self.router.set_screens(self.local_screens.clone());
         self.refresh_hello();
         if let Some(s) = &self.session {
@@ -927,4 +954,20 @@ pub(crate) fn screen_from_pb(s: &pb::Screen) -> ScreenInfo {
 
 pub(crate) fn since_unix_ms() -> u64 {
     unix_ms()
+}
+
+#[cfg(test)]
+mod usable_screens_tests {
+    use super::usable_screens;
+    use deskbridge_platform::mock::screen;
+
+    #[test]
+    fn the_virtual_monitor_only_counts_on_the_stream_source() {
+        let mut v = screen(1, 5120, 0, 5120, 1440);
+        v.name = "VDD by MTT".into();
+        let real = screen(0, 0, 0, 5120, 1440);
+        let all = vec![real.clone(), v];
+        assert_eq!(usable_screens(all.clone(), false), vec![real]);
+        assert_eq!(usable_screens(all.clone(), true), all);
+    }
 }

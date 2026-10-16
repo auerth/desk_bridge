@@ -21,6 +21,7 @@
 
 !define DB_SETUP_EXE "deskbridge-setup.exe"
 !define DB_AGENT_EXE "deskbridge-agent.exe"
+!define DB_SERVICE_EXE "deskbridge-service.exe"
 !define DB_TASK_NAME "DeskBridge Agent"
 
 Var DbPayloadDir
@@ -59,6 +60,31 @@ Var DbPurgeArg
   Sleep 800
   nsExec::Exec 'taskkill.exe /F /IM "${DB_AGENT_EXE}"'
   Pop $0
+  ; 5. The service and its secure-desktop helper (same image, runs as SYSTEM) keep the exe locked
+  ;    when the graceful stop above did not finish; kill what is left of them as well.
+  nsExec::Exec 'taskkill.exe /F /T /IM "${DB_SERVICE_EXE}"'
+  Pop $0
+  nsExec::Exec 'taskkill.exe /F /T /IM "${DB_AGENT_EXE}"'
+  Pop $0
+  ; 6. Wait (up to 15 s) until Windows has really released the files.
+  Push $R1
+  StrCpy $R1 0
+  ${Do}
+    nsExec::ExecToStack 'cmd.exe /c tasklist /FO CSV /NH | findstr /I /C:"${DB_AGENT_EXE}" /C:"${DB_SERVICE_EXE}"'
+    Pop $0
+    Pop $1
+    ${If} $0 <> 0
+      ${Break}
+    ${EndIf}
+    ; still running: try again to kill, then wait
+    nsExec::Exec 'taskkill.exe /F /T /IM "${DB_SERVICE_EXE}"'
+    Pop $0
+    nsExec::Exec 'taskkill.exe /F /T /IM "${DB_AGENT_EXE}"'
+    Pop $0
+    Sleep 500
+    IntOp $R1 $R1 + 1
+  ${LoopWhile} $R1 < 30
+  Pop $R1
   ; The UI is handled by Tauri's own CheckIfAppIsRunning right after this hook.
 !macroend
 
