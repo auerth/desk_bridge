@@ -77,7 +77,9 @@ if ($NoFfmpeg) {
 else {
     $ffBin = Join-Path $root 'vendor\ffmpeg\bin'
     if (Test-Path $ffBin) {
-        $dlls = Get-ChildItem $ffBin -Filter *.dll
+        # Only the libraries the agent links (avdevice/avfilter/avformat are not needed for focus mode).
+        $needed = 'avcodec-*', 'avutil-*', 'swscale-*', 'swresample-*'
+        $dlls = @(Get-ChildItem $ffBin -Filter *.dll | Where-Object { $n = $_.Name; $needed | Where-Object { $n -like "$_.dll" } })
         if ($dlls.Count -eq 0) { Write-Warning "no DLLs in $ffBin" }
         else {
             $ffStage = Join-Path $stage 'ffmpeg'
