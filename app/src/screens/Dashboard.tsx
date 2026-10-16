@@ -1,4 +1,4 @@
-import { Lock, LockOpen, Mic, MoveRight, Play, Square } from 'lucide-react';
+import { ExternalLink, Lock, LockOpen, Mic, MoveRight, Play, Square } from 'lucide-react';
 import { useMemo } from 'react';
 import type { AppState } from '../api/types';
 import { chipModels, FeatureChip } from '../components/FeatureChip';
@@ -7,6 +7,8 @@ import { Banner, BrandIcon, Button, Card, PageHeader, Pill, Sparkline } from '..
 import { useLang, useT } from '../i18n/useT';
 import { formatMs, formatSince, rttQuality, type Quality } from '../lib/format';
 import { useStore } from '../store';
+import { getBackend } from '../api';
+import { RELEASES_URL } from '../brand';
 
 const QUALITY_COLOR: Record<Quality | 'off', string> = {
   excellent: 'var(--c-primary)',
@@ -155,6 +157,20 @@ export function Dashboard() {
           <DevicePair state={state} />
           {online && conn.since_unix_ms && <p className="hero__since">{t('dash.since', { time: formatSince(conn.since_unix_ms) })}</p>}
         </Card>
+      )}
+
+      {state.update.available && (
+        <Banner
+          tone="info"
+          title={t('dash.updateAvailable', { version: state.update.available })}
+          action={
+            <Button size="sm" variant="primary" icon={<ExternalLink size={15} aria-hidden />} onClick={() => void getBackend().openUrl(state.update.url ?? RELEASES_URL)}>
+              {t('settings.openRelease')}
+            </Button>
+          }
+        >
+          {t('dash.updateAvailableHint', { current: state.update.current })}
+        </Banner>
       )}
 
       {slowInput && p95 != null && (

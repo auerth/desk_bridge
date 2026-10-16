@@ -10,12 +10,14 @@ use deskbridge_platform::display::DisplayManager;
 use deskbridge_platform::input::{InputCapture, InputInjector};
 use deskbridge_platform::mock::{
     MockAudioCapture, MockAudioDevices, MockAudioPlayback, MockCapture, MockClipboard,
-    MockInjector, MockLocalOutput, MockScreens, MockVirtualAudio, audio_device, screen,
+    MockInjector, MockLocalOutput, MockScreens, MockVirtualAudio, MockWebClient, audio_device,
+    screen,
 };
 use deskbridge_platform::power::{PowerEvent, PowerManager};
 use deskbridge_platform::screen::ScreenProvider;
 use deskbridge_platform::secret::{PlainProtector, SecretProtector};
 use deskbridge_platform::system::{NullSystemServices, SystemServices};
+use deskbridge_platform::web::WebClient;
 use deskbridge_platform::{Result, UnboundedSender};
 use deskbridge_video::backend::{VideoBackend, mock::MockVideoBackend};
 use std::sync::Arc;
@@ -36,6 +38,8 @@ pub struct Platform {
     pub system: Arc<dyn SystemServices>,
     pub video: Arc<dyn VideoBackend>,
     pub display: Arc<dyn DisplayManager>,
+    /// HTTPS GET for the release check.
+    pub web: Arc<dyn WebClient>,
     /// OS name reported in `Hello`.
     pub os: String,
 }
@@ -69,6 +73,7 @@ pub struct MockHandles {
     pub local_output: Arc<MockLocalOutput>,
     pub video: Arc<MockVideoBackend>,
     pub display: Arc<MockDisplayManager>,
+    pub web: Arc<MockWebClient>,
 }
 
 impl Platform {
@@ -92,6 +97,7 @@ impl Platform {
         let local_output = Arc::new(MockLocalOutput::default());
         let video = Arc::new(MockVideoBackend::new((64, 36)));
         let display = Arc::new(MockDisplayManager::new());
+        let web = Arc::new(MockWebClient::default());
         let p = Self {
             capture: capture.clone(),
             injector: injector.clone(),
@@ -107,6 +113,7 @@ impl Platform {
             system: Arc::new(NullSystemServices),
             video: video.clone(),
             display: display.clone(),
+            web: web.clone(),
             os: "mock".into(),
         };
         (
@@ -123,6 +130,7 @@ impl Platform {
                 local_output,
                 video,
                 display,
+                web,
             },
         )
     }

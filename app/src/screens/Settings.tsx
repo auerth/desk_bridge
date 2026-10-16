@@ -1,4 +1,4 @@
-import { FileArchive, FolderOpen, Send, Laptop, Monitor, Pause, Play, Plus, RotateCw, Trash2, Unlink } from 'lucide-react';
+import { ExternalLink, FileArchive, FolderOpen, Send, Laptop, Monitor, Pause, Play, Plus, RotateCw, Trash2, Unlink } from 'lucide-react';
 import { useState } from 'react';
 import { getBackend } from '../api';
 import { PairedBadge, PairingPanel } from '../components/Pairing';
@@ -6,14 +6,7 @@ import { Button, Card, ConfirmDialog, Modal, PageHeader, Pill, PromptDialog, Row
 import { useLang, useT } from '../i18n/useT';
 import { formatMs } from '../lib/format';
 import { useStore } from '../store';
-
-type UpdateStatus =
-  | { kind: 'idle' }
-  | { kind: 'checking' }
-  | { kind: 'uptodate' }
-  | { kind: 'available'; version: string }
-  | { kind: 'installing' }
-  | { kind: 'error'; text: string };
+import { RELEASES_URL } from '../brand';
 
 /** Comma separated list of IP addresses stored as a string array / single string. */
 function AddressListField({ label, value, placeholder, onCommit }: { label: string; value: string; placeholder: string; onCommit: (v: string) => void }) {
@@ -62,7 +55,6 @@ export function Settings() {
   const config = useStore((s) => s.config);
   const update = useStore((s) => s.updateConfig);
   const send = useStore((s) => s.send);
-  const updateOffer = useStore((s) => s.updateOffer);
   const pushToast = useStore((s) => s.pushToast);
   const lang = useLang();
 
@@ -71,24 +63,11 @@ export function Settings() {
   const [pairOpen, setPairOpen] = useState(false);
   const [paired, setPaired] = useState<string | null | undefined>(undefined);
   const [host, setHost] = useState('');
-  const [upd, setUpd] = useState<UpdateStatus>({ kind: 'idle' });
   const [latency, setLatency] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
 
   if (!state || !config) return null;
   const backend = getBackend();
-
-  const checkUpdate = async () => {
-    setUpd({ kind: 'checking' });
-    void send({ type: 'check_for_update' }, { silent: true });
-    try {
-      const r = await backend.checkUpdate();
-      setUpd(r ? { kind: 'available', version: r.version } : { kind: 'uptodate' });
-    } catch (e) {
-      const raw = String(e instanceof Error ? e.message : e);
-      setUpd({ kind: 'error', text: raw.includes('updater_unavailable') ? t('settings.updateNotConfigured') : t('settings.updateFailed', { error: raw }) });
-    }
-  };
 
   const addHost = async () => {
     const h = host.trim();
@@ -120,7 +99,7 @@ export function Settings() {
   const m = state.metrics;
   const ms = (us: number | null) => (us == null ? '–' : formatMs(us, lang));
 
-  const available = upd.kind === 'available' ? upd.version : (updateOffer?.version ?? state.update.available);
+  const upd = state.update;
 
   return (
     <>
@@ -255,38 +234,25 @@ export function Settings() {
           title={t('settings.version', { version: state.update.current || state.device.version })}
           description={
             <span role="status">
-              {upd.kind === 'checking' || state.update.checking
+              {upd.checking
                 ? t('settings.checking')
-                : upd.kind === 'uptodate'
-                  ? t('settings.upToDate')
-                  : upd.kind === 'error'
-                    ? upd.text
-                    : upd.kind === 'installing'
-                      ? t('settings.updateInstalling')
-                      : available
-                        ? t('settings.updateAvailable', { version: available })
-                        : undefined}
+                : upd.available
+                  ? t('settings.updateAvailable', { version: upd.available })
+                  : upd.error
+                    ? t('settings.updateFailed', { error: upd.error })
+                    : upd.last_checked_unix_ms
+                      ? t('settings.upToDate')
+                      : undefined}
             </span>
           }
         >
           <div className="btn-group">
-            <Button size="sm" loading={upd.kind === 'checking'} onClick={() => void checkUpdate()}>
+            <Button size="sm" loading={upd.checking} onClick={() => void send({ type: 'check_for_update' })}>
               {t('settings.checkUpdate')}
             </Button>
-            {available && upd.kind !== 'installing' && (
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={async () => {
-                  setUpd({ kind: 'installing' });
-                  try {
-                    await backend.installUpdate();
-                  } catch (e) {
-                    setUpd({ kind: 'error', text: t('settings.updateFailed', { error: String(e instanceof Error ? e.message : e) }) });
-                  }
-                }}
-              >
-                {t('settings.updateInstall')}
+            {upd.available && (
+              <Button size="sm" variant="primary" icon={<ExternalLink size={15} aria-hidden />} onClick={() => void backend.openUrl(upd.url ?? RELEASES_URL)}>
+                {t('settings.openRelease')}
               </Button>
             )}
           </div>

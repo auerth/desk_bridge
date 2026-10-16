@@ -586,6 +586,25 @@ impl VirtualAudio for MockVirtualAudio {
     }
 }
 
+/// Web client stand-in: answers every GET with `response` (or fails when it is `None`).
+#[derive(Default)]
+pub struct MockWebClient {
+    pub response: Mutex<Option<(u16, String)>>,
+    pub requests: Mutex<Vec<String>>,
+}
+
+impl crate::web::WebClient for MockWebClient {
+    fn get(&self, url: &str) -> Result<(u16, String)> {
+        self.requests.lock().push(url.to_string());
+        self.response
+            .lock()
+            .clone()
+            .ok_or(crate::PlatformError::Unsupported(
+                "mock web: no response set",
+            ))
+    }
+}
+
 /// Local speaker muting stand-in: remembers the mute state per device.
 #[derive(Default)]
 pub struct MockLocalOutput {

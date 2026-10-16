@@ -124,6 +124,8 @@ pub(crate) enum Msg {
         reason: String,
     },
     AudioDevice(deskbridge_platform::audio::DeviceEvent),
+    /// Result of the release check: the newer release, `None` when up to date.
+    UpdateChecked(Result<Option<update::ReleaseInfo>, String>),
     Tick,
     Shutdown,
 }
@@ -264,6 +266,7 @@ pub(crate) struct Engine {
     pub(crate) xfer: transfers::Transfers,
     pub(crate) update_out: Option<update::OutgoingUpdate>,
     pub(crate) update_in: Option<pb::UpdateOffer>,
+    pub(crate) release_check: update::ReleaseCheck,
     pub cursor_locked: bool,
     pub warnings: Vec<WarningDto>,
 
@@ -440,6 +443,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         xfer: transfers::Transfers::new(Some(paths_data_dir)),
         update_out: None,
         update_in: None,
+        release_check: update::ReleaseCheck::default(),
         cursor_locked: false,
         warnings: Vec::new(),
         dirty: true,
@@ -618,6 +622,7 @@ impl Engine {
             Msg::FocusSourceFailed { reason } => self.on_focus_source_failed(&reason),
             Msg::FocusViewer(u) => self.on_focus_viewer_update(u),
             Msg::AudioDevice(ev) => self.on_audio_device_event(ev),
+            Msg::UpdateChecked(r) => self.on_update_checked(r),
             Msg::Shutdown => {}
         }
     }
@@ -832,6 +837,7 @@ impl Engine {
 
         if self.tick_count.is_multiple_of(8) {
             self.report_mic_stats();
+            self.tick_release_check();
         }
         if let Some(s) = &mut self.session {
             // heartbeat every 500 ms

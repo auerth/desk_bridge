@@ -408,6 +408,22 @@ mod tests {
     }
 
     #[test]
+    fn clearing_keeps_running_transfers_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = TransferManager::new(Some(dir.path().to_path_buf()));
+        m.begin(1, Direction::Receive, "done", 1, 10, None).finish();
+        m.begin(2, Direction::Receive, "failed", 1, 10, None)
+            .fail("x");
+        let _running = m.begin(3, Direction::Send, "run", 1, 10, None);
+        m.clear_finished();
+        let ids: Vec<u64> = m.snapshot().iter().map(|i| i.id).collect();
+        assert_eq!(ids, [3]);
+        // The cleared history stays cleared after a restart.
+        let m2 = TransferManager::new(Some(dir.path().to_path_buf()));
+        assert!(m2.snapshot().iter().all(|i| i.id == 3));
+    }
+
+    #[test]
     fn cancel_flag_is_visible_to_the_handle() {
         let m = TransferManager::new(None);
         let h = m.begin(m.next_id(), Direction::Send, "x", 1, 1, None);

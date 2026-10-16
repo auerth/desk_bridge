@@ -565,6 +565,33 @@ async fn virtual_mic_is_enabled_and_default_only_while_the_headset_mic_is_on() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn release_check_reports_a_newer_github_release() {
+    let (pc, lp) = setup().await;
+    *pc.m.web.response.lock() = Some((
+        200,
+        r#"{"tag_name":"v9.9.9","html_url":"https://github.com/auerth/desk_bridge/releases/tag/v9.9.9","body":""}"#.into(),
+    ));
+    pc.h.request(UiRequest::CheckForUpdate).await.unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let u = pc.h.state().await.update;
+        if u.available.as_deref() == Some("9.9.9") {
+            assert!(u.url.unwrap().ends_with("/tag/v9.9.9"));
+            assert!(!u.checking);
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no update reported: {u:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(pc.m.web.requests.lock()[0].contains("/repos/auerth/desk_bridge/releases/latest"));
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn mic_is_unavailable_without_a_driver() {
     let (pc, lp) = setup().await;
     let st = pc.h.state().await;

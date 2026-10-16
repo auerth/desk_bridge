@@ -176,7 +176,14 @@ function seedState(): AppState {
           { id: 2, direction: 'receive', name: 'Screenshots (14 Dateien)', files: 14, total_bytes: 48_900_000, done_bytes: 48_900_000, status: 'done', path: 'C:\\Users\\thorben\\Downloads\\Desk Bridge\\Screenshots', started_unix_ms: Date.now() - 95 * 60_000 },
           { id: 1, direction: 'receive', name: 'backup-2026-10.zip', files: 1, total_bytes: 1_380_000_000, done_bytes: 410_000_000, status: 'failed', path: null, started_unix_ms: Date.now() - 26 * 3600_000 },
         ],
-    update: { current: '0.1.0', available: has('update') ? '0.2.0' : null, checking: false },
+    update: {
+      current: '0.1.0',
+      available: has('update') ? '0.2.0' : null,
+      checking: false,
+      url: has('update') ? 'https://github.com/auerth/desk_bridge/releases' : null,
+      error: null,
+      last_checked_unix_ms: null,
+    },
     metrics: { rtt_history_us: connected ? Array.from({ length: 60 }, (_, i) => 900 + Math.round(Math.sin(i / 5) * 160 + ((i * 37) % 11) * 12)) : [], input_latency_p50_us: connected ? 480 : null, input_latency_p95_us: connected ? (params.get('p95') === 'high' ? 5200 : 1350) : null, input_latency_max_us: connected ? 3100 : null, audio_buffer_fill_ms: 9.6, audio_drift_ppm: 12, audio_loss_pct: 0, agent_cpu_pct: 0.4, agent_rss_mb: 42 },
     paused: false,
   };
@@ -507,6 +514,10 @@ export function createMockBackend(): Backend {
       case 'open_incoming_folder':
       case 'show_transfer_in_folder':
         return null;
+      case 'clear_transfer_history':
+        state.transfers = state.transfers.filter((t) => t.status === 'running');
+        pushState();
+        return null;
       case 'export_diagnostics':
         await sleep(600);
         emitEvent({ kind: 'diagnostics_exported', path: 'C:\\Users\\thorben\\Desktop\\DeskBridge-Diagnose-2026-10-16.zip' });
@@ -516,6 +527,7 @@ export function createMockBackend(): Backend {
         pushState();
         await sleep(1200);
         state.update.checking = false;
+        state.update.last_checked_unix_ms = Date.now();
         pushState();
         return null;
       case 'offer_partner_update':

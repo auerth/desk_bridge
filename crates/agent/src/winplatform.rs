@@ -50,6 +50,9 @@ pub fn build() -> Platform {
         system: Arc::new(ServiceClient::new()),
         video: Arc::new(deskbridge_video::WindowsVideoBackend::new()),
         display: Arc::new(deskbridge_platform_windows::display::WinDisplayManager::new()),
+        web: Arc::new(deskbridge_platform_windows::web::WinHttpClient::new(
+            format!("DeskBridge/{}", deskbridge_core::brand::VERSION),
+        )),
         os: "Windows".to_string(),
     }
 }

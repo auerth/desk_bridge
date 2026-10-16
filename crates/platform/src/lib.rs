@@ -17,6 +17,7 @@ pub mod screen;
 pub mod secret;
 pub mod system;
 pub mod video;
+pub mod web;
 
 pub use error::{PlatformError, Result};
 

@@ -1,13 +1,18 @@
 //! "Partnergerät auch aktualisieren": the installer package travels over the existing connection,
 //! the partner is asked first and never installs anything automatically (plan 12.3).
+//!
+//! Release check: the newest GitHub release is compared with the running version; a newer one
+//! is shown with a link to its release page. Nothing is downloaded or installed automatically.
 
-use super::Engine;
 use super::transfers::UpdateMeta;
+use super::{Engine, Msg};
 use crate::ipc::UiEvent;
+use crate::ipc::UpdateDto;
 use deskbridge_proto::pb;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 pub(crate) struct OutgoingUpdate {
     pub path: PathBuf,
@@ -30,7 +35,162 @@ pub(crate) fn sha256_file(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
     Ok(h.finalize().to_vec())
 }
 
+/// First automatic check after the agent started (lets the network come up).
+const FIRST_CHECK_AFTER: Duration = Duration::from_secs(30);
+const CHECK_EVERY: Duration = Duration::from_secs(24 * 3600);
+
+/// A release newer than the running version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReleaseInfo {
+    pub version: String,
+    pub url: String,
+    pub notes: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct ReleaseCheck {
+    started: Instant,
+    checking: bool,
+    last_attempt: Option<Instant>,
+    last_checked_unix_ms: Option<u64>,
+    available: Option<ReleaseInfo>,
+    error: Option<String>,
+}
+
+impl Default for ReleaseCheck {
+    fn default() -> Self {
+        Self {
+            started: Instant::now(),
+            checking: false,
+            last_attempt: None,
+            last_checked_unix_ms: None,
+            available: None,
+            error: None,
+        }
+    }
+}
+
+/// "v1.2.3", "1.2.3", "v1.2.3-beta.1" → `(1, 2, 3)`.
+pub(crate) fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
+    let s = s.trim().trim_start_matches(['v', 'V']);
+    let core = s.split(['-', '+']).next()?;
+    let mut it = core.split('.').map(|p| p.parse::<u64>().ok());
+    let v = (
+        it.next()??,
+        it.next().flatten().unwrap_or(0),
+        it.next().flatten().unwrap_or(0),
+    );
+    Some(v)
+}
+
+/// Interprets the answer of `releases/latest`: the release if it is newer than `current`.
+pub(crate) fn parse_latest_release(
+    status: u16,
+    body: &str,
+    current: &str,
+) -> Result<Option<ReleaseInfo>, String> {
+    match status {
+        200 => {}
+        // No release published yet.
+        404 => return Ok(None),
+        403 | 429 => return Err("GitHub-Abfragelimit erreicht, später erneut".into()),
+        s => return Err(format!("GitHub antwortet mit HTTP {s}")),
+    }
+    let v: Value = serde_json::from_str(body).map_err(|e| format!("Antwort unlesbar: {e}"))?;
+    let tag = v["tag_name"].as_str().unwrap_or_default();
+    let (Some(latest), Some(running)) = (parse_version(tag), parse_version(current)) else {
+        return Err(format!("unbekanntes Versionsformat: {tag}"));
+    };
+    if latest <= running {
+        return Ok(None);
+    }
+    Ok(Some(ReleaseInfo {
+        version: tag.trim_start_matches(['v', 'V']).to_string(),
+        url: v["html_url"]
+            .as_str()
+            .unwrap_or(crate::brand::RELEASES_URL)
+            .to_string(),
+        notes: v["body"].as_str().unwrap_or_default().to_string(),
+    }))
+}
+
 impl Engine {
+    pub(crate) fn update_dto(&self) -> UpdateDto {
+        let c = &self.release_check;
+        UpdateDto {
+            current: crate::brand::VERSION.into(),
+            available: c.available.as_ref().map(|r| r.version.clone()),
+            checking: c.checking,
+            url: c.available.as_ref().map(|r| r.url.clone()),
+            error: c.error.clone(),
+            last_checked_unix_ms: c.last_checked_unix_ms,
+        }
+    }
+
+    /// Asks GitHub for the newest release in the background.
+    pub(crate) fn start_release_check(&mut self) {
+        if self.release_check.checking {
+            return;
+        }
+        self.release_check.checking = true;
+        self.release_check.last_attempt = Some(Instant::now());
+        self.dirty = true;
+        let web = self.platform.web.clone();
+        let tx = self.msg_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let r = web
+                .get(crate::brand::LATEST_RELEASE_API)
+                .map_err(|e| e.to_string())
+                .and_then(|(status, body)| {
+                    parse_latest_release(status, &body, crate::brand::VERSION)
+                });
+            let _ = tx.send(Msg::UpdateChecked(r));
+        });
+    }
+
+    /// Automatic check: 30 s after start, then daily (if enabled).
+    pub(crate) fn tick_release_check(&mut self) {
+        if !self.cfg.update.check_automatically || self.release_check.checking {
+            return;
+        }
+        let due = match self.release_check.last_attempt {
+            None => self.release_check.started.elapsed() >= FIRST_CHECK_AFTER,
+            Some(t) => t.elapsed() >= CHECK_EVERY,
+        };
+        if due {
+            self.start_release_check();
+        }
+    }
+
+    pub(crate) fn on_update_checked(&mut self, r: Result<Option<ReleaseInfo>, String>) {
+        let c = &mut self.release_check;
+        c.checking = false;
+        match r {
+            Ok(found) => {
+                c.error = None;
+                c.last_checked_unix_ms = Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_millis() as u64),
+                );
+                let new = found.is_some() && found != c.available;
+                c.available = found;
+                if new && let Some(rel) = c.available.clone() {
+                    tracing::info!(version = %rel.version, url = %rel.url, "new release available");
+                    self.emit(UiEvent::UpdateAvailable {
+                        version: rel.version,
+                        notes: rel.notes,
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::info!("release check failed: {e}");
+                c.error = Some(e);
+            }
+        }
+        self.dirty = true;
+    }
+
     /// UI: offer the installer at `path` (version `version`) to the connected partner.
     pub(crate) fn offer_partner_update(
         &mut self,
@@ -129,5 +289,33 @@ impl Engine {
             version: version.to_string(),
             sha256: sha,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_parse() {
+        assert_eq!(parse_version("v1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_version("0.2.0-beta.1"), Some((0, 2, 0)));
+        assert_eq!(parse_version("V2.0"), Some((2, 0, 0)));
+        assert_eq!(parse_version("release"), None);
+    }
+
+    #[test]
+    fn latest_release_is_compared_with_the_running_version() {
+        let body = r#"{"tag_name":"v0.2.0","html_url":"https://github.com/auerth/desk_bridge/releases/tag/v0.2.0","body":"Notes"}"#;
+        let r = parse_latest_release(200, body, "0.1.0").unwrap().unwrap();
+        assert_eq!(r.version, "0.2.0");
+        assert!(r.url.ends_with("/tag/v0.2.0"));
+        assert_eq!(r.notes, "Notes");
+        assert_eq!(parse_latest_release(200, body, "0.2.0").unwrap(), None);
+        assert_eq!(parse_latest_release(200, body, "0.3.1").unwrap(), None);
+        // No release published yet.
+        assert_eq!(parse_latest_release(404, "", "0.1.0").unwrap(), None);
+        assert!(parse_latest_release(403, "", "0.1.0").is_err());
+        assert!(parse_latest_release(200, "not json", "0.1.0").is_err());
     }
 }

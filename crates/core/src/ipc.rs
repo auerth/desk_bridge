@@ -82,6 +82,8 @@ pub enum UiRequest {
     ShowTransferInFolder {
         transfer_id: u64,
     },
+    /// Removes finished (done, failed, cancelled) transfers from the history.
+    ClearTransferHistory,
     ExportDiagnostics {
         target: Option<String>,
     },
@@ -422,6 +424,12 @@ pub struct UpdateDto {
     pub current: String,
     pub available: Option<String>,
     pub checking: bool,
+    /// Release page of `available` (opened in the browser; nothing is installed automatically).
+    pub url: Option<String>,
+    /// Last check failed with this message.
+    pub error: Option<String>,
+    /// Time of the last completed check.
+    pub last_checked_unix_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

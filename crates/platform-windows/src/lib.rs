@@ -13,3 +13,4 @@ pub mod power;
 pub mod screen;
 pub mod secret;
 pub mod video;
+pub mod web;

@@ -37,6 +37,7 @@ export type UiRequest =
   | { type: 'send_files'; paths: string[] }
   | { type: 'open_incoming_folder' }
   | { type: 'show_transfer_in_folder'; transfer_id: number }
+  | { type: 'clear_transfer_history' }
   | { type: 'export_diagnostics'; target: string | null }
   | { type: 'check_for_update' }
   | { type: 'offer_partner_update'; path: string; version: string }
@@ -221,6 +222,10 @@ export interface UpdateDto {
   current: string;
   available: string | null;
   checking: boolean;
+  /** Release page of `available` (opened in the browser, nothing is installed automatically). */
+  url: string | null;
+  error: string | null;
+  last_checked_unix_ms: number | null;
 }
 
 export interface MetricsDto {

@@ -89,12 +89,21 @@ impl Engine {
             R::SendFiles { paths } => self.send_files(paths),
             R::OpenIncomingFolder => self.open_incoming_folder(),
             R::ShowTransferInFolder { transfer_id } => self.show_transfer(transfer_id),
+            R::ClearTransferHistory => {
+                self.xfer.mgr.clear_finished();
+                self.dirty = true;
+                Ok(serde_json::json!({ "ok": true }))
+            }
             R::ListAudioDevices => self.list_audio_devices(),
             R::PlayTestTone => self.play_test_tone(),
             R::ExportDiagnostics { target } => self.export_diagnostics(target),
             R::OfferPartnerUpdate { path, version } => self.offer_partner_update(path, version),
             R::AnswerPartnerUpdate { accept } => self.answer_partner_update(accept),
-            R::CheckForUpdate | R::MakeNetworkPrivate | R::RestartAgent => {
+            R::CheckForUpdate => {
+                self.start_release_check();
+                Ok(serde_json::json!({ "started": true }))
+            }
+            R::MakeNetworkPrivate | R::RestartAgent => {
                 Err("Diese Funktion ist noch nicht verfügbar".into())
             }
             _ => Err("Unbekannte Anfrage".into()),

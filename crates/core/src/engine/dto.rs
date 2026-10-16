@@ -4,7 +4,7 @@ use super::Engine;
 use crate::ipc::{
     AppState, AudioFeatureDto, ConnState, ConnectionDto, DeviceDto, DiscoveredDto, FeatureDto,
     FeaturesDto, FocusDto, Live, MetricsDto, PairingDto, PeerDto, PlacementDto, ScreenDto,
-    ScreensDto, UpdateDto,
+    ScreensDto,
 };
 use deskbridge_net::peers::Peer;
 use deskbridge_net::short_fp;
@@ -197,11 +197,7 @@ impl Engine {
             cursor_locked: self.cursor_locked,
             warnings: self.warnings.clone(),
             transfers: self.transfers_snapshot(),
-            update: UpdateDto {
-                current: crate::brand::VERSION.into(),
-                available: None,
-                checking: false,
-            },
+            update: self.update_dto(),
             metrics: MetricsDto {
                 rtt_history_us: self.rtt_history.iter().copied().collect(),
                 input_latency_p50_us: self.input_latency_percentiles().0,

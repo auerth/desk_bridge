@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, FolderOpen, UploadCloud, XCircle } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, FolderOpen, Trash2, UploadCloud, XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useState } from 'react';
 import { getBackend } from '../api';
@@ -120,7 +120,16 @@ export function Files() {
       {!online && <Banner tone="info" title={t('files.needPeer')} />}
       <DropZone peerName={peerName} enabled={online} />
 
-      <Card title={t('files.history')}>
+      <Card
+        title={t('files.history')}
+        actions={
+          state.transfers.some((tr) => tr.status !== 'running') ? (
+            <Button size="sm" variant="ghost" icon={<Trash2 size={16} aria-hidden />} onClick={() => void send({ type: 'clear_transfer_history' })}>
+              {t('files.clearHistory')}
+            </Button>
+          ) : undefined
+        }
+      >
         {state.transfers.length === 0 ? (
           <p className="muted empty">{t('files.historyEmpty')}</p>
         ) : (
