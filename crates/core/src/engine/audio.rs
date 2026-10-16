@@ -56,7 +56,7 @@ pub(crate) struct AudioState {
     // --- stream source side (laptop)
     speaker_tx: Option<SendPipe>,
     /// Our own speakers were muted by us: (render endpoint id, mute state before we touched it).
-    muted_local: Option<(String, bool)>,
+    muted_local: Option<Vec<(String, bool)>>,
     route_speaker_wanted: bool,
     // --- microphone: sender on the headset device, sink on the stream source
     mic_tx: Option<SendPipe>,
@@ -324,22 +324,28 @@ impl Engine {
         if !self.cfg.audio.laptop_to_pc.mute_local_output || self.audio.muted_local.is_some() {
             return;
         }
-        match self.platform.local_output.set_default_render_mute(true) {
-            Ok((id, prev)) => {
+        match self.platform.local_output.set_forwarded_render_mute(true) {
+            Ok(list) => {
+                let devices: Vec<_> = list
+                    .iter()
+                    .map(|(id, prev)| serde_json::json!({ "id": id, "prev": prev }))
+                    .collect();
                 let _ = std::fs::write(
                     self.speaker_backup_file(),
-                    serde_json::json!({ "id": id, "prev": prev }).to_string(),
+                    serde_json::json!({ "devices": devices }).to_string(),
                 );
-                self.audio.muted_local = Some((id, prev));
+                self.audio.muted_local = Some(list);
             }
             Err(e) => tracing::warn!("could not mute the local speakers: {e}"),
         }
     }
 
     fn restore_local_speakers(&mut self) {
-        if let Some((id, prev)) = self.audio.muted_local.take() {
-            if let Err(e) = self.platform.local_output.set_render_mute(&id, prev) {
-                tracing::warn!("could not restore the local speakers: {e}");
+        if let Some(list) = self.audio.muted_local.take() {
+            for (id, prev) in list {
+                if let Err(e) = self.platform.local_output.set_render_mute(&id, prev) {
+                    tracing::warn!("could not restore the local speakers: {e}");
+                }
             }
             let _ = std::fs::remove_file(self.speaker_backup_file());
         }
@@ -544,6 +550,9 @@ impl Engine {
     }
 
     pub(crate) fn on_audio_device_event(&mut self, ev: DeviceEvent) {
+        if self.cfg.device.stream_source && self.audio.speaker_tx.is_some() {
+            self.on_forwarded_output_event(&ev);
+        }
         if !self.cfg.device.headset_sink {
             return;
         }
@@ -588,6 +597,26 @@ impl Engine {
             }
         }
         self.dirty = true;
+    }
+
+    /// Source side: the loopback mixes every real output of this device (Teams & co. often play
+    /// on another one than the default). A new output, a vanished one or a new default changes
+    /// that set, so the capture is reopened.
+    fn on_forwarded_output_event(&mut self, ev: &DeviceEvent) {
+        let render = match ev {
+            DeviceEvent::Added(d) => d.kind == DeviceKind::Render,
+            DeviceEvent::Removed { .. } => true,
+            DeviceEvent::DefaultChanged { kind, .. } => *kind == DeviceKind::Render,
+        };
+        if !render {
+            return;
+        }
+        tracing::info!(
+            ?ev,
+            "audio outputs changed, reopening the laptop sound capture"
+        );
+        self.drop_speaker_source();
+        self.start_speaker_source();
     }
 
     // ---------------------------------------------------------------------------------------

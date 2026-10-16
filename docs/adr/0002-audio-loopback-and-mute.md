@@ -38,7 +38,14 @@ path exists (see ADR 0003).
 
 ## Decision
 
-1. Use loopback on the **default render device** of the stream source (laptop).
+1. Use loopback on the **default render device** of the stream source (laptop), **mixed with the
+   loopback of every other active real output** (amended 2026-10-16: Teams & co. play on the
+   default *communications* device or on an output picked in their own settings, so a call was
+   silent in the headset). Virtual cables are excluded ("CABLE Input" carries the headset mic and
+   would echo). The mix runs on a QPC clock with a per-output FIFO (15 ms prebuffer, backlog
+   trimmed above 50 ms), so an idle default device does not stall the others. "Mute the laptop"
+   mutes all forwarded outputs; the capture is reopened when outputs appear, vanish or the
+   default changes.
 2. The UI offers "Laptop-Lautsprecher stumm lassen" (the user mutes the laptop; Desk Bridge keeps
    streaming). If a driver attenuates before the tap (test above fails), the documented
    workaround is to select a *different* render device as default whose volume is left at 100 %

@@ -3,10 +3,7 @@
 use crate::secure::{SecureDesktopInjector, ServiceClient};
 use deskbridge_core::platform::Platform;
 use deskbridge_platform_windows::{
-    audio::{
-        CableVirtualAudio, VirtualAudioStub, WasapiCapture, WasapiDevices, WasapiPlayback,
-        WinLocalOutput,
-    },
+    audio::{CableVirtualAudio, WasapiCapture, WasapiDevices, WasapiPlayback, WinLocalOutput},
     clipboard::WinClipboard,
     input::{WinInputCapture, WinInputInjector},
     power::WinPowerManager,
@@ -16,15 +13,11 @@ use deskbridge_platform_windows::{
 use std::sync::Arc;
 
 /// A virtual audio cable is used when its (Microsoft-signed) driver is installed, otherwise the
-/// microphone feature honestly reports "not available" (ADR 0003).
+/// microphone feature honestly reports "not available" (ADR 0003). The cable backend checks for
+/// the driver on every call, so a cable installed (or enumerated late at logon) after the agent
+/// started is picked up with the next connection.
 fn virtual_audio() -> Arc<dyn deskbridge_platform::audio::VirtualAudio> {
-    use deskbridge_platform::audio::VirtualAudio;
-    let cable = CableVirtualAudio::new();
-    if cable.available() {
-        Arc::new(cable)
-    } else {
-        Arc::new(VirtualAudioStub)
-    }
+    Arc::new(CableVirtualAudio::new())
 }
 
 pub fn build() -> Platform {

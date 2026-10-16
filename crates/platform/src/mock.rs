@@ -575,10 +575,10 @@ impl MockLocalOutput {
 }
 
 impl LocalOutput for MockLocalOutput {
-    fn set_default_render_mute(&self, mute: bool) -> Result<(String, bool)> {
+    fn set_forwarded_render_mute(&self, mute: bool) -> Result<Vec<(String, bool)>> {
         let id = "out1".to_string();
         let prev = self.muted.lock().insert(id.clone(), mute).unwrap_or(false);
-        Ok((id, prev))
+        Ok(vec![(id, prev)])
     }
 
     fn set_render_mute(&self, device_id: &str, mute: bool) -> Result<()> {

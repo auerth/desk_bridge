@@ -126,6 +126,27 @@ fn list_with(en: &IMMDeviceEnumerator, kind: DeviceKind) -> Result<Vec<DeviceDet
     }
 }
 
+/// Most render endpoints a forwarding loopback mixes (WaitForMultipleObjects allows 64 handles).
+const MAX_FORWARDED: usize = 16;
+
+/// Render endpoints whose sound is forwarded to the other device, as `(id, friendly name)`: the
+/// default device first, then every other active real output. Teams & co. usually play on the
+/// default *communications* device or on one picked in their own settings, which is often not
+/// the default device. Virtual cables are left out: "CABLE Input" carries the headset microphone
+/// and would echo it back into the headset.
+pub(crate) fn forwarded_render_endpoints(
+    en: &IMMDeviceEnumerator,
+) -> Result<Vec<(String, String)>> {
+    let mut list = list_with(en, DeviceKind::Render)?;
+    list.sort_by_key(|d| (!d.info.is_default, !d.info.is_default_communications));
+    Ok(list
+        .into_iter()
+        .filter(|d| d.info.is_default || !d.info.is_virtual)
+        .take(MAX_FORWARDED)
+        .map(|d| (d.info.id, d.info.name))
+        .collect())
+}
+
 /// Snapshot of an endpoint's volume / mute state (diagnostics, e.g. loopback-with-mute probing).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EndpointVolume {
@@ -191,8 +212,23 @@ impl WinLocalOutput {
 }
 
 impl deskbridge_platform::audio::LocalOutput for WinLocalOutput {
-    fn set_default_render_mute(&self, mute: bool) -> Result<(String, bool)> {
-        set_render_mute(None, mute)
+    fn set_forwarded_render_mute(&self, mute: bool) -> Result<Vec<(String, bool)>> {
+        let ids = {
+            let _com = ComGuard::init();
+            let en = enumerator().map_err(os_err)?;
+            forwarded_render_endpoints(&en)?
+        };
+        if ids.is_empty() {
+            return Ok(vec![set_render_mute(None, mute)?]);
+        }
+        let mut out = Vec::with_capacity(ids.len());
+        for (id, name) in ids {
+            match set_render_mute(Some(&id), mute) {
+                Ok(r) => out.push(r),
+                Err(e) => tracing::debug!(device = %name, "could not change mute: {e}"),
+            }
+        }
+        Ok(out)
     }
 
     fn set_render_mute(&self, device_id: &str, mute: bool) -> Result<()> {

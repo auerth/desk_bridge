@@ -300,10 +300,17 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
     {
         let f = paths.data_dir.join("speaker-mute.json");
         if let Ok(text) = std::fs::read_to_string(&f) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
-                && let (Some(id), Some(prev)) = (v["id"].as_str(), v["prev"].as_bool())
-            {
-                let _ = platform.local_output.set_render_mute(id, prev);
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                // `{"devices":[{"id","prev"}]}`; older versions wrote a single `{"id","prev"}`.
+                let entries = match v["devices"].as_array() {
+                    Some(a) => a.clone(),
+                    None => vec![v],
+                };
+                for e in entries {
+                    if let (Some(id), Some(prev)) = (e["id"].as_str(), e["prev"].as_bool()) {
+                        let _ = platform.local_output.set_render_mute(id, prev);
+                    }
+                }
             }
             let _ = std::fs::remove_file(&f);
         }
