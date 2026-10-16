@@ -8,6 +8,10 @@
 //! `DESKBRIDGE_DATA_ROOT`, `DESKBRIDGE_PORT`, `DESKBRIDGE_PIPE`.
 
 #![cfg_attr(not(windows), allow(unused))]
+// GUI subsystem: the agent is a background process and must never show a console window
+// (the scheduled task, the service supervisor and the UI all start it). The command line modes
+// (`--version`, `send`, `--stop`) attach to the parent console below so output still works.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 #![allow(non_upper_case_globals)]
 
 /// Exported (see build.rs): selects the discrete GPU on Optimus / PowerXpress laptops.
@@ -28,6 +32,9 @@ mod winplatform;
 #[cfg(windows)]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.is_empty() {
+        attach_parent_console();
+    }
     let code = match args.first().map(String::as_str) {
         Some("send") => pipe::client_main(pipe::ClientCommand::Send(args[1..].to_vec())),
         Some("--stop" | "stop") => pipe::client_main(pipe::ClientCommand::Stop),
@@ -38,6 +45,16 @@ fn main() {
         _ => run_agent(),
     };
     std::process::exit(code);
+}
+
+/// Lets the command line modes print into the terminal they were started from.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    // SAFETY: plain Win32 call; failure (no parent console) is fine.
+    unsafe {
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
 }
 
 #[cfg(not(windows))]
