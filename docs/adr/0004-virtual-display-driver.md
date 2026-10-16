@@ -1,6 +1,6 @@
 # ADR 0004 – Virtual display driver for focus mode (M5b)
 
-* Status: **Proposed**
+* Status: **Accepted** (Thorben, 2026-10-16: Treiber wird gebündelt, SignPath-Zertifikat Fingerprint 3CF8CF26… wird in „Vertrauenswürdige Herausgeber“ importiert; `drivers/display/driver.json` steht auf `enabled: true`)
 * Date: 2026-10-16
 * Scope: plan sections 8.8, 8.9, 12.1, 16. Companion spike: ADR 0003 (virtual audio).
 * Files: `drivers/display/` (package, config template, README)

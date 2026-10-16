@@ -51,6 +51,7 @@
       "../../installer/stage/deskbridge-agent.exe": "deskbridge-agent.exe",
       "../../installer/stage/deskbridge-service.exe": "deskbridge-service.exe",
       "../../installer/stage/deskbridge-setup.exe": "deskbridge-setup.exe",
+      "../../installer/stage/drivers": "drivers",
       "../../installer/stage/ffmpeg/*.dll": "./",
       "../../installer/stage/ffmpeg/FFMPEG-LICENSE.txt": "licenses/FFMPEG-LICENSE.txt",
       "../../THIRD_PARTY_LICENSES.html": "licenses/THIRD_PARTY_LICENSES.html",

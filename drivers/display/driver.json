@@ -1,7 +1,7 @@
-﻿{
+{
   "name": "Desk Bridge Display",
-  "enabled": false,
-  "_note": "Set enabled to true to bundle the virtual display driver into the installer. The installer then imports the pinned SignPath publisher certificate into TrustedPublisher (see docs/adr/0004-virtual-display-driver.md).",
+  "enabled": true,
+  "_note": "Enabled (owner decision 2026-10-16): the virtual display driver is bundled into the installer, which imports the pinned SignPath publisher certificate into TrustedPublisher (see docs/adr/0004-virtual-display-driver.md).",
   "inf": "package/MttVDD.inf",
   "hwid": "Root\\MttVDD",
   "trust_certificate": { "file": "config/signpath-publisher.cer", "sha1": "3CF8CF26D8BA266C3A483AB7D26D4A818E317D76" },
