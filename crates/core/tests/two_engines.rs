@@ -72,6 +72,10 @@ async fn wait_connected(a: &EngineHandle, b: &EngineHandle) {
 async fn setup() -> (Node, Node) {
     let pc = node("PC", true, 2560, 1440).await;
     let lp = node("Laptop", false, 1920, 1080).await;
+    connect_nodes(pc, lp).await
+}
+
+async fn connect_nodes(pc: Node, lp: Node) -> (Node, Node) {
 
     let code = lp.h.request(UiRequest::StartPairing).await.unwrap()["code"].as_str().unwrap().to_string();
     let lp_addr = lp.h.local_addr();
@@ -248,6 +252,100 @@ async fn files_are_sent_with_hash_verification() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(lp.h.state().await.transfers.iter().any(|t| t.status == "done"));
+    pc.h.stop();
+    lp.h.stop();
+}
+
+fn sine_frame(n0: usize, frames: usize, channels: usize) -> Vec<f32> {
+    let mut v = Vec::with_capacity(frames * channels);
+    for i in 0..frames {
+        let x = 0.4 * (2.0 * std::f32::consts::PI * 440.0 * (n0 + i) as f32 / 48_000.0).sin();
+        for _ in 0..channels {
+            v.push(x);
+        }
+    }
+    v
+}
+
+fn rms(v: &[f32]) -> f32 {
+    (v.iter().map(|x| x * x).sum::<f32>() / v.len().max(1) as f32).sqrt()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn laptop_audio_reaches_the_headset_and_pauses_when_it_disappears() {
+    let (pc, lp) = setup().await;
+    // PC → select a specific output device (like a wireless headset endpoint)
+    let mut cfg: deskbridge_core::config::Config = serde_json::from_value(pc.h.request(UiRequest::GetConfig).await.unwrap()).unwrap();
+    cfg.audio.laptop_to_pc.output_device = "out2".into();
+    pc.h.request(UiRequest::SetConfig { config: Box::new(cfg) }).await.unwrap();
+    wait_for("playback on out2", || pc.m.audio_playback.active_device() == Some(Some("out2".to_string()))).await;
+    wait_for("laptop captures loopback", || lp.m.audio_capture.active(true)).await;
+
+    // 1.5 s of audio at real-time pace
+    let mut collected: Vec<f32> = Vec::new();
+    let mut n = 0usize;
+    for step in 0..150 {
+        lp.m.audio_capture.push(true, sine_frame(n, 480, 2), 2, step as u64 * 10_000);
+        n += 480;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        if let Some(out) = pc.m.audio_playback.pull(480) {
+            collected.extend(out);
+        }
+    }
+    let tail = &collected[collected.len() / 2..];
+    assert!(rms(tail) > 0.1, "signal arrives on the headset (rms {})", rms(tail));
+    let st = pc.h.state().await;
+    assert_eq!(st.features.laptop_audio.base.state, deskbridge_core::ipc::Live::Live);
+    assert!(!st.features.laptop_audio.codec.is_empty());
+
+    // headset powered off → paused, laptop stops capturing; powered on → resumes
+    pc.m.audio_devices.remove("out2");
+    wait_for("playback paused", || pc.m.audio_playback.active_device().is_none()).await;
+    wait_for("laptop stops capture", || !lp.m.audio_capture.active(true)).await;
+    assert!(pc.h.state().await.features.laptop_audio.device_missing);
+    pc.m.audio_devices.add(deskbridge_platform::mock::audio_device("out2", "Headset", deskbridge_platform::audio::DeviceKind::Render, false));
+    wait_for("playback resumes", || pc.m.audio_playback.active_device() == Some(Some("out2".to_string()))).await;
+    wait_for("laptop captures again", || lp.m.audio_capture.active(true)).await;
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn microphone_flows_only_while_the_laptop_uses_it() {
+    let pc = node("PC", true, 2560, 1440).await;
+    let lp = node("Laptop", false, 1920, 1080).await;
+    lp.m.virtual_audio.available.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (pc, lp) = connect_nodes(pc, lp).await;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!pc.m.audio_capture.active(false), "mic must stay closed while no laptop app uses it");
+
+    lp.m.virtual_audio.set_in_use(true);
+    wait_for("mic capture starts on pc", || pc.m.audio_capture.active(false)).await;
+    let mut n = 0usize;
+    for step in 0..120 {
+        pc.m.audio_capture.push(false, sine_frame(n, 480, 1), 1, step as u64 * 10_000);
+        n += 480;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    wait_for("virtual mic received audio", || {
+        let w = lp.m.virtual_audio.mic_written.lock();
+        w.len() > 480 * 20 && rms(&w[w.len() - 480 * 20..]) > 0.05
+    })
+    .await;
+    assert!(pc.h.state().await.features.mic.base.detail.unwrap_or_default().contains("Laptop nutzt dein Mikro"));
+
+    lp.m.virtual_audio.set_in_use(false);
+    wait_for("mic capture stops again", || !pc.m.audio_capture.active(false)).await;
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mic_is_unavailable_without_a_driver() {
+    let (pc, lp) = setup().await;
+    let st = pc.h.state().await;
+    assert_eq!(st.features.mic.base.state, deskbridge_core::ipc::Live::Unavailable);
     pc.h.stop();
     lp.h.stop();
 }

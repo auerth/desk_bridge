@@ -1,7 +1,16 @@
 [package]
 name = "fake-peer"
+description = "Headless Desk Bridge peer with a mock platform: records or plays back input events (testing tool)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[dependencies]
+deskbridge-core = { path = "../../crates/core" }
+deskbridge-platform.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+tracing.workspace = true

@@ -8,9 +8,8 @@
 //! Codec switching detail: the Opus decoder output lags the encoder input by the
 //! encoder look-ahead (`L` = 120 frames for `LowDelay`). To keep the switch sample
 //! accurate the sender
-//! * primes the encoder with the preceding 10 ms before the first Opus packet after
-//!   PCM (the packet is discarded), the receiver drops the first `L` decoded frames of
-//!   the first Opus packet after PCM, and
+//! * resets the encoder before the first Opus packet after PCM while the receiver resets
+//!   its decoder and drops the first `L` decoded frames of that packet, and
 //! * re-sends the last `L` input frames in a small extra PCM packet when it switches
 //!   from Opus back to PCM (the Opus stream ended `L` frames before the input).
 
@@ -143,7 +142,11 @@ impl AudioSender {
 
         loop {
             let want_opus = self.decide_codec();
-            let need = if want_opus { OPUS_PACKET_FRAMES } else { PCM_PACKET_FRAMES };
+            let need = if want_opus {
+                OPUS_PACKET_FRAMES
+            } else {
+                PCM_PACKET_FRAMES
+            };
             let avail = (self.acc.len() - self.acc_off) / self.ch;
             if avail < need {
                 break;
@@ -290,12 +293,10 @@ impl AudioSender {
 
     fn send_opus(&mut self, a: usize, b: usize, ts: u64, out: &mut Vec<Bytes>) {
         let mut buf = std::mem::take(&mut self.opus_scratch);
-        if self.last_sent_opus == Some(false) && self.hist.len() >= OPUS_PACKET_FRAMES * self.ch {
-            // Prime the encoder with the preceding 10 ms; the packet is discarded.
-            let h = &self.hist[self.hist.len() - OPUS_PACKET_FRAMES * self.ch..];
-            if let Err(e) = self.enc.encode(h, &mut buf) {
-                tracing::warn!("opus priming failed: {e}");
-            }
+        if self.last_sent_opus != Some(true) {
+            // Fresh start: encoder and the receiver's decoder both begin from a reset state
+            // (otherwise the decoder's cold energy prediction distorts the first frames).
+            self.enc.reset();
         }
         match self.enc.encode(&self.acc[a..b], &mut buf) {
             Ok(()) => {

@@ -2,6 +2,7 @@
 
 use deskbridge_core::platform::Platform;
 use deskbridge_platform_windows::{
+    audio::{VirtualAudioStub, WasapiCapture, WasapiDevices, WasapiPlayback},
     clipboard::WinClipboard,
     input::{WinInputCapture, WinInputInjector},
     power::WinPowerManager,
@@ -18,6 +19,10 @@ pub fn build() -> Platform {
         clipboard: Arc::new(WinClipboard::new()),
         power: Arc::new(WinPowerManager::new()),
         secrets: Arc::new(DpapiProtector::new()),
+        audio_devices: Arc::new(WasapiDevices::new()),
+        audio_capture: Arc::new(WasapiCapture::new()),
+        audio_playback: Arc::new(WasapiPlayback::new()),
+        virtual_audio: Arc::new(VirtualAudioStub::default()),
         os: "Windows".to_string(),
     }
 }

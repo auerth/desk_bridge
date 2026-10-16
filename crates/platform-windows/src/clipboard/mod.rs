@@ -20,12 +20,16 @@ mod image;
 mod live_tests;
 
 use deskbridge_platform::clipboard::{
-    ClipFormatInfo, ClipboardBackend, ClipboardEvent, ClipboardProvider, FileOffer, VirtualFileProvider, mime,
+    ClipFormatInfo, ClipboardBackend, ClipboardEvent, ClipboardProvider, FileOffer,
+    VirtualFileProvider, mime,
 };
 use deskbridge_platform::{PlatformError, Result, UnboundedSender};
 use format::{
-    NAME_CAN_INCLUDE_HISTORY, NAME_CAN_UPLOAD_CLOUD, CF_DIB, CF_DIBV5, CF_HDROP, CF_REGISTERED_FIRST, CF_UNICODETEXT, EAGER_TEXT_LIMIT, Kind, NAME_FILE_CONTENTS, NAME_FILE_DESCRIPTOR, NAME_HTML, NAME_LOGICAL_PERFORMED_DROP_EFFECT, NAME_ORIGIN, NAME_PASTE_SUCCEEDED, NAME_PERFORMED_DROP_EFFECT,
-    NAME_PNG, NAME_PNG_ALIAS, NAME_PREFERRED_DROP_EFFECT, NAME_RTF, RegisteredIds,
+    CF_DIB, CF_DIBV5, CF_HDROP, CF_REGISTERED_FIRST, CF_UNICODETEXT, EAGER_TEXT_LIMIT, Kind,
+    NAME_CAN_INCLUDE_HISTORY, NAME_CAN_UPLOAD_CLOUD, NAME_FILE_CONTENTS, NAME_FILE_DESCRIPTOR,
+    NAME_HTML, NAME_LOGICAL_PERFORMED_DROP_EFFECT, NAME_ORIGIN, NAME_PASTE_SUCCEEDED,
+    NAME_PERFORMED_DROP_EFFECT, NAME_PNG, NAME_PNG_ALIAS, NAME_PREFERRED_DROP_EFFECT, NAME_RTF,
+    RegisteredIds,
 };
 use parking_lot::Mutex;
 use std::cell::{Cell, RefCell};
@@ -36,18 +40,28 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Once, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use windows::Win32::Foundation::{SetLastError, WIN32_ERROR, CLIPBRD_E_CANT_OPEN, GlobalFree, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{
+    CLIPBRD_E_CANT_OPEN, GlobalFree, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT,
+    SetLastError, WIN32_ERROR, WPARAM,
+};
 use windows::Win32::System::DataExchange::{
-    AddClipboardFormatListener, CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW, GetClipboardOwner,
-    GetClipboardSequenceNumber, IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, RemoveClipboardFormatListener, SetClipboardData,
+    AddClipboardFormatListener, CloseClipboard, EmptyClipboard, EnumClipboardFormats,
+    GetClipboardData, GetClipboardFormatNameW, GetClipboardOwner, GetClipboardSequenceNumber,
+    IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
+    RemoveClipboardFormatListener, SetClipboardData,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
-use windows::Win32::System::Ole::{DROPEFFECT_COPY, OleInitialize, OleIsCurrentClipboard, OleSetClipboard, OleUninitialize};
+use windows::Win32::System::Memory::{
+    GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
+};
+use windows::Win32::System::Ole::{
+    DROPEFFECT_COPY, OleInitialize, OleIsCurrentClipboard, OleSetClipboard, OleUninitialize,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, HWND_MESSAGE, MSG, PostMessageW,
-    PostQuitMessage, RegisterClassW, SetWindowLongPtrW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLIPBOARDUPDATE, WM_DESTROY,
-    WM_DESTROYCLIPBOARD, WM_RENDERALLFORMATS, WM_RENDERFORMAT, WNDCLASSW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW,
+    GetWindowLongPtrW, HWND_MESSAGE, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
+    SetWindowLongPtrW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLIPBOARDUPDATE,
+    WM_DESTROY, WM_DESTROYCLIPBOARD, WM_RENDERALLFORMATS, WM_RENDERFORMAT, WNDCLASSW,
 };
 use windows::core::{PCWSTR, w};
 
@@ -69,7 +83,10 @@ static NEXT_ORIGIN: AtomicU64 = AtomicU64::new(1);
 static REGISTER_CLASS: Once = Once::new();
 
 fn os_err(context: &str, e: &windows::core::Error) -> PlatformError {
-    PlatformError::Os { code: i64::from(e.code().0), msg: format!("{context}: {e}") }
+    PlatformError::Os {
+        code: i64::from(e.code().0),
+        msg: format!("{context}: {e}"),
+    }
 }
 
 fn next_origin_payload() -> [u8; 8] {
@@ -84,11 +101,28 @@ fn next_origin_payload() -> [u8; 8] {
 type Reply<T> = mpsc::Sender<Result<T>>;
 
 enum Cmd {
-    Read { mime: String, reply: Reply<Option<Vec<u8>>> },
-    SetText { text: String, reply: Reply<()> },
-    Offer { formats: Vec<ClipFormatInfo>, provider: Arc<dyn ClipboardProvider>, reply: Reply<()> },
-    OfferFiles { files: Vec<FileOffer>, provider: Arc<dyn VirtualFileProvider>, reply: Reply<()> },
-    OfferLocalFiles { paths: Vec<PathBuf>, reply: Reply<()> },
+    Read {
+        mime: String,
+        reply: Reply<Option<Vec<u8>>>,
+    },
+    SetText {
+        text: String,
+        reply: Reply<()>,
+    },
+    Offer {
+        formats: Vec<ClipFormatInfo>,
+        provider: Arc<dyn ClipboardProvider>,
+        reply: Reply<()>,
+    },
+    OfferFiles {
+        files: Vec<FileOffer>,
+        provider: Arc<dyn VirtualFileProvider>,
+        reply: Reply<()>,
+    },
+    OfferLocalFiles {
+        paths: Vec<PathBuf>,
+        reply: Reply<()>,
+    },
     Stop,
 }
 
@@ -113,23 +147,32 @@ impl WinClipboard {
 
     fn wake(hwnd: isize) -> Result<()> {
         // SAFETY: PostMessageW is thread safe; a stale handle merely fails.
-        unsafe { PostMessageW(HWND(hwnd as *mut _), WM_APP_CMD, WPARAM(0), LPARAM(0)) }.map_err(|e| os_err("PostMessage", &e))
+        unsafe { PostMessageW(HWND(hwnd as *mut _), WM_APP_CMD, WPARAM(0), LPARAM(0)) }
+            .map_err(|e| os_err("PostMessage", &e))
     }
 
     /// Sends a command to the clipboard thread and waits for the answer.
     fn call<T>(&self, make: impl FnOnce(Reply<T>) -> Cmd) -> Result<T> {
         let (cmd_tx, hwnd) = {
             let g = self.running.lock();
-            let r = g.as_ref().ok_or_else(|| PlatformError::other("clipboard backend not started"))?;
+            let r = g
+                .as_ref()
+                .ok_or_else(|| PlatformError::other("clipboard backend not started"))?;
             (r.cmd_tx.clone(), r.hwnd)
         };
         let (tx, rx) = mpsc::channel();
-        cmd_tx.send(make(tx)).map_err(|_| PlatformError::other("clipboard thread has exited"))?;
+        cmd_tx
+            .send(make(tx))
+            .map_err(|_| PlatformError::other("clipboard thread has exited"))?;
         Self::wake(hwnd)?;
         match rx.recv_timeout(CALL_TIMEOUT) {
             Ok(r) => r,
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(PlatformError::other("clipboard command timed out")),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(PlatformError::other("clipboard thread has exited")),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(PlatformError::other("clipboard command timed out"))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(PlatformError::other("clipboard thread has exited"))
+            }
         }
     }
 }
@@ -160,7 +203,9 @@ impl ClipboardBackend for WinClipboard {
     }
 
     fn stop(&self) {
-        let Some(r) = self.running.lock().take() else { return };
+        let Some(r) = self.running.lock().take() else {
+            return;
+        };
         if r.cmd_tx.send(Cmd::Stop).is_ok() {
             let _ = Self::wake(r.hwnd);
         }
@@ -168,19 +213,41 @@ impl ClipboardBackend for WinClipboard {
     }
 
     fn read(&self, mime: &str) -> Result<Option<Vec<u8>>> {
-        self.call(|reply| Cmd::Read { mime: mime.to_owned(), reply })
+        self.call(|reply| Cmd::Read {
+            mime: mime.to_owned(),
+            reply,
+        })
     }
 
     fn set_text(&self, text: &str) -> Result<()> {
-        self.call(|reply| Cmd::SetText { text: text.to_owned(), reply })
+        self.call(|reply| Cmd::SetText {
+            text: text.to_owned(),
+            reply,
+        })
     }
 
-    fn offer(&self, formats: Vec<ClipFormatInfo>, provider: Arc<dyn ClipboardProvider>) -> Result<()> {
-        self.call(|reply| Cmd::Offer { formats, provider, reply })
+    fn offer(
+        &self,
+        formats: Vec<ClipFormatInfo>,
+        provider: Arc<dyn ClipboardProvider>,
+    ) -> Result<()> {
+        self.call(|reply| Cmd::Offer {
+            formats,
+            provider,
+            reply,
+        })
     }
 
-    fn offer_files(&self, files: Vec<FileOffer>, provider: Arc<dyn VirtualFileProvider>) -> Result<()> {
-        self.call(|reply| Cmd::OfferFiles { files, provider, reply })
+    fn offer_files(
+        &self,
+        files: Vec<FileOffer>,
+        provider: Arc<dyn VirtualFileProvider>,
+    ) -> Result<()> {
+        self.call(|reply| Cmd::OfferFiles {
+            files,
+            provider,
+            reply,
+        })
     }
 
     fn offer_local_files(&self, paths: Vec<PathBuf>) -> Result<()> {
@@ -282,7 +349,11 @@ struct Ctx {
     owned: RefCell<Owned>,
 }
 
-fn thread_main(tx: UnboundedSender<ClipboardEvent>, cmd_rx: mpsc::Receiver<Cmd>, ready: mpsc::SyncSender<Result<isize>>) {
+fn thread_main(
+    tx: UnboundedSender<ClipboardEvent>,
+    cmd_rx: mpsc::Receiver<Cmd>,
+    ready: mpsc::SyncSender<Result<isize>>,
+) {
     // SAFETY: plain Win32 setup on this thread; every handle created here is released below.
     unsafe {
         if let Err(e) = OleInitialize(None) {
@@ -308,7 +379,11 @@ fn thread_main(tx: UnboundedSender<ClipboardEvent>, cmd_rx: mpsc::Receiver<Cmd>,
             }
         };
         ctx.hwnd.set(hwnd);
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, std::ptr::from_ref::<Ctx>(&ctx) as isize);
+        SetWindowLongPtrW(
+            hwnd,
+            GWLP_USERDATA,
+            std::ptr::from_ref::<Ctx>(&ctx) as isize,
+        );
         if let Err(e) = AddClipboardFormatListener(hwnd) {
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             let _ = DestroyWindow(hwnd);
@@ -338,7 +413,12 @@ fn create_window() -> Result<HWND> {
         let module = GetModuleHandleW(None).map_err(|e| os_err("GetModuleHandle", &e))?;
         let hinstance = HINSTANCE(module.0);
         REGISTER_CLASS.call_once(|| {
-            let wc = WNDCLASSW { lpfnWndProc: Some(wnd_proc), hInstance: hinstance, lpszClassName: w!("DeskBridgeClipboardWindow"), ..Default::default() };
+            let wc = WNDCLASSW {
+                lpfnWndProc: Some(wnd_proc),
+                hInstance: hinstance,
+                lpszClassName: w!("DeskBridgeClipboardWindow"),
+                ..Default::default()
+            };
             RegisterClassW(&wc);
         });
         CreateWindowExW(
@@ -359,7 +439,12 @@ fn create_window() -> Result<HWND> {
     }
 }
 
-unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     // SAFETY: GWLP_USERDATA is either 0 or the address of the `Ctx` box owned by the thread, which
     // outlives the window (cleared/dropped only after the message loop ended).
     let ctx = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const Ctx;
@@ -405,7 +490,10 @@ fn open_clipboard(hwnd: HWND) -> Result<ClipGuard> {
             }
         }
     }
-    Err(last.map_or_else(|| PlatformError::other("OpenClipboard failed"), |e| os_err("OpenClipboard (clipboard busy)", &e)))
+    Err(last.map_or_else(
+        || PlatformError::other("OpenClipboard failed"),
+        |e| os_err("OpenClipboard (clipboard busy)", &e),
+    ))
 }
 
 /// Copies the bytes of a global-memory clipboard handle. Clipboard must be open.
@@ -442,7 +530,8 @@ fn set_clipboard_bytes(fmt: u32, bytes: &[u8]) -> Result<()> {
     // SAFETY: the block is large enough for `bytes`, locked only while copying; on success the
     // system owns it (must not be freed), on failure we free it.
     unsafe {
-        let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1)).map_err(|e| os_err("GlobalAlloc", &e))?;
+        let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1))
+            .map_err(|e| os_err("GlobalAlloc", &e))?;
         let p = GlobalLock(h).cast::<u8>();
         if p.is_null() {
             let e = windows::core::Error::from_win32();
@@ -489,7 +578,9 @@ fn fetch_with_timeout(provider: Arc<dyn ClipboardProvider>, mime: &'static str) 
 /// Converts internal representation to the bytes for a clipboard format.
 fn to_clipboard_bytes(kind: Kind, data: &[u8]) -> std::result::Result<Vec<u8>, String> {
     match kind {
-        Kind::Text => Ok(format::string_to_utf16_bytes(&String::from_utf8_lossy(data))),
+        Kind::Text => Ok(format::string_to_utf16_bytes(&String::from_utf8_lossy(
+            data,
+        ))),
         Kind::Html => {
             let mut v = format::build_cf_html(&String::from_utf8_lossy(data));
             v.push(0);
@@ -621,7 +712,13 @@ impl Ctx {
         if mimes.is_empty() {
             return None; // cleared, or only formats we cannot transfer
         }
-        let mut infos: Vec<ClipFormatInfo> = mimes.iter().map(|m| ClipFormatInfo { mime: (*m).to_owned(), size: 0 }).collect();
+        let mut infos: Vec<ClipFormatInfo> = mimes
+            .iter()
+            .map(|m| ClipFormatInfo {
+                mime: (*m).to_owned(),
+                size: 0,
+            })
+            .collect();
         let mut text = None;
         let mut files = Vec::new();
         if !sensitive {
@@ -634,7 +731,12 @@ impl Ctx {
                 files = format::parse_dropfiles(&b);
             }
         }
-        Some(ClipboardEvent::Changed { formats: infos, sensitive, text, files })
+        Some(ClipboardEvent::Changed {
+            formats: infos,
+            sensitive,
+            text,
+            files,
+        })
     }
 
     /// Reads `CF_UNICODETEXT` if small enough and records the text size in `infos`.
@@ -668,11 +770,19 @@ impl Ctx {
                     let _ = reply.send(self.set_text(&text));
                     false
                 }
-                Cmd::Offer { formats, provider, reply } => {
+                Cmd::Offer {
+                    formats,
+                    provider,
+                    reply,
+                } => {
                     let _ = reply.send(self.offer(&formats, provider));
                     false
                 }
-                Cmd::OfferFiles { files, provider, reply } => {
+                Cmd::OfferFiles {
+                    files,
+                    provider,
+                    reply,
+                } => {
                     let _ = reply.send(self.offer_files(&files, provider));
                     false
                 }
@@ -752,7 +862,11 @@ impl Ctx {
         Ok(())
     }
 
-    fn offer(&self, formats: &[ClipFormatInfo], provider: Arc<dyn ClipboardProvider>) -> Result<()> {
+    fn offer(
+        &self,
+        formats: &[ClipFormatInfo],
+        provider: Arc<dyn ClipboardProvider>,
+    ) -> Result<()> {
         let mut kinds: Vec<Kind> = Vec::new();
         for f in formats {
             let ks = format::kinds_for_mime(&f.mime);
@@ -766,10 +880,15 @@ impl Ctx {
             }
         }
         if kinds.is_empty() {
-            return Err(PlatformError::other("clipboard offer contains no supported format"));
+            return Err(PlatformError::other(
+                "clipboard offer contains no supported format",
+            ));
         }
         let guard = self.begin_write()?;
-        *self.owned.borrow_mut() = Owned::Delayed(DelayedOffer { provider, cache: HashMap::new() });
+        *self.owned.borrow_mut() = Owned::Delayed(DelayedOffer {
+            provider,
+            cache: HashMap::new(),
+        });
         let mut registered = 0;
         for k in kinds {
             // SAFETY: the clipboard is open and owned by our window; NULL handle = delayed rendering.
@@ -785,7 +904,9 @@ impl Ctx {
         }
         if registered == 0 {
             *self.owned.borrow_mut() = Owned::None;
-            return Err(PlatformError::other("SetClipboardData failed for all offered formats"));
+            return Err(PlatformError::other(
+                "SetClipboardData failed for all offered formats",
+            ));
         }
         self.write_origin()?;
         // Keep Windows clipboard history / cloud clipboard from rendering (= fetching over the
@@ -809,12 +930,21 @@ impl Ctx {
         Ok(())
     }
 
-    fn offer_files(&self, files: &[FileOffer], provider: Arc<dyn VirtualFileProvider>) -> Result<()> {
+    fn offer_files(
+        &self,
+        files: &[FileOffer],
+        provider: Arc<dyn VirtualFileProvider>,
+    ) -> Result<()> {
         if files.is_empty() {
             return Err(PlatformError::other("no files to offer"));
         }
-        let obj = dataobject::create_virtual_files_object(files, provider, self.fmt.object_formats(), next_origin_payload().to_vec())
-            .map_err(PlatformError::Other)?;
+        let obj = dataobject::create_virtual_files_object(
+            files,
+            provider,
+            self.fmt.object_formats(),
+            next_origin_payload().to_vec(),
+        )
+        .map_err(PlatformError::Other)?;
         let mut last = None;
         for attempt in 0..OPEN_RETRIES {
             // SAFETY: `obj` is a live COM object; OLE takes its own reference. May dispatch
@@ -838,7 +968,10 @@ impl Ctx {
                 }
             }
         }
-        Err(last.map_or_else(|| PlatformError::other("OleSetClipboard failed"), |e| os_err("OleSetClipboard", &e)))
+        Err(last.map_or_else(
+            || PlatformError::other("OleSetClipboard failed"),
+            |e| os_err("OleSetClipboard", &e),
+        ))
     }
 
     // ------------------------------------------------------------------ reading
@@ -847,17 +980,25 @@ impl Ctx {
         let _guard = open_clipboard(self.hwnd())?;
         let ids = &self.fmt.ids;
         Ok(match m {
-            mime::TEXT => clipboard_bytes(CF_UNICODETEXT).map(|b| format::utf16_bytes_to_string(&b).into_bytes()),
-            mime::HTML => clipboard_bytes(ids.html).and_then(|b| format::parse_cf_html(&b)).map(String::into_bytes),
+            mime::TEXT => clipboard_bytes(CF_UNICODETEXT)
+                .map(|b| format::utf16_bytes_to_string(&b).into_bytes()),
+            mime::HTML => clipboard_bytes(ids.html)
+                .and_then(|b| format::parse_cf_html(&b))
+                .map(String::into_bytes),
             mime::RTF => clipboard_bytes(ids.rtf).map(|b| format::trim_trailing_nuls(&b).to_vec()),
-            mime::URI_LIST => {
-                clipboard_bytes(CF_HDROP).map(|b| format::paths_to_uri_list(&format::parse_dropfiles(&b)).into_bytes()).filter(|b| !b.is_empty())
-            }
+            mime::URI_LIST => clipboard_bytes(CF_HDROP)
+                .map(|b| format::paths_to_uri_list(&format::parse_dropfiles(&b)).into_bytes())
+                .filter(|b| !b.is_empty()),
             mime::PNG => {
-                if let Some(b) = clipboard_bytes(ids.png).or_else(|| clipboard_bytes(ids.png_alias)) {
+                if let Some(b) = clipboard_bytes(ids.png).or_else(|| clipboard_bytes(ids.png_alias))
+                {
                     Some(b)
-                } else if let Some(dib) = clipboard_bytes(CF_DIBV5).or_else(|| clipboard_bytes(CF_DIB)) {
-                    Some(image::dib_to_png(&dib).map_err(|e| PlatformError::other(format!("clipboard image conversion: {e}")))?)
+                } else if let Some(dib) =
+                    clipboard_bytes(CF_DIBV5).or_else(|| clipboard_bytes(CF_DIB))
+                {
+                    Some(image::dib_to_png(&dib).map_err(|e| {
+                        PlatformError::other(format!("clipboard image conversion: {e}"))
+                    })?)
                 } else {
                     None
                 }

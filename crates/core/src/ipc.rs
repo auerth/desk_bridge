@@ -355,6 +355,10 @@ pub struct UpdateDto {
 pub struct MetricsDto {
     /// Last ~60 RTT samples in microseconds (sparkline).
     pub rtt_history_us: Vec<u32>,
+    /// One-way input latency (peer timestamp → injection), microseconds, over the last ~2000 events.
+    pub input_latency_p50_us: Option<u32>,
+    pub input_latency_p95_us: Option<u32>,
+    pub input_latency_max_us: Option<u32>,
     pub audio_buffer_fill_ms: Option<f32>,
     pub audio_drift_ppm: Option<f32>,
     pub audio_loss_pct: Option<f32>,

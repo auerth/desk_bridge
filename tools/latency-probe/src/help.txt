@@ -1,0 +1,7 @@
+latency-probe input [--pipe NAME] [--seconds 20]
+latency-probe rtt [--pipe NAME]
+latency-probe audio-emit [--count 10] [--interval-ms 1000]
+latency-probe audio-detect [--seconds 12] [--loopback] [--device ID]
+latency-probe audio-compare EMIT.txt DETECT.txt [--offset-us N]
+
+See the header of tools/latency-probe/src/main.rs for what each command measures.

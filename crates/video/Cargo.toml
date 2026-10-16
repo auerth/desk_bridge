@@ -1,7 +1,32 @@
 [package]
 name = "deskbridge-video"
+description = "Video pipeline: encoder/decoder (FFmpeg), capability negotiation, ABR, pacing, stream framing"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[dependencies]
+deskbridge-proto.workspace = true
+deskbridge-platform.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+ffmpeg-next = { version = "8", default-features = false, features = ["codec", "format", "software-scaling"] }
+
+[target.'cfg(windows)'.dependencies]
+deskbridge-platform-windows.workspace = true
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "io-util"] }

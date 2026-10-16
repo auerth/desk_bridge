@@ -89,6 +89,9 @@ message ErrorMsg {
 
 message Goodbye { string reason = 1; }
 
+// Ctrl+Alt+Del request: the source asks the target to generate the secure attention sequence.
+message SendSas {}
+
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
@@ -277,6 +280,7 @@ message Control {
     ErrorMsg error = 5;
     Goodbye goodbye = 6;
     ScreensUpdate screens_update = 7;
+    SendSas send_sas = 8;
     FocusStart focus_start = 10;
     FocusReady focus_ready = 11;
     FocusFailed focus_failed = 12;

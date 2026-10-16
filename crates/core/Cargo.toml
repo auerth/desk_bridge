@@ -14,6 +14,7 @@ deskbridge-platform.workspace = true
 deskbridge-input.workspace = true
 deskbridge-clipboard.workspace = true
 deskbridge-files.workspace = true
+deskbridge-audio.workspace = true
 blake3.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true

@@ -10,7 +10,7 @@ impl Engine {
     /// A control message the core does not handle itself.
     pub(crate) fn on_feature_control(&mut self, msg: pb::control::Msg) {
         use pb::control::Msg as M;
-        if self.on_clipboard_control(msg.clone()) {
+        if self.on_clipboard_control(msg.clone()) || self.on_audio_control(&msg) {
             return;
         }
         match msg {
@@ -24,15 +24,21 @@ impl Engine {
     pub(crate) fn on_session_up_features(&mut self) {
         self.start_transfers();
         self.start_clipboard();
+        self.start_audio();
     }
 
     pub(crate) fn on_session_down_features(&mut self) {
+        self.stop_audio();
         self.stop_clipboard();
         self.stop_transfers();
     }
 
     pub(crate) fn on_feature_hotkey(&mut self, h: HotkeyAction) {
-        tracing::debug!(?h, "hotkey without handler");
+        match h {
+            HotkeyAction::MicMute => self.toggle_mic_mute(),
+            HotkeyAction::LaptopAudioMute => self.toggle_laptop_mute(),
+            other => tracing::debug!(?other, "hotkey without handler"),
+        }
     }
 
     pub(crate) fn on_feature_emergency(&mut self) {}
@@ -50,9 +56,9 @@ impl Engine {
             R::SendFiles { paths } => self.send_files(paths),
             R::OpenIncomingFolder => self.open_incoming_folder(),
             R::ShowTransferInFolder { transfer_id } => self.show_transfer(transfer_id),
-            R::ListAudioDevices
-            | R::PlayTestTone
-            | R::ExportDiagnostics { .. }
+            R::ListAudioDevices => self.list_audio_devices(),
+            R::PlayTestTone => self.play_test_tone(),
+            R::ExportDiagnostics { .. }
             | R::CheckForUpdate
             | R::MakeNetworkPrivate
             | R::RestartAgent => Err("Diese Funktion ist noch nicht verfügbar".into()),
@@ -67,5 +73,6 @@ impl Engine {
     /// Re-applies feature related settings after a config change.
     pub(crate) fn apply_config_to_features(&mut self) {
         self.apply_clip_config();
+        self.apply_audio_config();
     }
 }

@@ -1,9 +1,13 @@
 //! The set of OS services the engine runs on. Windows builds fill it with
 //! `deskbridge-platform-windows`, tests with the mocks.
 
+use deskbridge_platform::audio::{AudioCapture, AudioDevices, AudioPlayback, DeviceKind, VirtualAudio};
 use deskbridge_platform::clipboard::ClipboardBackend;
 use deskbridge_platform::input::{InputCapture, InputInjector};
-use deskbridge_platform::mock::{MockCapture, MockClipboard, MockInjector, MockScreens, screen};
+use deskbridge_platform::mock::{
+    MockAudioCapture, MockAudioDevices, MockAudioPlayback, MockCapture, MockClipboard, MockInjector, MockScreens,
+    MockVirtualAudio, audio_device, screen,
+};
 use deskbridge_platform::power::{PowerEvent, PowerManager};
 use deskbridge_platform::screen::ScreenProvider;
 use deskbridge_platform::secret::{PlainProtector, SecretProtector};
@@ -18,6 +22,10 @@ pub struct Platform {
     pub clipboard: Arc<dyn ClipboardBackend>,
     pub power: Arc<dyn PowerManager>,
     pub secrets: Arc<dyn SecretProtector>,
+    pub audio_devices: Arc<dyn AudioDevices>,
+    pub audio_capture: Arc<dyn AudioCapture>,
+    pub audio_playback: Arc<dyn AudioPlayback>,
+    pub virtual_audio: Arc<dyn VirtualAudio>,
     /// OS name reported in `Hello`.
     pub os: String,
 }
@@ -44,6 +52,10 @@ pub struct MockHandles {
     pub injector: Arc<MockInjector>,
     pub screens: Arc<MockScreens>,
     pub clipboard: Arc<MockClipboard>,
+    pub audio_devices: Arc<MockAudioDevices>,
+    pub audio_capture: Arc<MockAudioCapture>,
+    pub audio_playback: Arc<MockAudioPlayback>,
+    pub virtual_audio: Arc<MockVirtualAudio>,
 }
 
 impl Platform {
@@ -56,6 +68,14 @@ impl Platform {
         s.primary = true;
         let screens = Arc::new(MockScreens::with(vec![s]));
         let clipboard = Arc::new(MockClipboard::default());
+        let audio_devices = Arc::new(MockAudioDevices::with(vec![
+            audio_device("out1", "Headset (Mock)", DeviceKind::Render, true),
+            audio_device("out2", "Lautsprecher (Mock)", DeviceKind::Render, false),
+            audio_device("mic1", "Headset-Mikro (Mock)", DeviceKind::Capture, true),
+        ]));
+        let audio_capture = Arc::new(MockAudioCapture::default());
+        let audio_playback = Arc::new(MockAudioPlayback::default());
+        let virtual_audio = Arc::new(MockVirtualAudio::default());
         let p = Self {
             capture: capture.clone(),
             injector: injector.clone(),
@@ -63,8 +83,12 @@ impl Platform {
             clipboard: clipboard.clone(),
             power: Arc::new(NullPower),
             secrets: Arc::new(PlainProtector),
+            audio_devices: audio_devices.clone(),
+            audio_capture: audio_capture.clone(),
+            audio_playback: audio_playback.clone(),
+            virtual_audio: virtual_audio.clone(),
             os: "mock".into(),
         };
-        (p, MockHandles { capture, injector, screens, clipboard })
+        (p, MockHandles { capture, injector, screens, clipboard, audio_devices, audio_capture, audio_playback, virtual_audio })
     }
 }

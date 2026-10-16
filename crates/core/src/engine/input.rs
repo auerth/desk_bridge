@@ -144,6 +144,7 @@ impl Engine {
             return;
         }
         let link = s.link.clone();
+        self.record_input_latency(&ev);
         match &ev.ev {
             Some(Ev::EdgeHit(h)) => {
                 let actions = self.router.on_edge_hit(h);
@@ -167,6 +168,29 @@ impl Engine {
             }
             None => {}
         }
+    }
+
+    /// One-way latency of input events, using the Ping/Pong clock offset (plan section 3).
+    fn record_input_latency(&mut self, ev: &pb::InputEvent) {
+        if !matches!(ev.ev, Some(Ev::Key(_) | Ev::Rel(_) | Ev::Btn(_) | Ev::Abs(_) | Ev::Wheel(_))) {
+            return;
+        }
+        let Some(local) = self.clock.to_local(ev.ts_us) else { return };
+        let lat = crate::clock::now_us().saturating_sub(local).min(u64::from(u32::MAX)) as u32;
+        self.input_latency.push_back(lat);
+        while self.input_latency.len() > 2000 {
+            self.input_latency.pop_front();
+        }
+    }
+
+    pub(crate) fn input_latency_percentiles(&self) -> (Option<u32>, Option<u32>, Option<u32>) {
+        if self.input_latency.is_empty() {
+            return (None, None, None);
+        }
+        let mut v: Vec<u32> = self.input_latency.iter().copied().collect();
+        v.sort_unstable();
+        let at = |q: f64| v[(((v.len() - 1) as f64) * q).round() as usize];
+        (Some(at(0.5)), Some(at(0.95)), v.last().copied())
     }
 
     pub(crate) fn on_emergency(&mut self) {

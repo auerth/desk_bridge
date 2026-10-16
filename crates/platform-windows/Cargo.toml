@@ -28,7 +28,6 @@ features = [
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
-    "Win32_System_Com_Marshal",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_DataExchange",
     "Win32_System_Diagnostics_ToolHelp",

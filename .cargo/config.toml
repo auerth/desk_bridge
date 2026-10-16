@@ -1,3 +1,9 @@
 # Statically link the MSVC C runtime so the installer needs no "Visual C++ Redistributable" (plan 12.1).
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# FFmpeg (LGPL shared build, see vendor/ffmpeg/SOURCE.txt and docs/adr/0005-video-spike.md).
+# `ffmpeg-sys-next` finds headers/libs through FFMPEG_DIR; bindgen needs libclang.
+[env]
+FFMPEG_DIR = { value = "vendor/ffmpeg", relative = true }
+LIBCLANG_PATH = { value = 'C:\Program Files\LLVM\bin', force = false }

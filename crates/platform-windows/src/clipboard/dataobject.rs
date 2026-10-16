@@ -20,20 +20,21 @@ use std::io::{self, Read};
 use std::mem::ManuallyDrop;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use windows::Win32::Foundation::{
-    BOOL, DV_E_DVASPECT, DV_E_FORMATETC, DV_E_LINDEX, DV_E_TYMED, E_FAIL, E_INVALIDARG, E_NOTIMPL, E_POINTER, FILETIME, HGLOBAL, OLE_E_ADVISENOTSUPPORTED,
-    STG_E_ACCESSDENIED, STG_E_INVALIDFUNCTION, STG_E_INVALIDPOINTER, STG_E_READFAULT, S_FALSE, S_OK,
+    BOOL, DV_E_DVASPECT, DV_E_FORMATETC, DV_E_LINDEX, DV_E_TYMED, E_FAIL, E_INVALIDARG, E_NOTIMPL,
+    E_POINTER, FILETIME, HGLOBAL, OLE_E_ADVISENOTSUPPORTED, S_FALSE, S_OK, STG_E_ACCESSDENIED,
+    STG_E_INVALIDFUNCTION, STG_E_INVALIDPOINTER, STG_E_READFAULT,
 };
 use windows::Win32::System::Com::{
-    CoTaskMemAlloc, IDataObject_Vtbl, ISequentialStream, ISequentialStream_Vtbl, IStream_Vtbl, IAdviseSink, STGMEDIUM, STGMEDIUM_0, IDataObject, IDataObject_Impl, IEnumFORMATETC, IEnumSTATDATA, ISequentialStream_Impl, IStream, IStream_Impl, DVASPECT_CONTENT,
-    FORMATETC, LOCKTYPE, STATFLAG, STATFLAG_NONAME, STATSTG, STGC, STGM, STGTY_STREAM, STREAM_SEEK, STREAM_SEEK_CUR, STREAM_SEEK_END, STREAM_SEEK_SET,
-    TYMED_HGLOBAL, TYMED_ISTREAM,
+    CoTaskMemAlloc, DVASPECT_CONTENT, FORMATETC, IAdviseSink, IDataObject, IDataObject_Impl,
+    IEnumFORMATETC, IEnumSTATDATA, ISequentialStream_Impl, IStream, IStream_Impl, LOCKTYPE,
+    STATFLAG, STATFLAG_NONAME, STATSTG, STGC, STGM, STGMEDIUM, STGMEDIUM_0, STGTY_STREAM,
+    STREAM_SEEK, STREAM_SEEK_CUR, STREAM_SEEK_END, STREAM_SEEK_SET, TYMED_HGLOBAL, TYMED_ISTREAM,
 };
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
-use windows::Win32::System::Ole::{ReleaseStgMedium, DROPEFFECT_COPY};
+use windows::Win32::System::Ole::{DROPEFFECT_COPY, ReleaseStgMedium};
 use windows::Win32::UI::Shell::SHCreateStdEnumFmtEtc;
-use windows::core::{Error, GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface, PWSTR, Result as WinResult, implement};
+use windows::core::{Error, HRESULT, PWSTR, Result as WinResult, implement};
 
 // FILEDESCRIPTOR flags (shlobj_core.h).
 const FD_ATTRIBUTES: u32 = 0x0000_0004;
@@ -81,7 +82,12 @@ pub fn descriptor_name(rel_path: &str) -> Result<String, String> {
         return Err(format!("absolute path rejected: {rel_path}"));
     }
     for comp in trimmed.split(['/', '\\']) {
-        if comp.is_empty() || comp == "." || comp == ".." || comp.contains(':') || comp.contains('\0') {
+        if comp.is_empty()
+            || comp == "."
+            || comp == ".."
+            || comp.contains(':')
+            || comp.contains('\0')
+        {
             return Err(format!("unsafe path component in {rel_path}"));
         }
     }
@@ -129,178 +135,6 @@ pub fn build_file_group_descriptor(files: &[FileOffer]) -> Result<Vec<u8>, Strin
     Ok(out)
 }
 
-// ------------------------------------------------------------------------------------------
-// Non-agile COM shells
-//
-// Objects created with `#[implement]` answer `IAgileObject`. COM then treats them as
-// apartment-neutral, and across processes (Explorer pasting via `OleGetClipboard`) the requests
-// for `FileContents` never reached our object. The thin hand-written shells below expose ONLY
-// `IUnknown` + the one interface (+ `ISequentialStream` for streams), so COM uses ordinary
-// standard marshaling with the stub living in the clipboard STA thread, and forward every call
-// to the `#[implement]` object they own.
-
-trait ShellKind {
-    type Inner: Interface;
-    fn answers(iid: &GUID) -> bool;
-}
-
-#[repr(C)]
-struct Shell<K: ShellKind> {
-    vtbl: *const core::ffi::c_void,
-    refs: std::sync::atomic::AtomicU32,
-    inner: K::Inner,
-}
-
-fn new_shell<K: ShellKind>(inner: K::Inner, vtbl: *const core::ffi::c_void) -> *mut core::ffi::c_void {
-    Box::into_raw(Box::new(Shell::<K> { vtbl, refs: std::sync::atomic::AtomicU32::new(1), inner })).cast()
-}
-
-unsafe extern "system" fn shell_qi<K: ShellKind>(this: *mut core::ffi::c_void, iid: *const GUID, out: *mut *mut core::ffi::c_void) -> HRESULT {
-    if iid.is_null() || out.is_null() {
-        return E_POINTER;
-    }
-    // SAFETY: COM passes valid pointers; `this` is a `Shell<K>` created by `new_shell`.
-    unsafe {
-        let iid = &*iid;
-        eprintln!("DBG QI {:?}", iid);
-        if *iid == IUnknown::IID || K::answers(iid) {
-            (*this.cast::<Shell<K>>()).refs.fetch_add(1, Ordering::AcqRel);
-            *out = this;
-            S_OK
-        } else {
-            *out = std::ptr::null_mut();
-            windows::Win32::Foundation::E_NOINTERFACE
-        }
-    }
-}
-
-unsafe extern "system" fn shell_add_ref<K: ShellKind>(this: *mut core::ffi::c_void) -> u32 {
-    // SAFETY: see `shell_qi`.
-    unsafe { (*this.cast::<Shell<K>>()).refs.fetch_add(1, Ordering::AcqRel) + 1 }
-}
-
-unsafe extern "system" fn shell_release<K: ShellKind>(this: *mut core::ffi::c_void) -> u32 {
-    // SAFETY: see `shell_qi`; the box is freed exactly when the count reaches zero.
-    unsafe {
-        let left = (*this.cast::<Shell<K>>()).refs.fetch_sub(1, Ordering::AcqRel) - 1;
-        if left == 0 {
-            drop(Box::from_raw(this.cast::<Shell<K>>()));
-        }
-        left
-    }
-}
-
-/// Forwards a vtable method of the shell to the inner object.
-macro_rules! forward {
-    ($kind:ty, $name:ident, $($path:ident).+, ($($a:ident : $t:ty),*)) => {
-        unsafe extern "system" fn $name(this: *mut core::ffi::c_void, $($a: $t),*) -> HRESULT {
-            // SAFETY: `this` is a `Shell`; the inner interface pointer stays valid while we hold it.
-            unsafe {
-                let s = &*this.cast::<Shell<$kind>>();
-                (Interface::vtable(&s.inner).$($path).+)(Interface::as_raw(&s.inner), $($a),*)
-            }
-        }
-    };
-}
-
-struct DataObjectKind;
-impl ShellKind for DataObjectKind {
-    type Inner = IDataObject;
-    fn answers(iid: &GUID) -> bool {
-        *iid == IDataObject::IID
-    }
-}
-
-forward!(DataObjectKind, do_get_data, GetData, (a: *const FORMATETC, b: *mut STGMEDIUM));
-forward!(DataObjectKind, do_get_data_here, GetDataHere, (a: *const FORMATETC, b: *mut STGMEDIUM));
-forward!(DataObjectKind, do_query_get_data, QueryGetData, (a: *const FORMATETC));
-forward!(DataObjectKind, do_get_canonical, GetCanonicalFormatEtc, (a: *const FORMATETC, b: *mut FORMATETC));
-forward!(DataObjectKind, do_set_data, SetData, (a: *const FORMATETC, b: *const STGMEDIUM, c: BOOL));
-forward!(DataObjectKind, do_enum_format_etc, EnumFormatEtc, (a: u32, b: *mut *mut core::ffi::c_void));
-forward!(DataObjectKind, do_dadvise, DAdvise, (a: *const FORMATETC, b: u32, c: *mut core::ffi::c_void, d: *mut u32));
-forward!(DataObjectKind, do_dunadvise, DUnadvise, (a: u32));
-forward!(DataObjectKind, do_enum_dadvise, EnumDAdvise, (a: *mut *mut core::ffi::c_void));
-
-static DATAOBJECT_VTBL: IDataObject_Vtbl = IDataObject_Vtbl {
-    base__: IUnknown_Vtbl { QueryInterface: shell_qi::<DataObjectKind>, AddRef: shell_add_ref::<DataObjectKind>, Release: shell_release::<DataObjectKind> },
-    GetData: do_get_data,
-    GetDataHere: do_get_data_here,
-    QueryGetData: do_query_get_data,
-    GetCanonicalFormatEtc: do_get_canonical,
-    SetData: do_set_data,
-    EnumFormatEtc: do_enum_format_etc,
-    DAdvise: do_dadvise,
-    DUnadvise: do_dunadvise,
-    EnumDAdvise: do_enum_dadvise,
-};
-
-struct StreamKind;
-impl ShellKind for StreamKind {
-    type Inner = IStream;
-    fn answers(iid: &GUID) -> bool {
-        *iid == IStream::IID || *iid == ISequentialStream::IID
-    }
-}
-
-forward!(StreamKind, st_read, base__.Read, (a: *mut core::ffi::c_void, b: u32, c: *mut u32));
-forward!(StreamKind, st_write, base__.Write, (a: *const core::ffi::c_void, b: u32, c: *mut u32));
-forward!(StreamKind, st_seek, Seek, (a: i64, b: STREAM_SEEK, c: *mut u64));
-forward!(StreamKind, st_set_size, SetSize, (a: u64));
-forward!(StreamKind, st_copy_to, CopyTo, (a: *mut core::ffi::c_void, b: u64, c: *mut u64, d: *mut u64));
-forward!(StreamKind, st_commit, Commit, (a: u32));
-forward!(StreamKind, st_revert, Revert, ());
-forward!(StreamKind, st_lock, LockRegion, (a: u64, b: u64, c: u32));
-forward!(StreamKind, st_unlock, UnlockRegion, (a: u64, b: u64, c: u32));
-forward!(StreamKind, st_stat, Stat, (a: *mut STATSTG, b: u32));
-
-/// `IStream::Clone` must return a shell too (the inner `Clone` returns an agile object).
-unsafe extern "system" fn st_clone(this: *mut core::ffi::c_void, out: *mut *mut core::ffi::c_void) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    // SAFETY: see `forward!`.
-    unsafe {
-        let s = &*this.cast::<Shell<StreamKind>>();
-        match s.inner.Clone() {
-            Ok(inner) => {
-                *out = new_shell::<StreamKind>(inner, std::ptr::addr_of!(STREAM_VTBL).cast());
-                S_OK
-            }
-            Err(e) => {
-                *out = std::ptr::null_mut();
-                e.code()
-            }
-        }
-    }
-}
-
-static STREAM_VTBL: IStream_Vtbl = IStream_Vtbl {
-    base__: ISequentialStream_Vtbl {
-        base__: IUnknown_Vtbl { QueryInterface: shell_qi::<StreamKind>, AddRef: shell_add_ref::<StreamKind>, Release: shell_release::<StreamKind> },
-        Read: st_read,
-        Write: st_write,
-    },
-    Seek: st_seek,
-    SetSize: st_set_size,
-    CopyTo: st_copy_to,
-    Commit: st_commit,
-    Revert: st_revert,
-    LockRegion: st_lock,
-    UnlockRegion: st_unlock,
-    Stat: st_stat,
-    Clone: st_clone,
-};
-
-fn shell_data_object(inner: IDataObject) -> IDataObject {
-    // SAFETY: the shell starts with a vtable pointer and a refcount of 1, which `from_raw` adopts.
-    unsafe { IDataObject::from_raw(new_shell::<DataObjectKind>(inner, std::ptr::addr_of!(DATAOBJECT_VTBL).cast())) }
-}
-
-fn shell_stream(inner: IStream) -> IStream {
-    // SAFETY: as above.
-    unsafe { IStream::from_raw(new_shell::<StreamKind>(inner, std::ptr::addr_of!(STREAM_VTBL).cast())) }
-}
-
 fn guard<T>(f: impl FnOnce() -> WinResult<T>) -> WinResult<T> {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| Err(Error::from(E_FAIL)))
 }
@@ -328,13 +162,21 @@ fn hglobal_from(bytes: &[u8]) -> WinResult<HGLOBAL> {
 fn hglobal_medium(bytes: &[u8]) -> WinResult<STGMEDIUM> {
     Ok(STGMEDIUM {
         tymed: TYMED_HGLOBAL.0 as u32,
-        u: STGMEDIUM_0 { hGlobal: hglobal_from(bytes)? },
+        u: STGMEDIUM_0 {
+            hGlobal: hglobal_from(bytes)?,
+        },
         pUnkForRelease: ManuallyDrop::new(None),
     })
 }
 
 fn fmt_etc(cf: u16, tymed: i32, lindex: i32) -> FORMATETC {
-    FORMATETC { cfFormat: cf, ptd: std::ptr::null_mut(), dwAspect: DVASPECT_CONTENT.0, lindex, tymed: tymed as u32 }
+    FORMATETC {
+        cfFormat: cf,
+        ptd: std::ptr::null_mut(),
+        dwAspect: DVASPECT_CONTENT.0,
+        lindex,
+        tymed: tymed as u32,
+    }
 }
 
 /// What a `FORMATETC` request addresses.
@@ -381,29 +223,47 @@ pub fn create_virtual_files_object(
         .map(|f| {
             let name = descriptor_name(&f.rel_path)?;
             let leaf = name.rsplit('\\').next().unwrap_or(&name).to_owned();
-            Ok(Entry { leaf, size: if f.is_dir { 0 } else { f.size }, mtime: unix_ms_to_filetime(f.mtime_unix_ms), is_dir: f.is_dir })
+            Ok(Entry {
+                leaf,
+                size: if f.is_dir { 0 } else { f.size },
+                mtime: unix_ms_to_filetime(f.mtime_unix_ms),
+                is_dir: f.is_dir,
+            })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    Ok(shell_data_object(VirtualFilesObject { ids, descriptor, entries, provider, origin }.into()))
+    Ok(VirtualFilesObject {
+        ids,
+        descriptor,
+        entries,
+        provider,
+        origin,
+    }
+    .into())
 }
 
 impl VirtualFilesObject {
     fn classify(&self, fe: &FORMATETC) -> Result<Which, HRESULT> {
-        if fe.dwAspect != DVASPECT_CONTENT.0 {
+        if fe.dwAspect & DVASPECT_CONTENT.0 == 0 {
             return Err(DV_E_DVASPECT);
         }
         let cf = fe.cfFormat;
         let wants = |t: i32| fe.tymed & (t as u32) != 0;
         let ids = &self.ids;
         if cf == ids.file_descriptor {
-            return if wants(TYMED_HGLOBAL.0) { Ok(Which::Descriptor) } else { Err(DV_E_TYMED) };
+            return if wants(TYMED_HGLOBAL.0) {
+                Ok(Which::Descriptor)
+            } else {
+                Err(DV_E_TYMED)
+            };
         }
         if cf == ids.file_contents {
             if !wants(TYMED_ISTREAM.0) {
                 return Err(DV_E_TYMED);
             }
             return match usize::try_from(fe.lindex) {
-                Ok(i) if i < self.entries.len() && !self.entries[i].is_dir => Ok(Which::Contents(Some(i))),
+                Ok(i) if i < self.entries.len() && !self.entries[i].is_dir => {
+                    Ok(Which::Contents(Some(i)))
+                }
                 Ok(_) => Err(DV_E_LINDEX),
                 Err(_) if fe.lindex == -1 => Ok(Which::Contents(None)),
                 Err(_) => Err(DV_E_LINDEX),
@@ -416,7 +276,11 @@ impl VirtualFilesObject {
         } else {
             return Err(DV_E_FORMATETC);
         };
-        if wants(TYMED_HGLOBAL.0) { Ok(Which::Hglobal(kind)) } else { Err(DV_E_TYMED) }
+        if wants(TYMED_HGLOBAL.0) {
+            Ok(Which::Hglobal(kind))
+        } else {
+            Err(DV_E_TYMED)
+        }
     }
 
     /// Formats offered by `EnumFormatEtc`. `FileContents` is listed once per file with its own
@@ -437,15 +301,26 @@ impl VirtualFilesObject {
     fn get_data(&self, fe: &FORMATETC) -> WinResult<STGMEDIUM> {
         match self.classify(fe).map_err(Error::from)? {
             Which::Descriptor => hglobal_medium(&self.descriptor),
-            Which::Hglobal(HglobalKind::PreferredEffect) => hglobal_medium(&DROPEFFECT_COPY.0.to_le_bytes()),
+            Which::Hglobal(HglobalKind::PreferredEffect) => {
+                hglobal_medium(&DROPEFFECT_COPY.0.to_le_bytes())
+            }
             Which::Hglobal(HglobalKind::Origin) => hglobal_medium(&self.origin),
             Which::Contents(None) => Err(Error::from(DV_E_LINDEX)),
             Which::Contents(Some(i)) => {
                 let e = &self.entries[i];
-                let stream = shell_stream(VirtualFileStream::new(self.provider.clone(), i, e.size, e.mtime, e.leaf.clone()).into());
+                let stream: IStream = VirtualFileStream::new(
+                    self.provider.clone(),
+                    i,
+                    e.size,
+                    e.mtime,
+                    e.leaf.clone(),
+                )
+                .into();
                 Ok(STGMEDIUM {
                     tymed: TYMED_ISTREAM.0 as u32,
-                    u: STGMEDIUM_0 { pstm: ManuallyDrop::new(Some(stream)) },
+                    u: STGMEDIUM_0 {
+                        pstm: ManuallyDrop::new(Some(stream)),
+                    },
                     pUnkForRelease: ManuallyDrop::new(None),
                 })
             }
@@ -458,24 +333,33 @@ impl IDataObject_Impl for VirtualFilesObject_Impl {
     fn GetData(&self, pformatetcin: *const FORMATETC) -> WinResult<STGMEDIUM> {
         // SAFETY: COM guarantees a valid FORMATETC pointer for the duration of the call.
         let fe = unsafe { pformatetcin.as_ref() }.ok_or_else(|| Error::from(E_INVALIDARG))?;
-        eprintln!("DBG GetData cf={} aspect={} lindex={} tymed={}", fe.cfFormat, fe.dwAspect, fe.lindex, fe.tymed);
         guard(|| self.get_data(fe))
     }
 
-    fn GetDataHere(&self, _pformatetc: *const FORMATETC, _pmedium: *mut STGMEDIUM) -> WinResult<()> {
+    fn GetDataHere(
+        &self,
+        _pformatetc: *const FORMATETC,
+        _pmedium: *mut STGMEDIUM,
+    ) -> WinResult<()> {
         Err(Error::from(E_NOTIMPL))
     }
 
     fn QueryGetData(&self, pformatetc: *const FORMATETC) -> HRESULT {
         // SAFETY: see GetData.
-        let Some(fe) = (unsafe { pformatetc.as_ref() }) else { return E_INVALIDARG };
+        let Some(fe) = (unsafe { pformatetc.as_ref() }) else {
+            return E_INVALIDARG;
+        };
         guard_hr(|| match self.classify(fe) {
             Ok(_) => S_OK,
             Err(hr) => hr,
         })
     }
 
-    fn GetCanonicalFormatEtc(&self, _pformatectin: *const FORMATETC, pformatetcout: *mut FORMATETC) -> HRESULT {
+    fn GetCanonicalFormatEtc(
+        &self,
+        _pformatectin: *const FORMATETC,
+        pformatetcout: *mut FORMATETC,
+    ) -> HRESULT {
         // SAFETY: the out pointer, when non-null, is writable by contract.
         if let Some(out) = unsafe { pformatetcout.as_mut() } {
             out.ptd = std::ptr::null_mut();
@@ -483,13 +367,22 @@ impl IDataObject_Impl for VirtualFilesObject_Impl {
         DATA_S_SAMEFORMATETC
     }
 
-    fn SetData(&self, pformatetc: *const FORMATETC, pmedium: *const STGMEDIUM, frelease: BOOL) -> WinResult<()> {
+    fn SetData(
+        &self,
+        pformatetc: *const FORMATETC,
+        pmedium: *const STGMEDIUM,
+        frelease: BOOL,
+    ) -> WinResult<()> {
         // SAFETY: see GetData.
         let fe = unsafe { pformatetc.as_ref() }.ok_or_else(|| Error::from(E_INVALIDARG))?;
         let ids = &self.ids;
         let cf = fe.cfFormat;
         // Explorer reports the outcome of the operation; accept and ignore.
-        if cf == ids.performed_drop_effect || cf == ids.logical_performed_drop_effect || cf == ids.paste_succeeded || cf == ids.preferred_drop_effect {
+        if cf == ids.performed_drop_effect
+            || cf == ids.logical_performed_drop_effect
+            || cf == ids.paste_succeeded
+            || cf == ids.preferred_drop_effect
+        {
             if frelease.as_bool() && !pmedium.is_null() {
                 // SAFETY: with fRelease=TRUE the callee owns the medium and must release it.
                 unsafe { ReleaseStgMedium(pmedium.cast_mut()) };
@@ -507,7 +400,12 @@ impl IDataObject_Impl for VirtualFilesObject_Impl {
         guard(|| unsafe { SHCreateStdEnumFmtEtc(&self.all_formats()) })
     }
 
-    fn DAdvise(&self, _pformatetc: *const FORMATETC, _advf: u32, _padvsink: Option<&IAdviseSink>) -> WinResult<u32> {
+    fn DAdvise(
+        &self,
+        _pformatetc: *const FORMATETC,
+        _advf: u32,
+        _padvsink: Option<&IAdviseSink>,
+    ) -> WinResult<u32> {
         Err(Error::from(OLE_E_ADVISENOTSUPPORTED))
     }
 
@@ -562,7 +460,9 @@ impl StreamState {
     }
 
     fn read_raw(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let Some(reader) = self.reader.as_mut() else { return Err(io::ErrorKind::NotConnected.into()) };
+        let Some(reader) = self.reader.as_mut() else {
+            return Err(io::ErrorKind::NotConnected.into());
+        };
         loop {
             match catch_unwind(AssertUnwindSafe(|| reader.read(buf))) {
                 Ok(Ok(n)) => {
@@ -607,8 +507,25 @@ struct VirtualFileStream {
 }
 
 impl VirtualFileStream {
-    fn new(provider: Arc<dyn VirtualFileProvider>, index: usize, size: u64, mtime: u64, leaf: String) -> Self {
-        Self { state: parking_lot::Mutex::new(StreamState { provider, index, size, pos: 0, reader: None, rpos: 0 }), mtime, leaf }
+    fn new(
+        provider: Arc<dyn VirtualFileProvider>,
+        index: usize,
+        size: u64,
+        mtime: u64,
+        leaf: String,
+    ) -> Self {
+        Self {
+            state: parking_lot::Mutex::new(StreamState {
+                provider,
+                index,
+                size,
+                pos: 0,
+                reader: None,
+                rpos: 0,
+            }),
+            mtime,
+            leaf,
+        }
     }
 }
 
@@ -649,7 +566,12 @@ impl ISequentialStream_Impl for VirtualFileStream_Impl {
 
 #[allow(non_snake_case)]
 impl IStream_Impl for VirtualFileStream_Impl {
-    fn Seek(&self, dlibmove: i64, dworigin: STREAM_SEEK, plibnewposition: *mut u64) -> WinResult<()> {
+    fn Seek(
+        &self,
+        dlibmove: i64,
+        dworigin: STREAM_SEEK,
+        plibnewposition: *mut u64,
+    ) -> WinResult<()> {
         let mut st = self.state.lock();
         let base = match dworigin {
             STREAM_SEEK_SET => 0i64,
@@ -657,7 +579,10 @@ impl IStream_Impl for VirtualFileStream_Impl {
             STREAM_SEEK_END => st.size as i64,
             _ => return Err(Error::from(STG_E_INVALIDFUNCTION)),
         };
-        let target = base.checked_add(dlibmove).filter(|&t| t >= 0).ok_or_else(|| Error::from(STG_E_INVALIDFUNCTION))?;
+        let target = base
+            .checked_add(dlibmove)
+            .filter(|&t| t >= 0)
+            .ok_or_else(|| Error::from(STG_E_INVALIDFUNCTION))?;
         // Only the logical position changes; the reader is repositioned lazily on the next Read.
         st.pos = target as u64;
         // SAFETY: optional out pointer, writable when non-null.
@@ -671,7 +596,13 @@ impl IStream_Impl for VirtualFileStream_Impl {
         Err(Error::from(STG_E_ACCESSDENIED))
     }
 
-    fn CopyTo(&self, pstm: Option<&IStream>, cb: u64, pcbread: *mut u64, pcbwritten: *mut u64) -> WinResult<()> {
+    fn CopyTo(
+        &self,
+        pstm: Option<&IStream>,
+        cb: u64,
+        pcbread: *mut u64,
+        pcbwritten: *mut u64,
+    ) -> WinResult<()> {
         let dst = pstm.ok_or_else(|| Error::from(E_POINTER))?;
         let (mut total_r, mut total_w) = (0u64, 0u64);
         let mut buf = vec![0u8; STREAM_CHUNK];
@@ -740,7 +671,10 @@ impl IStream_Impl for VirtualFileStream_Impl {
                 }
             }
         }
-        let ft = FILETIME { dwLowDateTime: self.mtime as u32, dwHighDateTime: (self.mtime >> 32) as u32 };
+        let ft = FILETIME {
+            dwLowDateTime: self.mtime as u32,
+            dwHighDateTime: (self.mtime >> 32) as u32,
+        };
         *out = STATSTG {
             pwcsName: name,
             r#type: STGTY_STREAM.0 as u32,
@@ -759,9 +693,15 @@ impl IStream_Impl for VirtualFileStream_Impl {
 
     fn Clone(&self) -> WinResult<IStream> {
         let st = self.state.lock();
-        let copy = VirtualFileStream::new(st.provider.clone(), st.index, st.size, self.mtime, self.leaf.clone());
+        let copy = VirtualFileStream::new(
+            st.provider.clone(),
+            st.index,
+            st.size,
+            self.mtime,
+            self.leaf.clone(),
+        );
         copy.state.lock().pos = st.pos;
-        Ok(shell_stream(copy.into()))
+        Ok(copy.into())
     }
 }
 
@@ -771,7 +711,12 @@ mod tests {
     use super::*;
 
     fn offer(path: &str, size: u64, dir: bool) -> FileOffer {
-        FileOffer { rel_path: path.into(), size, mtime_unix_ms: 1_700_000_000_000, is_dir: dir }
+        FileOffer {
+            rel_path: path.into(),
+            size,
+            mtime_unix_ms: 1_700_000_000_000,
+            is_dir: dir,
+        }
     }
 
     fn u32_at(d: &[u8], o: usize) -> u32 {
@@ -781,28 +726,47 @@ mod tests {
     #[test]
     fn filetime_conversion() {
         assert_eq!(unix_ms_to_filetime(0), 116_444_736_000_000_000);
-        assert_eq!(unix_ms_to_filetime(1_000), 116_444_736_000_000_000 + 10_000_000);
+        assert_eq!(
+            unix_ms_to_filetime(1_000),
+            116_444_736_000_000_000 + 10_000_000
+        );
         assert_eq!(unix_ms_to_filetime(i64::MIN), 0);
     }
 
     #[test]
     fn group_descriptor_layout() {
-        let files = [offer("Photos", 0, true), offer("Photos/Sub Dir/a ü.jpg", 5_000_000_123, false), offer("b.txt", 7, false)];
+        let files = [
+            offer("Photos", 0, true),
+            offer("Photos/Sub Dir/a ü.jpg", 5_000_000_123, false),
+            offer("b.txt", 7, false),
+        ];
         let d = build_file_group_descriptor(&files).unwrap();
         assert_eq!(d.len(), 4 + 3 * FILEDESCRIPTOR_LEN);
         assert_eq!(u32_at(&d, 0), 3);
 
         let e = |i: usize| 4 + i * FILEDESCRIPTOR_LEN;
         // Directory entry.
-        assert_eq!(u32_at(&d, e(0)), FD_ATTRIBUTES | FD_WRITESTIME | FD_PROGRESSUI);
+        assert_eq!(
+            u32_at(&d, e(0)),
+            FD_ATTRIBUTES | FD_WRITESTIME | FD_PROGRESSUI
+        );
         assert_eq!(u32_at(&d, e(0) + 36), FILE_ATTRIBUTE_DIRECTORY);
         // File entry: size split into high/low, write time, nested path with backslashes.
-        assert_eq!(u32_at(&d, e(1)), FD_ATTRIBUTES | FD_WRITESTIME | FD_PROGRESSUI | FD_FILESIZE);
+        assert_eq!(
+            u32_at(&d, e(1)),
+            FD_ATTRIBUTES | FD_WRITESTIME | FD_PROGRESSUI | FD_FILESIZE
+        );
         assert_eq!(u32_at(&d, e(1) + 36), FILE_ATTRIBUTE_NORMAL);
         let ft = u64::from(u32_at(&d, e(1) + 56)) | (u64::from(u32_at(&d, e(1) + 60)) << 32);
         assert_eq!(ft, unix_ms_to_filetime(1_700_000_000_000));
-        assert_eq!(u64::from(u32_at(&d, e(1) + 64)) << 32 | u64::from(u32_at(&d, e(1) + 68)), 5_000_000_123);
-        let name: Vec<u16> = d[e(1) + 72..e(1) + 72 + 520].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        assert_eq!(
+            u64::from(u32_at(&d, e(1) + 64)) << 32 | u64::from(u32_at(&d, e(1) + 68)),
+            5_000_000_123
+        );
+        let name: Vec<u16> = d[e(1) + 72..e(1) + 72 + 520]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
         assert_eq!(format::utf16_to_string(&name), "Photos\\Sub Dir\\a ü.jpg");
         assert_eq!(u32_at(&d, e(2) + 68), 7);
     }
@@ -811,7 +775,9 @@ mod tests {
     fn descriptor_name_validation() {
         assert_eq!(descriptor_name("a/b/c.txt").unwrap(), "a\\b\\c.txt");
         assert_eq!(descriptor_name("dir/").unwrap(), "dir");
-        for bad in ["", "/", "/abs", "\\abs", "../x", "a/../b", "a//b", "C:/x", "a/./b", "a/b:c"] {
+        for bad in [
+            "", "/", "/abs", "\\abs", "../x", "a/../b", "a//b", "C:/x", "a/./b", "a/b:c",
+        ] {
             assert!(descriptor_name(bad).is_err(), "{bad:?} must be rejected");
         }
         assert!(descriptor_name(&"x".repeat(260)).is_err());
@@ -828,7 +794,14 @@ mod tests {
                 Ok(Box::new(io::Cursor::new((0..100u8).collect::<Vec<_>>())))
             }
         }
-        let mut st = StreamState { provider: Arc::new(P), index: 3, size: 100, pos: 0, reader: None, rpos: 0 };
+        let mut st = StreamState {
+            provider: Arc::new(P),
+            index: 3,
+            size: 100,
+            pos: 0,
+            reader: None,
+            rpos: 0,
+        };
         let mut b = [0u8; 10];
         assert_eq!(st.read(&mut b).unwrap(), 10);
         assert_eq!(b[9], 9);
@@ -852,7 +825,14 @@ mod tests {
                 Ok(Box::new(io::Cursor::new(vec![1u8, 2, 3])))
             }
         }
-        let mut st = StreamState { provider: Arc::new(P), index: 0, size: 10, pos: 0, reader: None, rpos: 0 };
+        let mut st = StreamState {
+            provider: Arc::new(P),
+            index: 0,
+            size: 10,
+            pos: 0,
+            reader: None,
+            rpos: 0,
+        };
         let mut b = [0u8; 8];
         assert_eq!(st.read(&mut b).unwrap(), 3);
         assert!(st.read(&mut b).is_err());

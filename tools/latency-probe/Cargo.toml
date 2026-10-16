@@ -1,7 +1,22 @@
 [package]
 name = "latency-probe"
+description = "Desk Bridge latency measurements (input one-way latency, RTT, audio click timing)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[dependencies]
+deskbridge-core = { path = "../../crates/core" }
+anyhow.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+deskbridge-platform-windows.workspace = true
+deskbridge-platform.workspace = true
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = ["Win32_System_Performance", "Win32_Foundation"]

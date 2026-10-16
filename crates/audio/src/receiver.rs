@@ -86,11 +86,14 @@ const TARGET_JITTER_K: f32 = 1.3;
 /// Loss rate (percent) at which the target includes a full extra packet.
 const LOSS_FULL_PCT: f32 = 0.5;
 /// Target shrink rate (ms per second).
-const TARGET_DECAY_MS_PER_S: f32 = 0.5;
+const TARGET_DECAY_MS_PER_S: f32 = 1.0;
 /// Jitter peak decay time constant (seconds).
 const JITTER_PEAK_TAU_S: f32 = 10.0;
 /// Smoothing factor of the loss / late statistics (per packet).
 const RATE_ALPHA: f32 = 1.0 / 500.0;
+const LOSS_SLOW_ALPHA: f32 = 1.0 / 2000.0;
+/// Integrator freeze after a target step (microseconds).
+const INT_FREEZE_US: u64 = 4_000_000;
 
 #[derive(Debug, Clone)]
 pub struct ReceiverConfig {
@@ -104,7 +107,12 @@ pub struct ReceiverConfig {
 
 impl Default for ReceiverConfig {
     fn default() -> Self {
-        Self { channels_in: 2, wired: true, min_ms: 5.0, max_ms: 60.0 }
+        Self {
+            channels_in: 2,
+            wired: true,
+            min_ms: 5.0,
+            max_ms: 60.0,
+        }
     }
 }
 
@@ -157,7 +165,13 @@ struct Ring {
 impl Ring {
     fn new() -> Self {
         let start = 1u64 << 20;
-        Self { buf: vec![0.0; RING_FRAMES * 2], mask: RING_FRAMES - 1, wr: start, rd: start, phase: 0.0 }
+        Self {
+            buf: vec![0.0; RING_FRAMES * 2],
+            mask: RING_FRAMES - 1,
+            wr: start,
+            rd: start,
+            phase: 0.0,
+        }
     }
 
     fn avail(&self) -> usize {
@@ -182,7 +196,7 @@ impl Ring {
     }
 
     /// Frame `back` positions before the write pointer (`back = 1`: newest frame).
-    fn from_end(&self, back: usize) -> (f32, f32) {
+    fn tail_frame(&self, back: usize) -> (f32, f32) {
         let i = (self.wr as usize).wrapping_sub(back) & self.mask;
         (self.buf[i * 2], self.buf[i * 2 + 1])
     }
@@ -272,6 +286,10 @@ struct Core {
     late: u64,
     resyncs: u64,
     loss_ema: f32,
+    /// Slowly smoothed loss ratio used for the target (no wobble).
+    loss_slow: f32,
+    /// The integrator is frozen until this time (after a step of the target).
+    int_freeze_until_us: u64,
     late_ema: f32,
 }
 
@@ -280,7 +298,14 @@ impl Core {
         let initial: f32 = if cfg.wired { 10.0 } else { 20.0 };
         let target_ms = initial.clamp(cfg.min_ms, cfg.max_ms);
         let slots = (0..SLOTS)
-            .map(|_| Slot { ext: 0, valid: false, flags: 0, frames: 0, ts_us: 0, data: Vec::with_capacity(SLOT_CAP) })
+            .map(|_| Slot {
+                ext: 0,
+                valid: false,
+                flags: 0,
+                frames: 0,
+                ts_us: 0,
+                data: Vec::with_capacity(SLOT_CAP),
+            })
             .collect();
         Ok(Self {
             cfg,
@@ -335,6 +360,8 @@ impl Core {
             late: 0,
             resyncs: 0,
             loss_ema: 0.0,
+            loss_slow: 0.0,
+            int_freeze_until_us: 0,
             late_ema: 0.0,
         })
     }
@@ -449,7 +476,7 @@ impl Core {
             self.parked_frames += frames;
             self.highest_ext = self.highest_ext.max(ext);
             // Never let the window overflow: conceal what is still missing.
-            while self.highest_ext - self.next_ext >= (SLOTS - 8) as u64 {
+            while self.highest_ext.saturating_sub(self.next_ext) >= (SLOTS - 8) as u64 {
                 self.conceal_one();
                 self.drain_parked();
             }
@@ -479,7 +506,11 @@ impl Core {
             return;
         }
         // Opus output lags its input by the encoder look-ahead (see `append`).
-        let lag = if pkt.flags & audio_flags::OPUS != 0 { frames_us(OPUS_PRESKIP) } else { 0 };
+        let lag = if pkt.flags & audio_flags::OPUS != 0 {
+            frames_us(OPUS_PRESKIP)
+        } else {
+            0
+        };
         let transit = (now as i64 - (pkt.ts_us as i64 + frames_us(frames) - lag)) as f64;
         if !self.tau_init {
             self.tau_init = true;
@@ -501,12 +532,16 @@ impl Core {
         let d_ms = frames.max(240) as f32 / 48.0;
         // With measurable loss keep one more packet so a single loss can be concealed
         // (the next packet arrives one packet duration late).
-        let loss_term = d_ms * (self.loss_ema * 100.0 / LOSS_FULL_PCT).min(1.0);
+        let loss_term = d_ms * (self.loss_slow * 100.0 / LOSS_FULL_PCT).min(1.0);
         let raw = (d_ms + loss_term + TARGET_BASE_MS + TARGET_JITTER_K * self.jit_peak)
             .clamp(self.cfg.min_ms, self.cfg.max_ms);
         let dt = now.saturating_sub(self.last_target_us) as f32 * 1e-6;
         self.last_target_us = now;
         if raw > self.target_ms {
+            if raw > self.target_ms + 1.0 {
+                // Let the level settle before the integrator learns again.
+                self.int_freeze_until_us = now + INT_FREEZE_US;
+            }
             self.target_ms = raw;
         } else {
             self.target_ms = raw.max(self.target_ms - TARGET_DECAY_MS_PER_S * dt.min(1.0));
@@ -554,13 +589,22 @@ impl Core {
     fn advance_ok(&mut self) {
         self.next_ext += 1;
         self.loss_ema -= self.loss_ema * RATE_ALPHA;
+        self.loss_slow -= self.loss_slow * LOSS_SLOW_ALPHA;
     }
 
     /// Decodes into `st_buf` (stereo). Returns `(frames, frames_to_skip)`.
     fn decode_payload(&mut self, flags: u8, payload: &[u8]) -> Option<(usize, usize)> {
         let mono = flags & audio_flags::MONO != 0;
         if flags & audio_flags::OPUS != 0 {
-            let dec = if mono { &mut self.dec_mono } else { &mut self.dec_stereo };
+            let dec = if mono {
+                &mut self.dec_mono
+            } else {
+                &mut self.dec_stereo
+            };
+            if self.dec_cold {
+                // The sender restarted its encoder for this stretch of Opus packets.
+                dec.reset();
+            }
             let frames = dec.decode(payload, &mut self.dec_buf).ok()?;
             if mono {
                 for i in 0..frames {
@@ -571,7 +615,11 @@ impl Core {
             } else {
                 self.st_buf[..frames * 2].copy_from_slice(&self.dec_buf[..frames * 2]);
             }
-            let skip = if self.dec_cold { frames.min(OPUS_PRESKIP) } else { 0 };
+            let skip = if self.dec_cold {
+                frames.min(OPUS_PRESKIP)
+            } else {
+                0
+            };
             self.dec_cold = false;
             self.last_was_opus = true;
             self.last_mono = mono;
@@ -633,13 +681,18 @@ impl Core {
     fn conceal_one(&mut self) {
         self.plc_count += 1;
         self.loss_ema += (1.0 - self.loss_ema) * RATE_ALPHA;
+        self.loss_slow += (1.0 - self.loss_slow) * LOSS_SLOW_ALPHA;
         let dur = self.last_dur.clamp(120, 960);
         self.end_last += frames_us(dur);
         let mut done = false;
         if self.last_was_opus && !self.dec_cold {
             let frames = (dur / 120).max(1) * 120;
             let ch = if self.last_mono { 1 } else { 2 };
-            let dec = if self.last_mono { &mut self.dec_mono } else { &mut self.dec_stereo };
+            let dec = if self.last_mono {
+                &mut self.dec_mono
+            } else {
+                &mut self.dec_stereo
+            };
             if let Ok(n) = dec.conceal(&mut self.dec_buf[..frames * ch]) {
                 if ch == 1 {
                     for i in 0..n {
@@ -671,7 +724,11 @@ impl Core {
         let p = self.plc_p.max(1);
         for i in 0..dur + PLC_XF {
             let pos = self.plc_pos + i;
-            let g = if pos >= PLC_MUTE_AFTER { 0.0 } else { (-((pos + 1) as f32) / PLC_TAU).exp() };
+            let g = if pos >= PLC_MUTE_AFTER {
+                0.0
+            } else {
+                (-((pos + 1) as f32) / PLC_TAU).exp()
+            };
             let k = pos % p;
             let (l, r) = (self.plc_period[2 * k] * g, self.plc_period[2 * k + 1] * g);
             if i < dur {
@@ -691,7 +748,7 @@ impl Core {
     fn plc_analyse(&mut self) {
         // Already played audio stays in the ring until it is overwritten, use it as history.
         for i in 0..PLC_HIST {
-            let (l, r) = self.ring.from_end(PLC_HIST - i);
+            let (l, r) = self.ring.tail_frame(PLC_HIST - i);
             self.plc_mono[i] = 0.5 * (l + r);
         }
         let m = &self.plc_mono;
@@ -715,16 +772,13 @@ impl Core {
                 }
             }
             // Prefer the shortest lag that is nearly as good as the best one.
-            for lag in PLC_MIN_LAG..=best.1 {
-                if corr[lag] >= 0.995 * best.0 {
-                    best.1 = lag;
-                    break;
-                }
+            if let Some(lag) = (PLC_MIN_LAG..=best.1).find(|&l| corr[l] >= 0.995 * best.0) {
+                best.1 = lag;
             }
         }
         self.plc_p = best.1;
         for k in 0..self.plc_p {
-            let (l, r) = self.ring.from_end(self.plc_p - k);
+            let (l, r) = self.ring.tail_frame(self.plc_p - k);
             self.plc_period[2 * k] = l;
             self.plc_period[2 * k + 1] = r;
         }
@@ -737,10 +791,15 @@ impl Core {
     /// Real playable level in frames (including data parked behind a gap).
     fn level_frames(&self) -> f64 {
         let ring = self.ring.avail() as f64 - self.ring.phase - LOOK_OVERHEAD as f64;
-        let skipped = if self.xf_left > 0 { self.xf_off as f64 } else { 0.0 };
+        let skipped = if self.xf_left > 0 {
+            self.xf_off as f64
+        } else {
+            0.0
+        };
         let mut extra = 0.0;
         if self.parked_count > 0 {
-            let holes = (self.highest_ext + 1 - self.next_ext) as usize - self.parked_count;
+            let span = (self.highest_ext + 1).saturating_sub(self.next_ext) as usize;
+            let holes = span.saturating_sub(self.parked_count);
             extra = (self.parked_frames + holes * self.last_dur) as f64;
         }
         ring - skipped + extra
@@ -751,7 +810,11 @@ impl Core {
     /// network delay" and has no packet-granularity sawtooth.
     fn fluid_frames(&self, now: u64) -> f64 {
         let ring = self.ring.avail() as f64 - self.ring.phase - LOOK_OVERHEAD as f64;
-        let skipped = if self.xf_left > 0 { self.xf_off as f64 } else { 0.0 };
+        let skipped = if self.xf_left > 0 {
+            self.xf_off as f64
+        } else {
+            0.0
+        };
         let age_us = now as f64 - self.tau_bar - self.end_last as f64;
         ring - skipped + age_us * 1e-6 * f64::from(RATE)
     }
@@ -791,13 +854,9 @@ impl Core {
         self.apply_volume(body, gain_target);
     }
 
+    /// Applies the volume ramp and a final safety clip to [-1, 1] (also maps NaN to a
+    /// finite value) so corrupt Opus data can never blast the headset.
     fn apply_volume(&mut self, out: &mut [f32], target: f32) {
-        if (self.vol_cur - target).abs() < 1e-6 {
-            self.vol_cur = target;
-            if target == 1.0 {
-                return;
-            }
-        }
         let step = 1.0 / 480.0;
         for f in out.chunks_exact_mut(2) {
             if self.vol_cur < target {
@@ -805,8 +864,8 @@ impl Core {
             } else if self.vol_cur > target {
                 self.vol_cur = (self.vol_cur - step).max(target);
             }
-            f[0] *= self.vol_cur;
-            f[1] *= self.vol_cur;
+            f[0] = (f[0] * self.vol_cur).max(-1.0).min(1.0);
+            f[1] = (f[1] * self.vol_cur).max(-1.0).min(1.0);
         }
     }
 
@@ -847,7 +906,11 @@ impl Core {
     fn play_block(&mut self, out: &mut [f32], n: usize, now: u64) {
         let r = self.ratio;
         self.check_overrun(n);
-        let xf_off = if self.xf_left > 0 { self.xf_off as usize } else { 0 };
+        let xf_off = if self.xf_left > 0 {
+            self.xf_off as usize
+        } else {
+            0
+        };
         let span = self.ring.phase + (n - 1) as f64 * r;
         let need = span.floor() as usize + LOOK_OVERHEAD + 1;
         let want = need + GUARD + xf_off;
@@ -860,11 +923,15 @@ impl Core {
         } else {
             let eff = avail.saturating_sub(xf_off) as f64;
             let x = (eff - (LOOK_OVERHEAD + 1) as f64 - self.ring.phase) / r;
-            if x <= 0.0 { 0 } else { (x.ceil() as usize).min(n) }
+            if x <= 0.0 {
+                0
+            } else {
+                (x.ceil() as usize).min(n)
+            }
         };
         if !full && self.xf_left > 0 {
             // Abandon the cross-fade: jump now.
-            self.ring.rd += self.xf_off;
+            self.ring.rd = (self.ring.rd + self.xf_off).min(self.ring.wr);
             self.xf_left = 0;
         }
         let fo_len = if full { 0 } else { m.min(FADE) };
@@ -883,7 +950,7 @@ impl Core {
                 rr = rr * (1.0 - w) + r2 * w;
                 self.xf_left -= 1;
                 if self.xf_left == 0 {
-                    self.ring.rd += self.xf_off;
+                    self.ring.rd = (self.ring.rd + self.xf_off).min(self.ring.wr);
                 }
             }
             let mut g = self.fade_gain;
@@ -929,7 +996,7 @@ impl Core {
         let dt = n as f64 / f64::from(RATE);
         // Only integrate near the target: a large offset (start-up, after an underrun) is
         // pulled in by the proportional term alone, so the integrator cannot wind up.
-        if err_ms.abs() <= INT_ERR_MAX_MS {
+        if err_ms.abs() <= INT_ERR_MAX_MS && now >= self.int_freeze_until_us {
             self.drift_i = (self.drift_i + KI * err_ms * dt).clamp(-I_MAX, I_MAX);
         }
         let u = (self.drift_i + KP * err_ms).clamp(-U_MAX, U_MAX);
@@ -981,7 +1048,8 @@ impl PullSource for Shared {
         };
         let mut core = self.core.lock();
         core.pull(out, now, Core::start_gain_target(gain));
-        self.peak.store(core.meter.peak().to_bits(), Ordering::Relaxed);
+        self.peak
+            .store(core.meter.peak().to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -1028,7 +1096,9 @@ impl AudioReceiver {
 
     /// Linear volume (`1.0` = unity); applied with a 10 ms ramp.
     pub fn set_volume(&self, v: f32) {
-        self.shared.volume.store(v.clamp(0.0, 4.0).to_bits(), Ordering::Relaxed);
+        self.shared
+            .volume
+            .store(v.clamp(0.0, 4.0).to_bits(), Ordering::Relaxed);
     }
 
     pub fn set_muted(&self, m: bool) {

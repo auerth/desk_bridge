@@ -47,7 +47,11 @@ fn build_table() -> Box<[f32]> {
                 (std::f64::consts::PI * d).sin() / (std::f64::consts::PI * d)
             };
             let x = d / half;
-            let w = if x.abs() >= 1.0 { 0.0 } else { bessel_i0(BETA * (1.0 - x * x).sqrt()) / norm };
+            let w = if x.abs() >= 1.0 {
+                0.0
+            } else {
+                bessel_i0(BETA * (1.0 - x * x).sqrt()) / norm
+            };
             *h = sinc * w;
             sum += *h;
         }

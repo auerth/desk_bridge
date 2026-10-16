@@ -154,6 +154,12 @@ impl Engine {
             update: UpdateDto { current: crate::brand::VERSION.into(), available: None, checking: false },
             metrics: MetricsDto {
                 rtt_history_us: self.rtt_history.iter().copied().collect(),
+                input_latency_p50_us: self.input_latency_percentiles().0,
+                input_latency_p95_us: self.input_latency_percentiles().1,
+                input_latency_max_us: self.input_latency_percentiles().2,
+                audio_buffer_fill_ms: self.audio_metrics().0,
+                audio_drift_ppm: self.audio_metrics().1,
+                audio_loss_pct: self.audio_metrics().2,
                 ..MetricsDto::default()
             },
             paused: self.cfg.general.paused,
@@ -161,7 +167,9 @@ impl Engine {
     }
 
     /// Feature modules overwrite their parts of the snapshot here.
-    fn fill_feature_state(&self, _f: &mut FeaturesDto) {}
+    fn fill_feature_state(&self, f: &mut FeaturesDto) {
+        self.fill_audio_state(f);
+    }
 
     fn transfers_snapshot(&self) -> Vec<crate::ipc::TransferDto> {
         self.transfers_dto()

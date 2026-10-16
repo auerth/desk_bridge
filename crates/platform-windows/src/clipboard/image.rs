@@ -45,17 +45,29 @@ struct Channel {
 impl Channel {
     fn new(mask: u32) -> Self {
         if mask == 0 {
-            return Self { mask: 0, shift: 0, max: 0 };
+            return Self {
+                mask: 0,
+                shift: 0,
+                max: 0,
+            };
         }
         let shift = mask.trailing_zeros();
-        Self { mask, shift, max: mask >> shift }
+        Self {
+            mask,
+            shift,
+            max: mask >> shift,
+        }
     }
     fn get(self, px: u32) -> u8 {
         if self.mask == 0 {
             return 0;
         }
         let v = (px & self.mask) >> self.shift;
-        if self.max == 255 { v as u8 } else { ((v * 255 + self.max / 2) / self.max) as u8 }
+        if self.max == 255 {
+            v as u8
+        } else {
+            ((v * 255 + self.max / 2) / self.max) as u8
+        }
     }
     fn present(self) -> bool {
         self.mask != 0
@@ -98,7 +110,8 @@ pub fn decode_dib(dib: &[u8]) -> Result<Rgba, String> {
 
     // Masks: inside the header for >= 52 bytes, otherwise trailing the 40-byte header.
     let mut off = hsize;
-    let uses_masks = matches!(compression, BI_BITFIELDS | BI_ALPHABITFIELDS) && matches!(bpp, 16 | 32);
+    let uses_masks =
+        matches!(compression, BI_BITFIELDS | BI_ALPHABITFIELDS) && matches!(bpp, 16 | 32);
     let (mut rm, mut gm, mut bm, mut am) = (0u32, 0u32, 0u32, 0u32);
     if uses_masks {
         if hsize >= 52 {
@@ -112,7 +125,11 @@ pub fn decode_dib(dib: &[u8]) -> Result<Rgba, String> {
             rm = u32_at(dib, off).ok_or("DIB too short")?;
             gm = u32_at(dib, off + 4).ok_or("DIB too short")?;
             bm = u32_at(dib, off + 8).ok_or("DIB too short")?;
-            let n = if compression == BI_ALPHABITFIELDS { 4 } else { 3 };
+            let n = if compression == BI_ALPHABITFIELDS {
+                4
+            } else {
+                3
+            };
             if n == 4 {
                 am = u32_at(dib, off + 12).ok_or("DIB too short")?;
             }
@@ -131,7 +148,12 @@ pub fn decode_dib(dib: &[u8]) -> Result<Rgba, String> {
     // Palette.
     let mut palette: Vec<[u8; 3]> = Vec::new();
     if bpp <= 8 {
-        let n = if clr_used != 0 { clr_used } else { 1usize << bpp }.min(1 << bpp);
+        let n = if clr_used != 0 {
+            clr_used
+        } else {
+            1usize << bpp
+        }
+        .min(1 << bpp);
         let raw = dib.get(off..off + n * 4).ok_or("DIB palette truncated")?;
         palette = raw.chunks_exact(4).map(|c| [c[2], c[1], c[0]]).collect();
         off += n * 4;
@@ -142,13 +164,21 @@ pub fn decode_dib(dib: &[u8]) -> Result<Rgba, String> {
     }
 
     let stride = ((w as usize * bpp as usize).div_ceil(32)) * 4;
-    let need = stride.checked_mul(h as usize).and_then(|n| n.checked_add(off)).ok_or("DIB too large")?;
+    let need = stride
+        .checked_mul(h as usize)
+        .and_then(|n| n.checked_add(off))
+        .ok_or("DIB too large")?;
     if dib.len() < need {
         return Err("DIB pixel data truncated".into());
     }
     let pixels = &dib[off..];
 
-    let (rc, gc, bc, ac) = (Channel::new(rm), Channel::new(gm), Channel::new(bm), Channel::new(am));
+    let (rc, gc, bc, ac) = (
+        Channel::new(rm),
+        Channel::new(gm),
+        Channel::new(bm),
+        Channel::new(am),
+    );
     let mut out = vec![0u8; w as usize * h as usize * 4];
     let mut any_alpha = false;
     for y in 0..h as usize {
@@ -160,7 +190,12 @@ pub fn decode_dib(dib: &[u8]) -> Result<Rgba, String> {
                 24 => (row[x * 3 + 2], row[x * 3 + 1], row[x * 3], 255),
                 32 | 16 => {
                     let px = if bpp == 32 {
-                        u32::from_le_bytes([row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]])
+                        u32::from_le_bytes([
+                            row[x * 4],
+                            row[x * 4 + 1],
+                            row[x * 4 + 2],
+                            row[x * 4 + 3],
+                        ])
                     } else {
                         u32::from(u16::from_le_bytes([row[x * 2], row[x * 2 + 1]]))
                     };
@@ -186,7 +221,11 @@ pub fn decode_dib(dib: &[u8]) -> Result<Rgba, String> {
             px[3] = 255;
         }
     }
-    Ok(Rgba { width: w, height: h, data: out })
+    Ok(Rgba {
+        width: w,
+        height: h,
+        data: out,
+    })
 }
 
 /// Encodes RGBA8 as PNG (RGB if fully opaque, RGBA otherwise).
@@ -200,7 +239,11 @@ pub fn encode_png(img: &Rgba) -> Result<Vec<u8>, String> {
         let rgb;
         let data: &[u8] = if opaque {
             enc.set_color(png::ColorType::Rgb);
-            rgb = img.data.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect::<Vec<u8>>();
+            rgb = img
+                .data
+                .chunks_exact(4)
+                .flat_map(|p| [p[0], p[1], p[2]])
+                .collect::<Vec<u8>>();
             &rgb
         } else {
             enc.set_color(png::ColorType::Rgba);
@@ -228,15 +271,25 @@ pub fn decode_png(data: &[u8]) -> Result<Rgba, String> {
     let mut out = Vec::with_capacity(w as usize * h as usize * 4);
     match info.color_type {
         png::ColorType::Rgba => out.extend_from_slice(buf),
-        png::ColorType::Rgb => buf.chunks_exact(3).for_each(|p| out.extend_from_slice(&[p[0], p[1], p[2], 255])),
-        png::ColorType::Grayscale => buf.iter().for_each(|&g| out.extend_from_slice(&[g, g, g, 255])),
-        png::ColorType::GrayscaleAlpha => buf.chunks_exact(2).for_each(|p| out.extend_from_slice(&[p[0], p[0], p[0], p[1]])),
+        png::ColorType::Rgb => buf
+            .chunks_exact(3)
+            .for_each(|p| out.extend_from_slice(&[p[0], p[1], p[2], 255])),
+        png::ColorType::Grayscale => buf
+            .iter()
+            .for_each(|&g| out.extend_from_slice(&[g, g, g, 255])),
+        png::ColorType::GrayscaleAlpha => buf
+            .chunks_exact(2)
+            .for_each(|p| out.extend_from_slice(&[p[0], p[0], p[0], p[1]])),
         png::ColorType::Indexed => return Err("indexed PNG was not expanded".into()),
     }
     if out.len() != w as usize * h as usize * 4 {
         return Err("PNG decode size mismatch".into());
     }
-    Ok(Rgba { width: w, height: h, data: out })
+    Ok(Rgba {
+        width: w,
+        height: h,
+        data: out,
+    })
 }
 
 /// Encodes RGBA8 as a packed `CF_DIBV5` (32 bpp, `BI_BITFIELDS` BGRA masks, sRGB, bottom-up,
@@ -299,11 +352,24 @@ mod tests {
         let mut data = Vec::new();
         for y in 0..h {
             for x in 0..w {
-                let a = if alpha { (x * 40 + y * 13 + 1) as u8 } else { 255 };
-                data.extend_from_slice(&[(x * 30 + 5) as u8, (y * 50 + 7) as u8, (x * y + 3) as u8, a]);
+                let a = if alpha {
+                    (x * 40 + y * 13 + 1) as u8
+                } else {
+                    255
+                };
+                data.extend_from_slice(&[
+                    (x * 30 + 5) as u8,
+                    (y * 50 + 7) as u8,
+                    (x * y + 3) as u8,
+                    a,
+                ]);
             }
         }
-        Rgba { width: w, height: h, data }
+        Rgba {
+            width: w,
+            height: h,
+            data,
+        }
     }
 
     fn header(w: i32, h: i32, bpp: u16, comp: u32, extra: usize) -> Vec<u8> {
@@ -329,7 +395,11 @@ mod tests {
                 assert_eq!(decode_png(&png).unwrap(), img, "png {w}x{h} alpha={alpha}");
                 let dib = png_to_dibv5(&png).unwrap();
                 assert_eq!(dib.len(), 124 + (w * h * 4) as usize);
-                assert_eq!(decode_dib(&dib).unwrap(), img, "dibv5 {w}x{h} alpha={alpha}");
+                assert_eq!(
+                    decode_dib(&dib).unwrap(),
+                    img,
+                    "dibv5 {w}x{h} alpha={alpha}"
+                );
                 let png2 = dib_to_png(&dib).unwrap();
                 assert_eq!(decode_png(&png2).unwrap(), img);
             }
@@ -340,16 +410,25 @@ mod tests {
     fn opaque_image_uses_rgb_png() {
         let png = encode_png(&gradient(4, 4, false)).unwrap();
         let dec = png::Decoder::new(Cursor::new(&png[..]));
-        assert_eq!(dec.read_info().unwrap().info().color_type, png::ColorType::Rgb);
+        assert_eq!(
+            dec.read_info().unwrap().info().color_type,
+            png::ColorType::Rgb
+        );
         let png = encode_png(&gradient(4, 4, true)).unwrap();
         let dec = png::Decoder::new(Cursor::new(&png[..]));
-        assert_eq!(dec.read_info().unwrap().info().color_type, png::ColorType::Rgba);
+        assert_eq!(
+            dec.read_info().unwrap().info().color_type,
+            png::ColorType::Rgba
+        );
     }
 
     #[test]
     fn bgr24_bottom_up_and_top_down_with_padding() {
         // 3x2 24 bpp: stride = 12 (9 bytes + 3 padding).
-        let rows = [[(1u8, 2u8, 3u8), (4, 5, 6), (7, 8, 9)], [(10, 11, 12), (13, 14, 15), (16, 17, 18)]]; // R,G,B, top row first
+        let rows = [
+            [(1u8, 2u8, 3u8), (4, 5, 6), (7, 8, 9)],
+            [(10, 11, 12), (13, 14, 15), (16, 17, 18)],
+        ]; // R,G,B, top row first
         let build = |h: i32, order: [usize; 2]| {
             let mut d = header(3, h, 24, BI_RGB, 0);
             for r in order {
@@ -360,7 +439,11 @@ mod tests {
             }
             d
         };
-        let expect: Vec<u8> = rows.iter().flatten().flat_map(|&(r, g, b)| [r, g, b, 255]).collect();
+        let expect: Vec<u8> = rows
+            .iter()
+            .flatten()
+            .flat_map(|&(r, g, b)| [r, g, b, 255])
+            .collect();
         let bottom_up = decode_dib(&build(2, [1, 0])).unwrap();
         let top_down = decode_dib(&build(-2, [0, 1])).unwrap();
         assert_eq!(bottom_up.data, expect);
@@ -375,12 +458,20 @@ mod tests {
         assert_eq!(decode_dib(&d).unwrap().data, vec![30, 20, 10, 255]);
 
         // V5 header, BI_RGB, alpha present.
-        let mut v5 = encode_dibv5(&Rgba { width: 1, height: 1, data: vec![30, 20, 10, 0x80] });
+        let mut v5 = encode_dibv5(&Rgba {
+            width: 1,
+            height: 1,
+            data: vec![30, 20, 10, 0x80],
+        });
         v5[16..20].copy_from_slice(&BI_RGB.to_le_bytes());
         v5[40..56].fill(0);
         assert_eq!(decode_dib(&v5).unwrap().data, vec![30, 20, 10, 0x80]);
         // ... but an all-zero alpha channel means "opaque".
-        let mut v5 = encode_dibv5(&Rgba { width: 1, height: 1, data: vec![30, 20, 10, 0] });
+        let mut v5 = encode_dibv5(&Rgba {
+            width: 1,
+            height: 1,
+            data: vec![30, 20, 10, 0],
+        });
         v5[16..20].copy_from_slice(&BI_RGB.to_le_bytes());
         assert_eq!(decode_dib(&v5).unwrap().data, vec![30, 20, 10, 255]);
     }
@@ -415,7 +506,10 @@ mod tests {
         d[32..36].copy_from_slice(&2u32.to_le_bytes());
         d.extend_from_slice(&[0, 0, 255, 0, 0, 255, 0, 0]); // BGRX: red, green
         d.extend_from_slice(&[0, 1, 0, 0]);
-        assert_eq!(decode_dib(&d).unwrap().data, vec![255, 0, 0, 255, 0, 255, 0, 255, 255, 0, 0, 255]);
+        assert_eq!(
+            decode_dib(&d).unwrap().data,
+            vec![255, 0, 0, 255, 0, 255, 0, 255, 255, 0, 0, 255]
+        );
         // 1bpp, width 9 -> stride 4, bits 1,0,1,0,0,0,0,0,1.
         let mut d = header(9, 1, 1, BI_RGB, 0);
         d.extend_from_slice(&[0, 0, 0, 0, 255, 255, 255, 0]); // black, white
@@ -445,10 +539,14 @@ mod tests {
             enc.set_color(png::ColorType::GrayscaleAlpha);
             enc.set_depth(png::BitDepth::Sixteen);
             let mut w = enc.write_header().unwrap();
-            w.write_image_data(&[0x80, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x40, 0x00]).unwrap();
+            w.write_image_data(&[0x80, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x40, 0x00])
+                .unwrap();
         }
         let img = decode_png(&out).unwrap();
-        assert_eq!(img.data, vec![0x80, 0x80, 0x80, 0xFF, 0x00, 0x00, 0x00, 0x40]);
+        assert_eq!(
+            img.data,
+            vec![0x80, 0x80, 0x80, 0xFF, 0x00, 0x00, 0x00, 0x40]
+        );
 
         let mut out = Vec::new();
         {
@@ -459,7 +557,10 @@ mod tests {
             let mut w = enc.write_header().unwrap();
             w.write_image_data(&[1, 0]).unwrap();
         }
-        assert_eq!(decode_png(&out).unwrap().data, vec![0, 0, 255, 255, 255, 0, 0, 255]);
+        assert_eq!(
+            decode_png(&out).unwrap().data,
+            vec![0, 0, 255, 255, 255, 0, 0, 255]
+        );
     }
 
     #[test]

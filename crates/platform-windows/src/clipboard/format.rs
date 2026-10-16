@@ -172,7 +172,10 @@ pub fn string_to_utf16_bytes(s: &str) -> Vec<u8> {
 /// Little-endian UTF-16 bytes (up to the first NUL unit) to `String`.
 #[must_use]
 pub fn utf16_bytes_to_string(bytes: &[u8]) -> String {
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
     utf16_to_string(&units)
 }
 
@@ -200,8 +203,16 @@ fn html_with_markers(html: &str) -> String {
         && let Some(gt) = lower[b..].find('>')
     {
         let start = b + gt + 1;
-        let end = lower.rfind("</body").filter(|&e| e >= start).unwrap_or(html.len());
-        return format!("{}{START_MARK}{}{END_MARK}{}", &html[..start], &html[start..end], &html[end..]);
+        let end = lower
+            .rfind("</body")
+            .filter(|&e| e >= start)
+            .unwrap_or(html.len());
+        return format!(
+            "{}{START_MARK}{}{END_MARK}{}",
+            &html[..start],
+            &html[start..end],
+            &html[end..]
+        );
     }
     format!("<html><body>\r\n{START_MARK}{html}{END_MARK}\r\n</body></html>")
 }
@@ -240,9 +251,13 @@ pub fn parse_cf_html(data: &[u8]) -> Option<String> {
         if line.is_empty() || line[0] == b'<' {
             break;
         }
-        let Some(colon) = line.iter().position(|&b| b == b':') else { break };
+        let Some(colon) = line.iter().position(|&b| b == b':') else {
+            break;
+        };
         let key = std::str::from_utf8(&line[..colon]).ok()?.trim();
-        let val = std::str::from_utf8(&line[colon + 1..]).ok().and_then(|v| v.trim().parse::<i64>().ok());
+        let val = std::str::from_utf8(&line[colon + 1..])
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok());
         match key {
             "StartHTML" => sh = val,
             "EndHTML" => eh = val,
@@ -251,7 +266,10 @@ pub fn parse_cf_html(data: &[u8]) -> Option<String> {
             _ => {}
         }
     }
-    let valid = |o: Option<i64>| o.filter(|&v| v >= 0 && (v as usize) <= len).map(|v| v as usize);
+    let valid = |o: Option<i64>| {
+        o.filter(|&v| v >= 0 && (v as usize) <= len)
+            .map(|v| v as usize)
+    };
     let (sh, eh, sf, ef) = (valid(sh), valid(eh), valid(sf), valid(ef));
     let frag = match (sf, ef) {
         (Some(a), Some(b)) if a <= b => Some((a, b)),
@@ -314,10 +332,15 @@ pub fn parse_dropfiles(data: &[u8]) -> Vec<PathBuf> {
     }
     let p_files = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
     let wide = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) != 0;
-    let Some(list) = data.get(p_files..) else { return Vec::new() };
+    let Some(list) = data.get(p_files..) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     if wide {
-        let units: Vec<u16> = list.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = list
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
         for part in units.split(|&u| u == 0) {
             if part.is_empty() {
                 break; // double NUL
@@ -370,14 +393,41 @@ mod tests {
     const CF_TEXT: u32 = 1;
 
     fn ids() -> RegisteredIds {
-        RegisteredIds { html: 0xC001, rtf: 0xC002, png: 0xC003, png_alias: 0xC004 }
+        RegisteredIds {
+            html: 0xC001,
+            rtf: 0xC002,
+            png: 0xC003,
+            png_alias: 0xC004,
+        }
     }
 
     #[test]
     fn mime_mapping_dedupes_and_orders() {
         let i = ids();
-        let got = mimes_of_formats(&i, &[CF_UNICODETEXT, CF_TEXT, 0xC003, CF_DIBV5, CF_DIB, 0xC001, 0xC002, CF_HDROP, 0xC999]);
-        assert_eq!(got, vec!["text/plain", "image/png", "text/html", "text/rtf", "text/uri-list"]);
+        let got = mimes_of_formats(
+            &i,
+            &[
+                CF_UNICODETEXT,
+                CF_TEXT,
+                0xC003,
+                CF_DIBV5,
+                CF_DIB,
+                0xC001,
+                0xC002,
+                CF_HDROP,
+                0xC999,
+            ],
+        );
+        assert_eq!(
+            got,
+            vec![
+                "text/plain",
+                "image/png",
+                "text/html",
+                "text/rtf",
+                "text/uri-list"
+            ]
+        );
         assert_eq!(mimes_of_formats(&i, &[]), Vec::<&str>::new());
         assert_eq!(i.kind_of(0xC004), Some(Kind::Png));
         assert_eq!(i.kind_of(0), None);
@@ -401,9 +451,15 @@ mod tests {
         assert!(!is_sensitive::<&str>(&[], none));
         assert!(!is_sensitive(&["HTML Format"], none));
         // Exclude flag alone is enough, whatever the value.
-        assert!(is_sensitive(&["ExcludeClipboardContentFromMonitorProcessing"], none));
+        assert!(is_sensitive(
+            &["ExcludeClipboardContentFromMonitorProcessing"],
+            none
+        ));
         // Case-insensitive names.
-        assert!(is_sensitive(&["excludeclipboardcontentfrommonitorprocessing"], none));
+        assert!(is_sensitive(
+            &["excludeclipboardcontentfrommonitorprocessing"],
+            none
+        ));
         // DWORD flags.
         let zero = |_: &str| Some(0);
         let one = |_: &str| Some(1);
@@ -415,7 +471,10 @@ mod tests {
         assert!(is_sensitive(&["CanUploadToCloudClipboard"], none));
         // Mixed: history ok, cloud denied.
         let mixed = |n: &str| Some(u32::from(n == NAME_CAN_INCLUDE_HISTORY));
-        assert!(is_sensitive(&["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"], mixed));
+        assert!(is_sensitive(
+            &["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"],
+            mixed
+        ));
         // Flags absent -> not sensitive even if the reader would say 0.
         assert!(!is_sensitive(&["Rich Text Format"], zero));
     }
@@ -440,7 +499,12 @@ mod tests {
             let p = text.find(key).unwrap() + key.len();
             text[p..p + 10].parse().unwrap()
         };
-        let (sh, eh, sf, ef) = (num("StartHTML:"), num("EndHTML:"), num("StartFragment:"), num("EndFragment:"));
+        let (sh, eh, sf, ef) = (
+            num("StartHTML:"),
+            num("EndHTML:"),
+            num("StartFragment:"),
+            num("EndFragment:"),
+        );
         assert_eq!(sh, 105);
         assert_eq!(eh, data.len());
         assert_eq!(&data[sf..ef], frag.as_bytes());
@@ -468,7 +532,9 @@ mod tests {
     fn cf_html_full_document_gets_markers_inside_body() {
         let html = "<html><head><title>t</title></head><BODY class=x><p>hi</p></BODY></html>";
         let text = String::from_utf8(build_cf_html(html)).unwrap();
-        assert!(text.contains("<BODY class=x><!--StartFragment--><p>hi</p><!--EndFragment--></BODY>"));
+        assert!(
+            text.contains("<BODY class=x><!--StartFragment--><p>hi</p><!--EndFragment--></BODY>")
+        );
     }
 
     #[test]
@@ -486,7 +552,10 @@ mod tests {
         assert_eq!(hdr.len(), header_len);
         let data = format!("{hdr}{body}");
         let doc = parse_cf_html(data.as_bytes()).unwrap();
-        assert_eq!(doc, "<html><body><!--StartFragment-->Hello<!--EndFragment--></body></html>");
+        assert_eq!(
+            doc,
+            "<html><body><!--StartFragment-->Hello<!--EndFragment--></body></html>"
+        );
         // EndHTML = -1 and nonsense fragment offsets: take everything after StartHTML.
         let tpl = "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:-1\r\nStartFragment:9999999999\r\nEndFragment:-1\r\n<i>x</i>";
         let start = tpl.find("<i>").unwrap();
@@ -499,17 +568,26 @@ mod tests {
 
     #[test]
     fn dropfiles_roundtrip() {
-        let paths = vec![PathBuf::from(r"C:\Users\ü\a b.txt"), PathBuf::from(r"\\srv\share\日本.bin")];
+        let paths = vec![
+            PathBuf::from(r"C:\Users\ü\a b.txt"),
+            PathBuf::from(r"\\srv\share\日本.bin"),
+        ];
         let d = build_dropfiles(&paths);
         assert_eq!(u32::from_le_bytes(d[0..4].try_into().unwrap()), 20);
         assert_eq!(u32::from_le_bytes(d[16..20].try_into().unwrap()), 1); // fWide
         assert_eq!(&d[d.len() - 4..], &[0, 0, 0, 0]); // double NUL
         assert_eq!(parse_dropfiles(&d), paths);
-        assert_eq!(parse_dropfiles(&build_dropfiles(&[])), Vec::<PathBuf>::new());
+        assert_eq!(
+            parse_dropfiles(&build_dropfiles(&[])),
+            Vec::<PathBuf>::new()
+        );
         assert_eq!(build_dropfiles(&[]).len(), 22);
         assert!(parse_dropfiles(&[1, 2, 3]).is_empty());
         // Forward slashes are normalised.
-        assert_eq!(parse_dropfiles(&build_dropfiles(&[PathBuf::from("C:/x/y.txt")])), vec![PathBuf::from(r"C:\x\y.txt")]);
+        assert_eq!(
+            parse_dropfiles(&build_dropfiles(&[PathBuf::from("C:/x/y.txt")])),
+            vec![PathBuf::from(r"C:\x\y.txt")]
+        );
     }
 
     #[test]
@@ -517,12 +595,21 @@ mod tests {
         let mut d = vec![0u8; 20];
         d[0] = 20;
         d.extend_from_slice(b"C:\\a.txt\0D:\\b.txt\0\0");
-        assert_eq!(parse_dropfiles(&d), vec![PathBuf::from(r"C:\a.txt"), PathBuf::from(r"D:\b.txt")]);
+        assert_eq!(
+            parse_dropfiles(&d),
+            vec![PathBuf::from(r"C:\a.txt"), PathBuf::from(r"D:\b.txt")]
+        );
     }
 
     #[test]
     fn uri_list_encoding() {
-        let l = paths_to_uri_list(&[PathBuf::from(r"C:\Users\Thorben\My File ä.txt"), PathBuf::from(r"\\srv\share\x.txt")]);
-        assert_eq!(l, "file:///C:/Users/Thorben/My%20File%20%C3%A4.txt\r\nfile://srv/share/x.txt\r\n");
+        let l = paths_to_uri_list(&[
+            PathBuf::from(r"C:\Users\Thorben\My File ä.txt"),
+            PathBuf::from(r"\\srv\share\x.txt"),
+        ]);
+        assert_eq!(
+            l,
+            "file:///C:/Users/Thorben/My%20File%20%C3%A4.txt\r\nfile://srv/share/x.txt\r\n"
+        );
     }
 }

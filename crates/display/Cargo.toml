@@ -1,7 +1,32 @@
 [package]
 name = "deskbridge-display"
+description = "Focus-mode display management: mode planning, crash-safe topology sessions, virtual display driver configuration"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[dependencies]
+deskbridge-platform.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+thiserror = "2"
+
+# Used by the process-liveness probe of the crash recovery (pid + creation time).
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = ["Win32_Foundation", "Win32_System_Threading"]
+
+[dev-dependencies]
+tempfile = "3"
+
+# The probe example drives the real Windows implementation. A dev-dependency cycle
+# (platform-windows -> display -> platform-windows) is allowed by cargo.
+[target.'cfg(windows)'.dev-dependencies]
+deskbridge-platform-windows.workspace = true
+
+[[example]]
+name = "display_probe"
+path = "examples/display_probe.rs"

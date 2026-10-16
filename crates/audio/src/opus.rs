@@ -67,7 +67,11 @@ impl OpusEncoder {
             return Err(opus_err(err));
         }
         let st = NonNull::new(raw).ok_or_else(|| opus_err(sys::OPUS_ALLOC_FAIL))?;
-        let mut enc = Self { st, channels: usize::from(channels), lookahead: 0 };
+        let mut enc = Self {
+            st,
+            channels: usize::from(channels),
+            lookahead: 0,
+        };
         enc.set_bitrate(bitrate_bps)?;
         enc.ctl(sys::OPUS_SET_COMPLEXITY_REQUEST, 7)?;
         enc.ctl(sys::OPUS_SET_INBAND_FEC_REQUEST, 0)?;
@@ -90,7 +94,11 @@ impl OpusEncoder {
     fn ctl(&mut self, req: c_int, val: c_int) -> Result<()> {
         // SAFETY: all requests used here take a single `opus_int32` value.
         let rc = unsafe { sys::opus_encoder_ctl(self.st.as_ptr(), req, val) };
-        if rc == sys::OPUS_OK { Ok(()) } else { Err(opus_err(rc)) }
+        if rc == sys::OPUS_OK {
+            Ok(())
+        } else {
+            Err(opus_err(rc))
+        }
     }
 
     /// Encoder look-ahead in samples per channel (decoded audio lags the input by this).
@@ -103,7 +111,9 @@ impl OpusEncoder {
     /// 120 frames) and *replaces* the content of `out` with the packet.
     pub fn encode(&mut self, pcm: &[f32], out: &mut Vec<u8>) -> Result<()> {
         if pcm.is_empty() || pcm.len() % self.channels != 0 {
-            return Err(Error::Invalid("pcm length must be a multiple of the channel count"));
+            return Err(Error::Invalid(
+                "pcm length must be a multiple of the channel count",
+            ));
         }
         let frames = pcm.len() / self.channels;
         out.clear();
@@ -124,6 +134,12 @@ impl OpusEncoder {
         }
         out.truncate(n as usize);
         Ok(())
+    }
+
+    /// Resets the codec state (equivalent to a fresh encoder, settings are kept).
+    pub fn reset(&mut self) {
+        // SAFETY: OPUS_RESET_STATE takes no argument.
+        unsafe { sys::opus_encoder_ctl(self.st.as_ptr(), sys::OPUS_RESET_STATE) };
     }
 
     pub fn set_bitrate(&mut self, bps: u32) -> Result<()> {
@@ -158,12 +174,21 @@ impl OpusDecoder {
             return Err(opus_err(err));
         }
         let st = NonNull::new(raw).ok_or_else(|| opus_err(sys::OPUS_ALLOC_FAIL))?;
-        Ok(Self { st, channels: usize::from(channels) })
+        Ok(Self {
+            st,
+            channels: usize::from(channels),
+        })
     }
 
     #[must_use]
     pub fn channels(&self) -> usize {
         self.channels
+    }
+
+    /// Resets the decoder to the state of a fresh decoder.
+    pub fn reset(&mut self) {
+        // SAFETY: OPUS_RESET_STATE takes no argument.
+        unsafe { sys::opus_decoder_ctl(self.st.as_ptr(), sys::OPUS_RESET_STATE) };
     }
 
     /// Decodes one packet into `out` (interleaved). `out` must be large enough for the
@@ -184,7 +209,11 @@ impl OpusDecoder {
                 0,
             )
         };
-        if n < 0 { Err(opus_err(n)) } else { Ok(n as usize) }
+        if n < 0 {
+            Err(opus_err(n))
+        } else {
+            Ok(n as usize)
+        }
     }
 
     /// Packet-loss concealment: synthesises `out.len() / channels` frames (must be a
@@ -202,7 +231,11 @@ impl OpusDecoder {
                 0,
             )
         };
-        if n < 0 { Err(opus_err(n)) } else { Ok(n as usize) }
+        if n < 0 {
+            Err(opus_err(n))
+        } else {
+            Ok(n as usize)
+        }
     }
 }
 
@@ -220,8 +253,7 @@ pub fn packet_frames(data: &[u8]) -> Option<usize> {
         return None;
     }
     // SAFETY: `data` is readable for its length.
-    let n =
-        unsafe { sys::opus_packet_get_nb_samples(data.as_ptr(), data.len() as i32, OPUS_RATE) };
+    let n = unsafe { sys::opus_packet_get_nb_samples(data.as_ptr(), data.len() as i32, OPUS_RATE) };
     usize::try_from(n).ok().filter(|&n| n > 0)
 }
 

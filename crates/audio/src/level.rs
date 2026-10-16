@@ -25,7 +25,11 @@ impl LevelMeter {
     #[must_use]
     pub fn new(decay_ms: f32) -> Self {
         let frames = (decay_ms.max(1.0) * 0.001 * RATE as f32).max(1.0);
-        Self { decayed: 0.0, held: 0.0, decay: (-1.0 / frames).exp() }
+        Self {
+            decayed: 0.0,
+            held: 0.0,
+            decay: (-1.0 / frames).exp(),
+        }
     }
 
     /// Feeds a block of interleaved samples; returns the block peak.
@@ -36,7 +40,8 @@ impl LevelMeter {
     /// Like [`process`](Self::process), `frames` is the time length used for the decay.
     pub fn process_frames(&mut self, samples: &[f32], frames: usize) -> f32 {
         let peak = peak_of(samples);
-        self.decayed = (self.decayed * self.decay.powi(frames.min(i32::MAX as usize) as i32)).max(peak);
+        self.decayed =
+            (self.decayed * self.decay.powi(frames.min(i32::MAX as usize) as i32)).max(peak);
         self.held = self.held.max(peak);
         peak
     }

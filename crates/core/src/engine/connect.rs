@@ -43,6 +43,7 @@ impl Engine {
             self.next_attempt = now + Duration::from_millis(500);
             return;
         }
+        self.refresh_hello();
         self.connecting = Some(peer.id);
         self.conn_state = ConnState::Connecting;
         self.dirty = true;
@@ -120,6 +121,7 @@ impl Engine {
                     sc.close(close::NORMAL, "paused");
                     return;
                 }
+                self.refresh_hello();
                 let hello = self.hello.read().clone();
                 let tx = self.msg_tx.clone();
                 let sid = self.next_session_id();

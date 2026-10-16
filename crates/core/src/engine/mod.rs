@@ -1,6 +1,7 @@
 //! The engine: one actor task that owns all mutable state. Everything else (network I/O tasks,
 //! capture forwarders, IPC connections, timers) only sends [`Msg`]s to it.
 
+mod audio;
 mod clip;
 mod connect;
 mod dto;
@@ -42,6 +43,9 @@ use uuid::Uuid;
 
 pub use session::PeerLink as Link;
 
+/// Receivers the datagram router feeds: (speaker, microphone).
+pub(crate) type AudioSlots = Arc<parking_lot::RwLock<(Option<Arc<deskbridge_audio::AudioReceiver>>, Option<Arc<deskbridge_audio::AudioReceiver>>)>>;
+
 /// Messages processed by the actor.
 pub(crate) enum Msg {
     Ui { req: UiRequest, reply: oneshot::Sender<Result<Value, String>> },
@@ -58,6 +62,9 @@ pub(crate) enum Msg {
     ScreensChanged,
     PairingFinished { ok: bool, message: String, peer: Option<deskbridge_net::pairing::PairedDevice>, addr: Option<SocketAddr> },
     Warn { code: String, message: String },
+    MicUsage(deskbridge_platform::audio::MicUsage),
+    ToneDone,
+    AudioDevice(deskbridge_platform::audio::DeviceEvent),
     Tick,
     Shutdown,
 }
@@ -168,6 +175,7 @@ pub(crate) struct Engine {
 
     pub clock: ClockSync,
     pub rtt_history: VecDeque<u32>,
+    pub input_latency: VecDeque<u32>,
     pub tick_count: u64,
 
     pub pairing: Option<Arc<PairingWindow>>,
@@ -179,6 +187,8 @@ pub(crate) struct Engine {
     pub receiver: Option<Receiver>,
     pub capture_running: bool,
     pub(crate) clip: Option<clip::ClipRuntime>,
+    pub(crate) audio: audio::AudioState,
+    pub(crate) audio_rx_slots: Option<AudioSlots>,
     pub(crate) xfer: transfers::Transfers,
     pub cursor_locked: bool,
     pub warnings: Vec<WarningDto>,
@@ -269,6 +279,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         version_mismatch: false,
         clock: ClockSync::default(),
         rtt_history: VecDeque::new(),
+        input_latency: VecDeque::new(),
         tick_count: 0,
         pairing: None,
         local_screens,
@@ -279,6 +290,8 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         receiver: None,
         capture_running: false,
         clip: None,
+        audio: audio::AudioState::default(),
+        audio_rx_slots: None,
         xfer: transfers::Transfers::new(Some(paths_data_dir)),
         cursor_locked: false,
         warnings: Vec::new(),
@@ -315,6 +328,17 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
             tokio::spawn(async move {
                 while rx.recv().await.is_some() {
                     if m.send(Msg::ScreensChanged).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        let (atx, mut arx) = mpsc::unbounded_channel();
+        if platform.audio_devices.watch(atx).is_ok() {
+            let m = msg_tx.clone();
+            tokio::spawn(async move {
+                while let Some(ev) = arx.recv().await {
+                    if m.send(Msg::AudioDevice(ev)).is_err() {
                         break;
                     }
                 }
@@ -419,6 +443,9 @@ impl Engine {
             Msg::PairingFinished { ok, message, peer, addr } => self.on_pairing_finished(ok, message, peer, addr),
             Msg::Tick => self.on_tick(),
             Msg::Warn { code, message } => self.warn_once(&code, &message),
+            Msg::MicUsage(u) => self.on_mic_usage(u),
+            Msg::ToneDone => self.on_tone_done(),
+            Msg::AudioDevice(ev) => self.on_audio_device_event(ev),
             Msg::Shutdown => {}
         }
     }
@@ -438,6 +465,7 @@ impl Engine {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_warning(&mut self, code: &str) {
         let before = self.warnings.len();
         self.warnings.retain(|w| w.code != code);
@@ -480,6 +508,9 @@ impl Engine {
         if d.stream_source {
             c.push(caps::FOCUS_SOURCE);
             c.push(caps::AUDIO_SPEAKER_SOURCE);
+            if self.platform.virtual_audio.available() {
+                c.push(caps::AUDIO_MIC_SINK);
+            }
         }
         let hello = pb::Hello {
             device_id: self.identity.device_id.to_string(),
@@ -620,7 +651,7 @@ impl Engine {
 
         self.update_idle_state();
         self.tick_input();
-        if self.has_running_transfers() {
+        if self.has_running_transfers() || self.audio_is_active() {
             self.dirty = true;
         }
         if self.dirty && self.last_publish.elapsed() >= Duration::from_millis(100)
