@@ -14,7 +14,7 @@ Everything stays on your LAN: encrypted end to end, no cloud, no account, no tel
 |---|---|
 | F1 | **Share mouse and keyboard.** Push the mouse over the screen edge and you control the laptop; it behaves like one more monitor. |
 | F2 | **Laptop sound in your headset**, mixed with the PC sound. |
-| F3 | **Headset microphone for the laptop** as "Desk Bridge Mikrofon" for Teams, Zoom, Discord (depends on a signed virtual audio driver, see [ADR 0003](docs/adr/0003-virtual-audio-driver.md)). |
+| F3 | **Headset microphone for the laptop** for Teams, Zoom, Discord through the free [VB-CABLE](https://vb-audio.com/Cable/) driver (install it on the laptop yourself, see [ADR 0003](docs/adr/0003-virtual-audio-driver.md)). Desk Bridge switches "CABLE Output" on while your headset mic is in use and off otherwise, so apps fall back to the laptop microphone. |
 | F4 | **Shared clipboard**: text, rich text, images, files. |
 | F5 | **Send files** with copy/paste in Explorer, drag and drop, or "Send to". |
 | F6 | **Focus mode**: the laptop full screen (or half) on your ultrawide in native 5120x1440 at 120 Hz through a virtual display. |
@@ -47,20 +47,21 @@ the checklists in [`docs/testing.md`](docs/testing.md) and has to be signed off 
 | M1 Connection (identity, pairing, QUIC, reconnect) | done, tested on loopback | sleep/wake, 24 h |
 | M2 Mouse, keyboard, text clipboard | done, tested with mocks | real hooks/injection, week of daily use |
 | M3 Audio (laptop sound to headset) | done | latency, dongle hot-plug |
-| M3b Virtual microphone | backend for a signed virtual cable, **needs your decision** ([ADR 0003](docs/adr/0003-virtual-audio-driver.md)) | with the chosen driver |
+| M3b Virtual microphone | done with VB-CABLE (user-installed), automatic on/off and default device | Teams call |
 | M4 Clipboard and files | done | Explorer copy dialog, 2 GB file |
 | M5 Focus mode | done, pipeline tested with a synthetic backend | 5120x1440@120 on the laptop |
 | M6 Service, diagnostics | done | UAC / lock screen |
 | M7 Release preparation | done | signing, project page |
 
 Platform: Windows 10 22H2+ and Windows 11 (x64). macOS and Linux later.
-There is no release yet; see [CHANGELOG.md](CHANGELOG.md).
+Download: [GitHub releases](https://github.com/auerth/desk_bridge/releases). Desk Bridge tells you
+when a newer release is out (nothing is installed automatically). Changes: [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start (developers)
 
 ```powershell
-git clone https://github.com/softwelop/desk-bridge.git
-cd desk-bridge
+git clone https://github.com/auerth/desk_bridge.git
+cd desk_bridge
 cd app; npm ci; npm run build; cd ..       # the Tauri crate embeds app/dist
 cargo test --workspace
 .\scripts\dev-two-instances.ps1 -Clean      # two agents on this PC for development
@@ -80,9 +81,8 @@ Full instructions (cmake for libopus, mock mode, deploy to a laptop): [docs/deve
 
 ## Contributing and security
 
-Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[Code of Conduct](CODE_OF_CONDUCT.md). Please report vulnerabilities privately as described in
-[SECURITY.md](SECURITY.md).
+Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Please report vulnerabilities
+privately through GitHub (Security tab, "Report a vulnerability"), not as a public issue.
 
 ## License
 

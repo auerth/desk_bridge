@@ -5,10 +5,11 @@ version; [docs/development.md](docs/development.md) has the details.
 
 ## Ground rules
 
-* Be kind: this project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+* Be kind and constructive.
 * Discuss large changes in an issue first. [`docs/PLAN.md`](docs/PLAN.md) is the source of truth;
   a change of direction needs an ADR ([`docs/adr/`](docs/adr/README.md)).
-* Security problems: do **not** open a public issue, see [SECURITY.md](SECURITY.md).
+* Security problems: do **not** open a public issue; report them privately through GitHub
+  (Security tab, "Report a vulnerability").
 * By contributing you agree that your work is licensed under **MIT OR Apache-2.0**, like the
   project (no CLA).
 

@@ -70,7 +70,7 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://github.com/softwelop/desk-bridge/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/auerth/desk_bridge/releases/latest/download/latest.json"],
       "pubkey": "TODO-REPLACE-WITH-MINISIGN-PUBLIC-KEY (generate with `npm run tauri signer generate`; see app/README.md)",
       "windows": { "installMode": "passive" }
     }

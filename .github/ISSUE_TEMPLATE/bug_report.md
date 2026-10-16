@@ -6,7 +6,7 @@ labels: bug
 assignees: ""
 ---
 
-**Security problem?** Do not file it here, see SECURITY.md.
+**Security problem?** Do not file it here; report it privately (Security tab, "Report a vulnerability").
 
 ## What happened
 

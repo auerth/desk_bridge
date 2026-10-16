@@ -6,97 +6,83 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
-### Added - M0 Foundation
+## [0.1.0] - 2026-10-16
 
-- Cargo workspace (Rust stable, edition 2024) with crates `proto`, `net`, `platform`,
-  `platform-windows`, `input`, `audio`, `clipboard`, `files`, `video`, `display`, `core`, `agent`,
-  `service`, `setup` and tools `latency-probe`, `fake-peer`; `rustfmt`, `clippy` and `.editorconfig`
-  configuration, static CRT (`+crt-static`), `cargo deny` licence allow-list, MIT OR Apache-2.0.
-- Tauri 2 UI shell (React 19, TypeScript, Vite): softwelop brand tokens, Montserrat (OFL), light and
-  dark theme, navigation with empty screens, tray, single instance, custom title bar, Mica, mock
-  backend for development in a plain browser.
-- `deskbridge-setup.exe` installer helper: firewall rule (UDP 47820 + mDNS, Private profile,
-  program-scoped, COM with `netsh` fallback), elevated logon task `DeskBridge Agent`, SendTo
-  shortcut, driver store + root-enumerated device installation from a driver catalogue
-  (`driver install|uninstall|inspect`), service management stub for M6, lid-close action restore,
-  network category check (`check-network`, `make-private`), read-only `status`, global `--dry-run`,
-  `installed.json` manifest, setup log.
-- NSIS hooks (`installer/hooks.nsh`): stop running processes before upgrade, run `install` after
-  copying files, `uninstall` with optional user-data deletion; user data survives upgrades.
-- `scripts/stage-installer.ps1`, `deploy-laptop.ps1`, `dev-two-instances.ps1`,
-  `check-ffmpeg-license.ps1`, placeholders for `measure-input-latency.ps1` and
-  `measure-audio-latency.ps1`.
-- GitHub Actions: CI (fmt, clippy `-D warnings`, tests, `cargo deny`, `cargo audit`, web build,
-  NSIS installer artefact, FFmpeg licence check), release workflow with `latest.json` for the Tauri
-  updater, Dependabot (cargo, npm, actions).
-- Documentation: architecture, protocol, testing checklists, development guide, ADR 0001 (tech
-  stack), ADR 0003 (virtual audio driver, proposed), ADR 0004 (virtual display driver, proposed),
-  README, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, issue and PR templates.
+First public release. One installer for both Windows machines; pair them once with a six-digit
+code. Everything stays on your LAN: end-to-end encrypted, no cloud, no account, no telemetry.
 
-### Added - M1 Connection
+### Highlights
 
-- `proto`: protobuf schema `deskbridge.v1`, `u32 LE` length framing, audio/video binary headers,
-  ALPNs `deskbridge/1` and `deskbridge-pair/1`, protocol versioning with capability negotiation.
-- `net`: device identity (UUIDv7 + self-signed Ed25519 certificate, DPAPI-protected), `peers.toml`,
-  rustls certificate pinning, SPAKE2 pairing with a six-digit code (2 min validity, 3 failures lock
-  for 60 s), QUIC transport with control and input streams, datagrams, mDNS announce/browse.
-- `core`: engine actor, configuration with schema version, connection state machine with
-  heartbeat (degraded after 3 s, reconnect after 6 s) and exponential backoff, UI protocol over a
-  named pipe (NDJSON), mock platform for tests.
+- **Mouse and keyboard across both computers**: push the cursor over the screen edge and control
+  the laptop like one more monitor; arrange the screens, corner lock, hotkeys, Ctrl+Alt+Del and
+  the lock screen through the Desk Bridge service.
+- **Laptop sound in your headset**: low-latency Opus/PCM with an adaptive jitter buffer and clock
+  drift compensation. The sound of *every* laptop output is captured and mixed, so Teams, Zoom
+  & co. are heard even when they play on the communications device or an output picked in their
+  own settings. The laptop speakers can stay muted meanwhile and are restored afterwards.
+- **Headset microphone for the laptop** through the free, Microsoft-signed
+  [VB-CABLE](https://vb-audio.com/Cable/) driver (install it on the laptop yourself). While the
+  headset mic is switched on, "CABLE Output" is enabled and the default recording device; when the
+  mic is off, the connection drops or Desk Bridge is not running, it is disabled and apps fall back
+  to the laptop microphone. Audio is only sent while an app actually uses the microphone.
+- **Shared clipboard** for text, rich text, images and files, and **file transfers** with copy/paste
+  in Explorer, drag and drop or "Send to"; resumable, verified with BLAKE3, clearable history.
+- **Focus mode**: the laptop full screen, split or as a window on the PC monitor through a
+  virtual display, hardware video encoding/decoding, absolute pointer mapping and automatic
+  rollback of the display layout.
+- **Update hint**: Desk Bridge checks the GitHub releases (30 s after start, then daily, or on
+  demand in Settings) and links to the release page when a newer version is out. Nothing is
+  downloaded or installed automatically.
+- English and German UI in light and dark theme, tray, on-screen hints, diagnostics export.
 
-### Added - M2 Mouse, keyboard, text clipboard
+### Added
 
-- `input`: shared layout in 96-dpi-normalised units with relative-position edge mapping, source
-  router (local/remote/absolute region, dwell delay, required modifier, corner lock, double bump,
-  held-modifier replay), target receiver (injection only between Enter and Leave, return-edge
-  detection with `EdgeHit`, lock-key sync, `release_all` on Leave/disconnect/Emergency), hotkey
-  actions with conflict detection.
-- `platform-windows`: low-level hooks + Raw Input capture with stuck-key-safe grab, `SendInput`
-  injector (scancodes, extended keys, AltGr, XButtons, wheel), German 105-key HID keymap, screens
-  with per-monitor DPI and change watching, DPAPI secrets, power/lid/network events.
-- `agent`: elevated agent binary with named-pipe UI server (user-only ACL), single instance,
-  `send <paths>` and `--stop` subcommands, environment overrides for two-instance development.
-- Input latency measurement (Ping/Pong clock offset) shown in diagnostics; `latency-probe`.
-
-### Added - M3 Audio
-
-- `audio`: Opus (static libopus) and PCM paths with seamless auto-switching, adaptive jitter buffer
-  with PLC, drift compensation (own Kaiser-sinc resampler), silence suppression; simulated-network
-  tests including +-200 ppm drift, loss, reordering and a 10-minute soak.
-- `platform-windows`: WASAPI loopback/microphone capture, event-driven render with `IAudioClient3`,
-  device enumeration and hot-plug (`IMMNotificationClient`), `IPolicyConfig` default-device setting,
-  mic-session enumeration.
-- Engine: laptop sound to the headset with pause/resume when the headset disappears, microphone
-  only while the laptop uses it, mute hotkeys, test tone. ADR 0002 (loopback and mute),
-  ADR 0003 (virtual audio driver spike: no driver meets all criteria, F3 deferred, conditional
-  proposal for the owner).
-
-### Added - M4 Clipboard and files
-
-- `clipboard`: sync policy (eager text, delayed rendering, loop avoidance, size and privacy rules);
-  `files`: chunked transfers with BLAKE3, resume, path hardening, history.
-- `platform-windows`: clipboard listener with CF_HTML/RTF/PNG/DIB conversion, `CF_HDROP`, sensitive
-  flags, virtual files through a custom `IDataObject` (Explorer's own copy dialog).
-- Send files from the UI/SendTo; partner update offers with SHA-256 verification.
-
-### Added - M5 Focus mode
-
-- `video`: capability negotiation, adaptive bitrate, IDR throttling and keep-alives, late-frame
-  filter, FFmpeg (LGPL, shared) encode/decode, DXGI capture, D3D11 presenter (flip model, tearing,
-  AppBar split); `display`: focus plan (full/split), virtual display control, topology save/restore
-  with crash recovery; ADR 0004 (virtual display driver), ADR 0005 (video spike).
-- Engine: full, split and window focus mode with absolute pointer mapping, automatic rollback on
-  every failure and disconnect, lid automation request.
-
-### Added - M6 Robustness
-
+- `proto`: protobuf schema `deskbridge.v1`, length framing, audio/video binary headers, ALPNs
+  `deskbridge/1` and `deskbridge-pair/1`, protocol versioning with capability negotiation.
+- `net`: device identity (UUIDv7 + self-signed Ed25519 certificate, DPAPI-protected), rustls
+  certificate pinning, SPAKE2 pairing (2 min validity, lock-out after 3 failures), QUIC with
+  control and input streams and datagrams, mDNS discovery, manual addresses.
+- `core`: engine actor, versioned configuration, connection state machine with heartbeat and
+  reconnect backoff, NDJSON UI protocol over a named pipe, mock platform for tests.
+- `input`: shared layout in normalised units, edge routing with dwell delay, required modifier,
+  corner lock and double bump, injection only between Enter and Leave, lock-key sync,
+  `release_all` on every exit path; low-level hooks + Raw Input capture and `SendInput` injection.
+- `audio`: Opus (static libopus) and PCM with seamless switching, adaptive jitter buffer with
+  concealment, Kaiser-sinc drift resampler, silence suppression; WASAPI loopback (mixed over all
+  real outputs), microphone capture and event-driven low-latency render, hot-plug handling,
+  default-device switching, microphone session detection.
+- Virtual microphone on VB-CABLE: device-clocked playback into "CABLE Input", automatic
+  enable/disable of "CABLE Output" via the service (also while the agent is not running), default
+  device claim and restore (crash-safe), microphone playout statistics from the laptop in the PC
+  log and the microphone card.
+- `clipboard` and `files`: sync policy (eager text, delayed rendering, loop avoidance, size and
+  privacy rules), CF_HTML/RTF/PNG/DIB conversion, virtual files through a custom `IDataObject`,
+  chunked transfers with resume and path hardening, transfer history with "clear history".
+- `video` and `display`: DXGI capture, FFmpeg (LGPL, shared DLLs) encode/decode, D3D11 presenter,
+  adaptive bitrate, focus plans (full/split/window), virtual display control, topology save and
+  crash recovery.
 - `service`: SYSTEM service with agent supervisor, secure-desktop input helper, Ctrl+Alt+Del
-  (`SendSAS`); ADR 0006.
-- Diagnostics export (ZIP without keys), crash reports, process CPU/RAM metrics, third-party licence
-  report (`THIRD_PARTY_LICENSES.html`), `cargo deny` clean with documented exceptions.
+  (`SendSAS`), virtual-microphone guard.
+- `setup` and NSIS installer: firewall rule (UDP 47820 + mDNS, private profile), elevated logon
+  task, "Send to" shortcut, driver installation, service, setup log in ProgramData; user data
+  survives upgrades.
+- Partner update: hand an installer to the paired device over the connection (SHA-256 verified,
+  the partner confirms first).
+- Release check against `api.github.com/repos/auerth/desk_bridge/releases/latest` through WinHTTP
+  (system proxy settings respected).
+- Diagnostics ZIP (without keys), crash reports, CPU/RAM and latency metrics, third-party licence
+  report (`THIRD_PARTY_LICENSES.html`).
+- Documentation: architecture, protocol, testing checklists, development guide, ADRs 0001-0006.
 
-### Added - M7 Release preparation
+### Known limitations
 
-- English and German UI texts, README screenshots, contribution and security documents.
+- Windows 10 22H2+ / Windows 11 x64 only.
+- The microphone feature needs VB-CABLE installed by the user on the laptop; in Teams pick
+  "CABLE Output" once. Use 48 kHz for both "CABLE Input" and "CABLE Output" (different rates on
+  the two sides are a known cause of crackling).
+- The installer is not code-signed yet, so Windows SmartScreen may warn on first start.
+- Install the same version on both devices.
+- Several hardware scenarios are not signed off yet, see [docs/testing.md](docs/testing.md).
 
-[Unreleased]: https://github.com/softwelop/desk-bridge/commits/main
+[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/auerth/desk_bridge/releases/tag/v0.1.0

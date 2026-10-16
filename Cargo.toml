@@ -27,7 +27,7 @@ edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 authors = ["softwelop"]
-repository = "https://github.com/softwelop/desk-bridge"
+repository = "https://github.com/auerth/desk_bridge"
 publish = false
 
 [workspace.dependencies]
