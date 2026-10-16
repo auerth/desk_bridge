@@ -9,6 +9,8 @@ pub const PRODUCT_NAME: &str = "Desk Bridge";
 pub const UI_PIPE_NAME: &str = r"\.\pipe\deskbridge-ui";
 /// File name of the agent executable, expected next to the UI executable.
 pub const AGENT_EXE: &str = "deskbridge-agent.exe";
+/// Scheduled task that starts the elevated agent at logon (`crates/core/src/brand.rs`).
+pub const AGENT_TASK_NAME: &str = "DeskBridge Agent";
 /// Directory names below `%LOCALAPPDATA%` (plan section 10).
 pub const COMPANY_DIR: &str = "softwelop";
 pub const APP_DIR: &str = "DeskBridge";

@@ -104,17 +104,11 @@ impl Rect {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PlanOptions {
     /// Round split widths to even numbers (3414 + 1706 instead of 3413 + 1707). Needed when the
     /// driver or the video encoder rejects odd widths (ADR 0004: untested on hardware).
     pub even_widths: bool,
-}
-
-impl Default for PlanOptions {
-    fn default() -> Self {
-        Self { even_widths: false }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

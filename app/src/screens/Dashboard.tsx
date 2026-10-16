@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import type { AppState } from '../api/types';
 import { chipModels, FeatureChip } from '../components/FeatureChip';
 import { connStateKey } from '../components/Shell';
-import { BrandIcon, Button, Card, PageHeader, Pill, Sparkline } from '../components/ui';
+import { Banner, BrandIcon, Button, Card, PageHeader, Pill, Sparkline } from '../components/ui';
 import { useLang, useT } from '../i18n/useT';
 import { formatMs, formatSince, rttQuality, type Quality } from '../lib/format';
 import { useStore } from '../store';
@@ -129,6 +129,9 @@ export function Dashboard() {
   const remote = state.location === 'remote';
   const quality = rttQuality(conn.rtt_us, conn.link);
   const recent = state.transfers.slice(0, 3);
+  const p95 = state.metrics.input_latency_p95_us;
+  const p95Limit = conn.link === 'wireless' ? 15 : 3;
+  const slowInput = online && p95 != null && p95 / 1000 > p95Limit;
 
   return (
     <>
@@ -152,6 +155,10 @@ export function Dashboard() {
           <DevicePair state={state} />
           {online && conn.since_unix_ms && <p className="hero__since">{t('dash.since', { time: formatSince(conn.since_unix_ms) })}</p>}
         </Card>
+      )}
+
+      {slowInput && p95 != null && (
+        <Banner tone="info" title={t('dash.inputLatencyHint', { n: formatMs(p95, lang), limit: p95Limit })} />
       )}
 
       <h2 className="t-h2 section-title" id="chips-title">

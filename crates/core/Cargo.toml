@@ -15,6 +15,8 @@ deskbridge-input.workspace = true
 deskbridge-clipboard.workspace = true
 deskbridge-files.workspace = true
 deskbridge-audio.workspace = true
+deskbridge-video.workspace = true
+deskbridge-display.workspace = true
 blake3.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
@@ -32,6 +34,16 @@ toml.workspace = true
 directories.workspace = true
 uuid.workspace = true
 parking_lot = "0.12"
+crc32fast = "1"
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+]

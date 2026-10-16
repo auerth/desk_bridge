@@ -57,6 +57,11 @@ export function createTauriBackend(): Backend {
       const r = await openDialog({ directory: false, multiple: true });
       return Array.isArray(r) ? r : typeof r === 'string' ? [r] : [];
     },
+    pickInstaller: async () => {
+      const r = await openDialog({ directory: false, multiple: false, filters: [{ name: 'Desk Bridge', extensions: ['exe'] }] });
+      return typeof r === 'string' ? r : null;
+    },
+    launchInstaller: (path) => invoke('launch_installer', { path }),
     onFileDrop: (cb: (e: FileDropEvent) => void) => {
       let un: (() => void) | undefined;
       let cancelled = false;

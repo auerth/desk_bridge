@@ -11,6 +11,7 @@ publish.workspace = true
 deskbridge-proto.workspace = true
 deskbridge-platform.workspace = true
 thiserror.workspace = true
+parking_lot = "0.12"
 tracing.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 ffmpeg-next = { version = "8", default-features = false, features = ["codec", "format", "software-scaling"] }

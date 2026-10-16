@@ -25,6 +25,11 @@ use tokio::sync::{Semaphore, mpsc::unbounded_channel, oneshot};
 /// Max parallel file streams per transfer.
 const PARALLEL: usize = 4;
 
+pub(crate) struct UpdateMeta {
+    pub version: String,
+    pub sha256: Vec<u8>,
+}
+
 struct Incoming {
     root: PathBuf,
     handle: TransferHandle,
@@ -34,6 +39,8 @@ struct Incoming {
     /// Staged fallback waits for this.
     done: Option<std_mpsc::Sender<bool>>,
     name: String,
+    update: Option<UpdateMeta>,
+    last_path: Option<PathBuf>,
 }
 
 struct Outgoing {
@@ -110,6 +117,10 @@ impl Engine {
 
     /// UI: send files/folders to the peer.
     pub(crate) fn send_files(&mut self, paths: Vec<String>) -> Result<Value, String> {
+        self.send_files_with_hint(paths, String::new())
+    }
+
+    pub(crate) fn send_files_with_hint(&mut self, paths: Vec<String>, hint: String) -> Result<Value, String> {
         let Some(s) = &self.session else { return Err("Nicht verbunden".into()) };
         let link = s.link.clone();
         let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
@@ -126,7 +137,7 @@ impl Engine {
         let name = display_name(&entries);
         let handle = self.xfer.mgr.begin(id, Direction::Send, name, entries.iter().filter(|e| !e.is_dir).count() as u32, total, None);
         self.xfer.reg.outgoing.lock().insert(id, Outgoing { plan: plan.files, handle });
-        link.send_control(pb::control::Msg::SendFiles(pb::SendFiles { transfer_id: id, files: entries, target_hint: String::new() }));
+        link.send_control(pb::control::Msg::SendFiles(pb::SendFiles { transfer_id: id, files: entries, target_hint: hint }));
         self.dirty = true;
         Ok(json!({ "transfer_id": id }))
     }
@@ -139,7 +150,8 @@ impl Engine {
             tracing::warn!("SendFiles with unsafe paths rejected");
             return;
         }
-        let root = target_dir(&self.cfg);
+        let update_meta = self.update_meta_from_hint(&sf.target_hint);
+        let root = if update_meta.is_some() { self.paths.data_dir.join("Updates") } else { target_dir(&self.cfg) };
         let _ = std::fs::create_dir_all(&root);
         let total: u64 = sf.files.iter().map(|f| f.size).sum();
         let name = display_name(&sf.files);
@@ -162,6 +174,8 @@ impl Engine {
                 sem: sem.clone(),
                 done: None,
                 name,
+                update: update_meta,
+                last_path: None,
             },
         );
         let id = sf.transfer_id;
@@ -353,6 +367,9 @@ async fn handle_file_stream(
         if let Some(i) = inc.get_mut(&id) {
             i.sem.add_permits(1);
             i.remaining = i.remaining.saturating_sub(1);
+            if let Ok(rf) = &res {
+                i.last_path = Some(rf.path.clone());
+            }
             if let Err(e) = &res {
                 i.failed.get_or_insert_with(|| e.to_string());
             }
@@ -365,9 +382,20 @@ async fn handle_file_stream(
         match &i.failed {
             None => {
                 i.handle.finish();
-                let _ = pushes.send(crate::ipc::Push::Event {
-                    event: UiEvent::Notification { level: "info".into(), text: format!("Empfangen: {}", i.name) },
-                });
+                if let (Some(meta), Some(path)) = (&i.update, &i.last_path) {
+                    let ok = super::update::sha256_file(path).is_ok_and(|h| h == meta.sha256);
+                    let event = if ok {
+                        UiEvent::PartnerUpdateReady { path: path.to_string_lossy().into_owned(), version: meta.version.clone() }
+                    } else {
+                        let _ = std::fs::remove_file(path);
+                        UiEvent::Notification { level: "error".into(), text: "Das empfangene Update ist beschädigt und wurde verworfen.".into() }
+                    };
+                    let _ = pushes.send(crate::ipc::Push::Event { event });
+                } else {
+                    let _ = pushes.send(crate::ipc::Push::Event {
+                        event: UiEvent::Notification { level: "info".into(), text: format!("Empfangen: {}", i.name) },
+                    });
+                }
             }
             Some(e) => {
                 i.handle.fail(e.clone());
@@ -428,6 +456,8 @@ impl FileSource for NetFileSource {
                 sem: sem.clone(),
                 done: Some(dtx),
                 name: display_name(files),
+                update: None,
+                last_path: None,
             },
         );
         let link = self.link.clone();

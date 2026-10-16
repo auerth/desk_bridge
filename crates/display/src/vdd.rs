@@ -35,9 +35,7 @@ fn mask_comments(xml: &str) -> String {
     let mut i = 0;
     while i + 3 < b.len() {
         if &b[i..i + 4] == b"<!--" {
-            let end = xml[i + 4..]
-                .find("-->")
-                .map_or(b.len(), |e| i + 4 + e + 3);
+            let end = xml[i + 4..].find("-->").map_or(b.len(), |e| i + 4 + e + 3);
             for c in &mut out[i..end] {
                 *c = b' ';
             }
@@ -100,7 +98,8 @@ fn set_element(xml: &str, section: Option<&str>, tag: &str, value_xml: &str) -> 
             Some(r) => r,
             None => {
                 // Section missing: append it before the root's closing tag.
-                let add = format!("    <{sec}>\n        <{tag}>{value_xml}</{tag}>\n    </{sec}>\n");
+                let add =
+                    format!("    <{sec}>\n        <{tag}>{value_xml}</{tag}>\n    </{sec}>\n");
                 return insert_before_root_end(xml, &masked, &add);
             }
         },
@@ -141,7 +140,9 @@ fn resolutions_xml(modes: &[Mode]) -> String {
 }
 
 fn is_sane(m: &Mode) -> bool {
-    (64..=16_384).contains(&m.width) && (64..=16_384).contains(&m.height) && (1..=1_000).contains(&m.hz)
+    (64..=16_384).contains(&m.width)
+        && (64..=16_384).contains(&m.height)
+        && (1..=1_000).contains(&m.hz)
 }
 
 /// De-duplicated, sanity-filtered mode list, capped to [`MAX_MODES`] (order preserved).
@@ -306,14 +307,20 @@ pub fn choose_render_adapter<'a>(
     hint: Option<&str>,
 ) -> Option<&'a AdapterInfo> {
     let usable = || adapters.iter().filter(|a| !a.is_software());
-    if let Some(h) = hint.map(str::trim).filter(|h| !h.is_empty() && !h.eq_ignore_ascii_case("default")) {
+    if let Some(h) = hint
+        .map(str::trim)
+        .filter(|h| !h.is_empty() && !h.eq_ignore_ascii_case("default"))
+    {
         let hl = h.to_ascii_lowercase();
         let exact = usable().find(|a| a.name.to_ascii_lowercase() == hl);
         let sub = || usable().find(|a| a.name.to_ascii_lowercase().contains(&hl));
         if let Some(a) = exact.or_else(sub) {
             return Some(a);
         }
-        tracing::warn!(hint = h, "render adapter hint matches no adapter; choosing automatically");
+        tracing::warn!(
+            hint = h,
+            "render adapter hint matches no adapter; choosing automatically"
+        );
     }
     usable()
         .filter(|a| a.has_hw_encoder())
@@ -339,7 +346,10 @@ mod tests {
         assert_eq!(modes.len(), 7, "{modes:?}");
         assert!(modes.contains(&m(5120, 1440, 120)));
         assert_eq!(parse_count(DEFAULT_SETTINGS_TEMPLATE), Some(1));
-        assert_eq!(parse_gpu(DEFAULT_SETTINGS_TEMPLATE).as_deref(), Some("default"));
+        assert_eq!(
+            parse_gpu(DEFAULT_SETTINGS_TEMPLATE).as_deref(),
+            Some("default")
+        );
     }
 
     #[test]
@@ -354,7 +364,10 @@ mod tests {
         .unwrap();
         assert_eq!(parse_modes(&x), want);
         assert_eq!(parse_count(&x), Some(3));
-        assert_eq!(parse_gpu(&x).as_deref(), Some("NVIDIA GeForce RTX 5060 Laptop GPU"));
+        assert_eq!(
+            parse_gpu(&x).as_deref(),
+            Some("NVIDIA GeForce RTX 5060 Laptop GPU")
+        );
         // untouched parts survive
         assert!(x.contains("<HardwareCursor>true</HardwareCursor>"));
         assert!(x.contains("Desk Bridge default configuration"));
@@ -363,20 +376,34 @@ mod tests {
         // idempotent
         let y = render_settings(&x, &want, Some("NVIDIA GeForce RTX 5060 Laptop GPU"), 3).unwrap();
         assert_eq!(parse_modes(&y), want);
-        assert_eq!(x.matches("<resolution>").count(), y.matches("<resolution>").count());
+        assert_eq!(
+            x.matches("<resolution>").count(),
+            y.matches("<resolution>").count()
+        );
     }
 
     #[test]
     fn gpu_name_is_escaped_and_restored() {
-        let x = render_settings(DEFAULT_SETTINGS_TEMPLATE, &[m(1920, 1080, 60)], Some("A&B <x>"), 1)
-            .unwrap();
+        let x = render_settings(
+            DEFAULT_SETTINGS_TEMPLATE,
+            &[m(1920, 1080, 60)],
+            Some("A&B <x>"),
+            1,
+        )
+        .unwrap();
         assert!(x.contains("A&amp;B &lt;x&gt;"));
         assert_eq!(parse_gpu(&x).as_deref(), Some("A&B <x>"));
     }
 
     #[test]
     fn gpu_none_keeps_current_value() {
-        let x = render_settings(DEFAULT_SETTINGS_TEMPLATE, &[m(1920, 1080, 60)], Some("GPU1"), 1).unwrap();
+        let x = render_settings(
+            DEFAULT_SETTINGS_TEMPLATE,
+            &[m(1920, 1080, 60)],
+            Some("GPU1"),
+            1,
+        )
+        .unwrap();
         let y = render_settings(&x, &[m(1920, 1080, 60)], None, 1).unwrap();
         assert_eq!(parse_gpu(&y).as_deref(), Some("GPU1"));
     }
@@ -456,7 +483,12 @@ mod tests {
     fn adapter_choice_prefers_dgpu_with_encoder() {
         let list = [
             ad("Intel(R) Iris(R) Xe Graphics", VENDOR_INTEL, 128, false),
-            ad("NVIDIA GeForce RTX 5060 Laptop GPU", VENDOR_NVIDIA, 8151, false),
+            ad(
+                "NVIDIA GeForce RTX 5060 Laptop GPU",
+                VENDOR_NVIDIA,
+                8151,
+                false,
+            ),
             ad("Microsoft Basic Render Driver", VENDOR_MICROSOFT, 0, true),
         ];
         assert_eq!(
@@ -464,21 +496,43 @@ mod tests {
             "NVIDIA GeForce RTX 5060 Laptop GPU"
         );
         // hint wins (substring, case-insensitive)
-        assert_eq!(choose_render_adapter(&list, Some("iris")).unwrap().vendor_id, VENDOR_INTEL);
+        assert_eq!(
+            choose_render_adapter(&list, Some("iris"))
+                .unwrap()
+                .vendor_id,
+            VENDOR_INTEL
+        );
         // unknown hint falls back to automatic
-        assert_eq!(choose_render_adapter(&list, Some("Radeon")).unwrap().vendor_id, VENDOR_NVIDIA);
+        assert_eq!(
+            choose_render_adapter(&list, Some("Radeon"))
+                .unwrap()
+                .vendor_id,
+            VENDOR_NVIDIA
+        );
         // "default" is no hint
-        assert_eq!(choose_render_adapter(&list, Some("default")).unwrap().vendor_id, VENDOR_NVIDIA);
+        assert_eq!(
+            choose_render_adapter(&list, Some("default"))
+                .unwrap()
+                .vendor_id,
+            VENDOR_NVIDIA
+        );
         // software adapters are never chosen, even by hint
         assert_eq!(
-            choose_render_adapter(&list, Some("Basic Render")).unwrap().vendor_id,
+            choose_render_adapter(&list, Some("Basic Render"))
+                .unwrap()
+                .vendor_id,
             VENDOR_NVIDIA
         );
     }
 
     #[test]
     fn adapter_choice_edge_cases() {
-        let only_sw = [ad("Microsoft Basic Render Driver", VENDOR_MICROSOFT, 0, true)];
+        let only_sw = [ad(
+            "Microsoft Basic Render Driver",
+            VENDOR_MICROSOFT,
+            0,
+            true,
+        )];
         assert!(choose_render_adapter(&only_sw, None).is_none());
         assert!(choose_render_adapter(&[], None).is_none());
         // an unknown vendor with a lot of VRAM loses against an encoder-capable GPU
@@ -486,8 +540,14 @@ mod tests {
             ad("Mystery GPU", 0x1234, 16000, false),
             ad("AMD Radeon 780M", VENDOR_AMD, 512, false),
         ];
-        assert_eq!(choose_render_adapter(&list, None).unwrap().name, "AMD Radeon 780M");
+        assert_eq!(
+            choose_render_adapter(&list, None).unwrap().name,
+            "AMD Radeon 780M"
+        );
         // but is used when it is all there is
-        assert_eq!(choose_render_adapter(&list[..1], None).unwrap().name, "Mystery GPU");
+        assert_eq!(
+            choose_render_adapter(&list[..1], None).unwrap().name,
+            "Mystery GPU"
+        );
     }
 }

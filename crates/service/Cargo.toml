@@ -1,7 +1,48 @@
 [package]
 name = "deskbridge-service"
+description = "Desk Bridge Windows service: agent supervisor, secure-desktop input helper, SendSAS"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[lib]
+name = "deskbridge_service"
+path = "src/lib.rs"
+
+[[bin]]
+name = "deskbridge-service"
+path = "src/main.rs"
+
+[dependencies]
+deskbridge-platform.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+deskbridge-platform-windows.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+parking_lot = "0.12"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Environment",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Services",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+]

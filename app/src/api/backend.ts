@@ -48,6 +48,10 @@ export interface Backend {
   };
   pickFolder(): Promise<string | null>;
   pickFiles(): Promise<string[]>;
+  /** Picks one installer (.exe) for the partner update. */
+  pickInstaller(): Promise<string | null>;
+  /** Starts a received installer after the user confirmed (never silently). */
+  launchInstaller(path: string): Promise<void>;
   onFileDrop(cb: (e: FileDropEvent) => void): Unlisten;
   openUrl(url: string): Promise<void>;
   openLogsFolder(): Promise<void>;

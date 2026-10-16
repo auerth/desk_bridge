@@ -160,9 +160,11 @@ message FocusStart {
   FocusLayout layout = 7;
   bool disable_internal_display = 8;
 }
-message FocusReady { uint32 width = 1; uint32 height = 2; Codec codec = 3; uint32 fps = 4; }
+message FocusReady { uint32 width = 1; uint32 height = 2; Codec codec = 3; uint32 fps = 4; uint32 screen_id = 5; string encoder = 6; bool yuv444 = 7; }
 message FocusFailed { string reason = 1; }
 message FocusStop {}
+// Target asks the viewer to start/stop focus mode (lid closed/opened).
+message FocusRequest { bool start = 1; }
 message KeyframeRequest {}
 message BitrateHint { uint32 bitrate_kbps = 1; uint32 fps = 2; }
 message CursorShape {
@@ -285,6 +287,7 @@ message Control {
     FocusReady focus_ready = 11;
     FocusFailed focus_failed = 12;
     FocusStop focus_stop = 13;
+    FocusRequest focus_request = 19;
     KeyframeRequest keyframe_request = 14;
     BitrateHint bitrate_hint = 15;
     CursorShape cursor_shape = 16;

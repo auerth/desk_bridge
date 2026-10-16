@@ -39,6 +39,8 @@ export type UiRequest =
   | { type: 'show_transfer_in_folder'; transfer_id: number }
   | { type: 'export_diagnostics'; target: string | null }
   | { type: 'check_for_update' }
+  | { type: 'offer_partner_update'; path: string; version: string }
+  | { type: 'answer_partner_update'; accept: boolean }
   | { type: 'make_network_private' }
   | { type: 'set_paused'; paused: boolean }
   | { type: 'restart_agent' }
@@ -63,6 +65,8 @@ export type UiEvent =
   | { kind: 'notification'; level: string; text: string }
   | { kind: 'audio_devices'; render: AudioDeviceDto[]; capture: AudioDeviceDto[] }
   | { kind: 'update_available'; version: string; notes: string }
+  | { kind: 'partner_update_offered'; version: string; size: number; from: string }
+  | { kind: 'partner_update_ready'; path: string; version: string }
   | { kind: 'diagnostics_exported'; path: string };
 
 export interface DeviceDto {
@@ -220,6 +224,10 @@ export interface UpdateDto {
 export interface MetricsDto {
   /** Last ~60 RTT samples in microseconds. */
   rtt_history_us: number[];
+  /** One-way input latency (peer timestamp to injection) in microseconds. */
+  input_latency_p50_us: number | null;
+  input_latency_p95_us: number | null;
+  input_latency_max_us: number | null;
   audio_buffer_fill_ms: number | null;
   audio_drift_ppm: number | null;
   audio_loss_pct: number | null;

@@ -997,19 +997,23 @@ dependencies = [
  "anyhow",
  "blake3",
  "bytes",
+ "crc32fast",
  "deskbridge-audio",
  "deskbridge-clipboard",
+ "deskbridge-display",
  "deskbridge-files",
  "deskbridge-input",
  "deskbridge-net",
  "deskbridge-platform",
  "deskbridge-proto",
+ "deskbridge-video",
  "directories",
  "parking_lot",
  "prost",
  "quinn",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -1019,6 +1023,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -1104,6 +1109,7 @@ dependencies = [
 name = "deskbridge-platform-windows"
 version = "0.1.0"
 dependencies = [
+ "deskbridge-display",
  "deskbridge-platform",
  "parking_lot",
  "png 0.17.16",
@@ -1130,6 +1136,16 @@ dependencies = [
 [[package]]
 name = "deskbridge-service"
 version = "0.1.0"
+dependencies = [
+ "deskbridge-platform",
+ "deskbridge-platform-windows",
+ "parking_lot",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "windows 0.58.0",
+]
 
 [[package]]
 name = "deskbridge-setup"
@@ -1153,6 +1169,7 @@ dependencies = [
  "deskbridge-platform-windows",
  "deskbridge-proto",
  "ffmpeg-next",
+ "parking_lot",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

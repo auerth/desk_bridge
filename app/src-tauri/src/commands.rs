@@ -87,6 +87,27 @@ pub fn reveal_path(path: String) -> Result<(), String> {
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Starts a received partner installer. The frontend only calls this after the user confirmed the dialog;
+/// the path must be an existing `.exe` named like `DeskBridge-Setup-*.exe`.
+#[tauri::command]
+pub fn launch_installer(app: AppHandle, path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    let name = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !p.is_file() || !name.starts_with("deskbridge-setup-") || !name.ends_with(".exe") {
+        return Err("not a Desk Bridge installer".into());
+    }
+    std::process::Command::new(p)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    // The installer replaces files of this app: get out of its way.
+    app.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn open_main(app: AppHandle) {
     windows::show_main(&app);

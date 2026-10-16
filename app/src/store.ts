@@ -43,6 +43,10 @@ interface UiStore {
   audioDevices: { render: AudioDeviceDto[]; capture: AudioDeviceDto[] } | null;
   pairingResult: PairingResult | null;
   updateOffer: { version: string; notes: string } | null;
+  /** The partner offers an installer; waits for the user's answer. */
+  partnerOffer: { version: string; size: number; from: string } | null;
+  /** A verified partner installer was received and may be started. */
+  partnerReady: { path: string; version: string } | null;
   toasts: Toast[];
   /** Warning codes the user dismissed in this session. */
   dismissedWarnings: string[];
@@ -56,6 +60,8 @@ interface UiStore {
   pushToast(t: Omit<Toast, 'id'>): void;
   dismissToast(id: number): void;
   dismissWarning(code: string): void;
+  clearPartnerOffer(): void;
+  clearPartnerReady(): void;
 }
 
 let toastId = 1;
@@ -81,6 +87,8 @@ export const useStore = create<UiStore>((set, get) => ({
   audioDevices: null,
   pairingResult: null,
   updateOffer: null,
+  partnerOffer: null,
+  partnerReady: null,
   toasts: [],
   dismissedWarnings: [],
 
@@ -116,6 +124,12 @@ export const useStore = create<UiStore>((set, get) => ({
             break;
           case 'update_available':
             set({ updateOffer: { version: e.version, notes: e.notes } });
+            break;
+          case 'partner_update_offered':
+            set({ partnerOffer: { version: e.version, size: e.size, from: e.from } });
+            break;
+          case 'partner_update_ready':
+            set({ partnerReady: { path: e.path, version: e.version }, partnerOffer: null });
             break;
           case 'diagnostics_exported':
             get().pushToast({
@@ -187,6 +201,14 @@ export const useStore = create<UiStore>((set, get) => ({
 
   dismissToast(id) {
     set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) }));
+  },
+
+  clearPartnerOffer() {
+    set({ partnerOffer: null });
+  },
+
+  clearPartnerReady() {
+    set({ partnerReady: null });
   },
 
   dismissWarning(code) {

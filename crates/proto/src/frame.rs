@@ -78,7 +78,7 @@ impl FrameDecoder {
     }
 
     /// Pops the next complete message, if any.
-    pub fn next<M: Message + Default>(&mut self) -> Result<Option<M>, FrameError> {
+    pub fn try_next<M: Message + Default>(&mut self) -> Result<Option<M>, FrameError> {
         if self.buf.len() < 4 {
             return Ok(None);
         }
@@ -108,10 +108,10 @@ mod tests {
         let bytes = encode(&m);
         let mut d = FrameDecoder::default();
         d.push(&bytes[..3]);
-        assert!(d.next::<pb::Control>().unwrap().is_none());
+        assert!(d.try_next::<pb::Control>().unwrap().is_none());
         d.push(&bytes[3..]);
-        assert_eq!(d.next::<pb::Control>().unwrap().unwrap(), m);
-        assert!(d.next::<pb::Control>().unwrap().is_none());
+        assert_eq!(d.try_next::<pb::Control>().unwrap().unwrap(), m);
+        assert!(d.try_next::<pb::Control>().unwrap().is_none());
     }
 
     #[tokio::test]

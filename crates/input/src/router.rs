@@ -284,7 +284,7 @@ impl Router {
                 screen_id: screen,
                 rel_pos: rel,
                 edge: edge as i32,
-                toggles: Some(self.toggles.clone()),
+                toggles: Some(self.toggles),
             })),
         ];
         // Modifiers that are physically held keep working on the target.
@@ -333,7 +333,7 @@ impl Router {
                         screen_id: region.screen,
                         rel_pos: 0.5,
                         edge: Edge::Unspecified as i32,
-                        toggles: Some(self.toggles.clone()),
+                        toggles: Some(self.toggles),
                     })));
                     out.push(Action::Osd(Location::Remote));
                 } else if !inside && self.region_inside {
@@ -595,7 +595,7 @@ mod tests {
         let a = r.on_capture(CaptureEvent::MouseMove { x: 2560 + 1280, y: 720 }, Instant::now());
         assert!(a.contains(&Action::SetGrab(GrabMode::KeyboardOnly)));
         assert!(has_enter(&a));
-        let abs = a.iter().find_map(|x| if let Action::Send(Ev::Abs(m)) = x { Some(m.clone()) } else { None }).unwrap();
+        let abs = a.iter().find_map(|x| if let Action::Send(Ev::Abs(m)) = x { Some(*m) } else { None }).unwrap();
         assert!((abs.x - 0.5).abs() < 0.01 && (abs.y - 0.5).abs() < 0.01);
         // keys flow only while inside
         assert!(!r.on_capture(CaptureEvent::Key { hid: hid::A, down: true }, Instant::now()).is_empty());

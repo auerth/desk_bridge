@@ -26,7 +26,7 @@ export function chipModels(state: AppState, t: ReturnType<typeof useT>): ChipMod
     f.mic.state === 'unavailable'
       ? t('chip.mic.unavailable')
       : f.mic.state === 'live' && f.mic.detail
-        ? t('chip.mic.live', { app: f.mic.detail })
+        ? f.mic.detail
         : null;
   return [
     { feature: 'input', label: 'chip.input', tip: 'chip.input.tip', icon: <MousePointer2 {...ICON} />, enabled: f.input.enabled, state: f.input.state, detail: f.input.detail },

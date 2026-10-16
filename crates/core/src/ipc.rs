@@ -55,6 +55,10 @@ pub enum UiRequest {
     ShowTransferInFolder { transfer_id: u64 },
     ExportDiagnostics { target: Option<String> },
     CheckForUpdate,
+    /// Offer the installer at `path` to the partner device (it asks its user first).
+    OfferPartnerUpdate { path: String, version: String },
+    /// Answer a partner's update offer.
+    AnswerPartnerUpdate { accept: bool },
     /// Mark the public network profile hint as handled ("make private").
     MakeNetworkPrivate,
     /// Disconnect everything / resume.
@@ -114,6 +118,10 @@ pub enum UiEvent {
     /// Audio device list answer for `ListAudioDevices`.
     AudioDevices { render: Vec<AudioDeviceDto>, capture: Vec<AudioDeviceDto> },
     UpdateAvailable { version: String, notes: String },
+    /// The partner offers an update package (ask the user, then `AnswerPartnerUpdate`).
+    PartnerUpdateOffered { version: String, size: u64, from: String },
+    /// A partner update arrived, verified (SHA-256). The UI offers to start it.
+    PartnerUpdateReady { path: String, version: String },
     DiagnosticsExported { path: String },
 }
 

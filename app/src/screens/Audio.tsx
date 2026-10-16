@@ -147,7 +147,7 @@ export function Audio() {
               onChange={(v) => update((c) => void (c.audio.mic_to_laptop.input_device = v === DEFAULT_ID ? '' : v))}
             />
           </Row>
-          <Row title={t('audio.level')} description={mic.state === 'live' && mic.detail ? t('audio.micInUse', { app: mic.detail }) : undefined}>
+          <Row title={t('audio.level')} description={mic.state === 'live' && mic.detail ? mic.detail : undefined}>
             <Meter level={mic.level} label={t('audio.level')} dim={micUnavailable || cfg.mic_to_laptop.mute} />
           </Row>
           <SwitchRow

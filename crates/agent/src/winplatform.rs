@@ -23,6 +23,7 @@ pub fn build() -> Platform {
         audio_capture: Arc::new(WasapiCapture::new()),
         audio_playback: Arc::new(WasapiPlayback::new()),
         virtual_audio: Arc::new(VirtualAudioStub::default()),
+        system: Arc::new(deskbridge_platform::system::NullSystemServices),
         os: "Windows".to_string(),
     }
 }

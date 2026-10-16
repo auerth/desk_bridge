@@ -1,9 +1,10 @@
-import { FileArchive, FolderOpen, Laptop, Monitor, Pause, Play, Plus, RotateCw, Trash2, Unlink } from 'lucide-react';
+import { FileArchive, FolderOpen, Send, Laptop, Monitor, Pause, Play, Plus, RotateCw, Trash2, Unlink } from 'lucide-react';
 import { useState } from 'react';
 import { getBackend } from '../api';
 import { PairedBadge, PairingPanel } from '../components/Pairing';
 import { Button, Card, ConfirmDialog, Modal, PageHeader, Pill, PromptDialog, Row, Segmented, Select, SwitchRow, TextInput } from '../components/ui';
-import { useT } from '../i18n/useT';
+import { useLang, useT } from '../i18n/useT';
+import { formatMs } from '../lib/format';
 import { useStore } from '../store';
 
 type UpdateStatus =
@@ -46,6 +47,8 @@ export function Settings() {
   const update = useStore((s) => s.updateConfig);
   const send = useStore((s) => s.send);
   const updateOffer = useStore((s) => s.updateOffer);
+  const pushToast = useStore((s) => s.pushToast);
+  const lang = useLang();
 
   const [renamePeer, setRenamePeer] = useState<{ id: string; name: string } | null>(null);
   const [unpair, setUnpair] = useState<{ id: string; name: string } | null>(null);
@@ -86,6 +89,20 @@ export function Settings() {
     const r = await send({ type: 'ping' });
     if (r !== undefined) setLatency(Math.round((performance.now() - t0) * 10) / 10);
   };
+
+  const sendInstaller = async () => {
+    const path = await backend.pickInstaller();
+    if (!path) return;
+    const m = /DeskBridge-Setup-(\d+\.\d+\.\d+)/i.exec(path.split(/[\\/]/).pop() ?? '');
+    if (!m || !m[1]) {
+      pushToast({ level: 'error', text: t('settings.sendInstallerBadName') });
+      return;
+    }
+    await send({ type: 'offer_partner_update', path, version: m[1] });
+  };
+
+  const m = state.metrics;
+  const ms = (us: number | null) => (us == null ? '–' : formatMs(us, lang));
 
   const available = upd.kind === 'available' ? upd.version : (updateOffer?.version ?? state.update.available);
 
@@ -241,6 +258,11 @@ export function Settings() {
           </div>
         </Row>
         <SwitchRow title={t('settings.updateAuto')} checked={config.update.check_automatically} onChange={(v) => update((c) => void (c.update.check_automatically = v))} />
+        <Row title={t('settings.sendInstaller')} description={t('settings.sendInstallerHint')}>
+          <Button size="sm" icon={<Send size={15} aria-hidden />} disabled={state.connection.state !== 'connected'} onClick={() => void sendInstaller()}>
+            {t('settings.sendInstaller')}
+          </Button>
+        </Row>
         <SwitchRow title={t('settings.updatePartner')} checked={config.update.offer_partner_update} onChange={(v) => update((c) => void (c.update.offer_partner_update = v))} />
       </Card>
 
@@ -272,6 +294,17 @@ export function Settings() {
             options={(['error', 'warn', 'info', 'debug', 'trace'] as const).map((v) => ({ value: v, label: v }))}
             onChange={(v) => update((c) => void (c.general.log_level = v))}
           />
+        </Row>
+        <Row title={t('settings.inputLatency')} description={t('settings.inputLatencyHint')}>
+          <span className="num">{t('settings.inputLatencyValue', { p50: ms(m.input_latency_p50_us), p95: ms(m.input_latency_p95_us), max: ms(m.input_latency_max_us) })}</span>
+        </Row>
+        <Row title={t('settings.agentLoad')}>
+          <span className="num">
+            {t('settings.agentLoadValue', {
+              cpu: m.agent_cpu_pct == null ? '–' : m.agent_cpu_pct.toLocaleString(lang, { maximumFractionDigits: 1 }),
+              ram: m.agent_rss_mb == null ? '–' : Math.round(m.agent_rss_mb),
+            })}
+          </span>
         </Row>
         <Row title={t('settings.latencyTest')} description={latency != null ? t('settings.latencyResult', { n: latency }) : t('settings.latencyHint')}>
           <Button size="sm" onClick={() => void testLatency()}>

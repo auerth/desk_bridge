@@ -46,6 +46,7 @@ fn main() {
             commands::frontend_ready,
             commands::app_info,
             commands::open_main,
+            commands::launch_installer,
             commands::open_logs_folder,
             commands::reveal_path,
             commands::hide_flyout,

@@ -310,7 +310,15 @@ pub fn refresh(app: &AppHandle, client: &Arc<IpcClient>) {
     let focus_unavailable = s.is_some_and(|s| str_at(s, "/features/focus/state") == "unavailable");
     let mic_unavailable = mic_state == "unavailable";
 
-    let status = status_line(l, online, s);
+    let mut status = status_line(l, online, s);
+    if mic_live {
+        if let Some(d) = s
+            .and_then(|s| s.pointer("/features/mic/detail"))
+            .and_then(Value::as_str)
+        {
+            status = format!("{status} · {d}");
+        }
+    }
     let signature = format!(
         "{}|{status}|{focus_active}{laptop_muted}{mic_muted}{locked}{paused}{online}{connected}{focus_unavailable}{mic_unavailable}",
         prefs.language

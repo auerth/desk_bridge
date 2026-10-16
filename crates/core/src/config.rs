@@ -179,17 +179,11 @@ impl Default for FilesConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioConfig {
     pub laptop_to_pc: LaptopAudio,
     pub mic_to_laptop: MicAudio,
-}
-
-impl Default for AudioConfig {
-    fn default() -> Self {
-        Self { laptop_to_pc: LaptopAudio::default(), mic_to_laptop: MicAudio::default() }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

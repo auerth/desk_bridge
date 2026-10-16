@@ -152,7 +152,7 @@ impl AgentLauncher {
     }
 
     /// Returns `Some(started)` when an attempt was made, `None` when waiting or given up.
-    fn maybe_start(&mut self) -> Option<bool> {
+    async fn maybe_start(&mut self) -> Option<bool> {
         if self.attempts >= MAX_AGENT_STARTS {
             return None;
         }
@@ -163,7 +163,7 @@ impl AgentLauncher {
         }
         self.attempts += 1;
         self.last = Some(Instant::now());
-        Some(start_agent())
+        Some(start_agent().await)
     }
 
     fn reset(&mut self) {
@@ -177,7 +177,49 @@ impl AgentLauncher {
     }
 }
 
-fn start_agent() -> bool {
+/// Starts the agent: first through the scheduled task (that is how the elevated agent is meant to run),
+/// then, if its pipe does not show up within ~2 s, by spawning the executable next to the UI.
+async fn start_agent() -> bool {
+    let via_task = tauri::async_runtime::spawn_blocking(run_agent_task)
+        .await
+        .unwrap_or(false);
+    if via_task {
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            if pipe_exists() {
+                tracing::info!("agent started via scheduled task");
+                return true;
+            }
+        }
+        tracing::warn!(
+            "scheduled task ran but the agent pipe did not appear; falling back to a direct start"
+        );
+    }
+    spawn_agent_exe()
+}
+
+fn pipe_exists() -> bool {
+    std::fs::metadata(brand::UI_PIPE_NAME).is_ok()
+}
+
+/// `schtasks /run /tn "DeskBridge Agent"`; true when the task exists and was triggered.
+fn run_agent_task() -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    match std::process::Command::new("schtasks")
+        .args(["/run", "/tn", brand::AGENT_TASK_NAME])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(out) => out.status.success(),
+        Err(e) => {
+            tracing::debug!("schtasks not available: {e}");
+            false
+        }
+    }
+}
+
+fn spawn_agent_exe() -> bool {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
@@ -228,7 +270,7 @@ async fn run(app: AppHandle, client: Arc<IpcClient>) {
                 continue;
             }
             Err(e) => {
-                let started = launcher.maybe_start();
+                let started = launcher.maybe_start().await;
                 let reason = if e.kind() == std::io::ErrorKind::NotFound {
                     "not_running".to_owned()
                 } else {

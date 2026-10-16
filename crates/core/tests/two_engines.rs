@@ -349,3 +349,111 @@ async fn mic_is_unavailable_without_a_driver() {
     pc.h.stop();
     lp.h.stop();
 }
+
+async fn wait_event<F: FnMut(&deskbridge_core::ipc::UiEvent) -> bool>(
+    rx: &mut tokio::sync::broadcast::Receiver<deskbridge_core::ipc::Push>,
+    what: &str,
+    mut f: F,
+) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match tokio::time::timeout_at(deadline, rx.recv()).await {
+            Ok(Ok(deskbridge_core::ipc::Push::Event { event })) if f(&event) => return,
+            Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
+            _ => panic!("timeout waiting for event: {what}"),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn partner_update_is_offered_accepted_transferred_and_verified() {
+    use deskbridge_core::ipc::UiEvent;
+    let (pc, lp) = setup().await;
+    let src = tempfile::tempdir().unwrap();
+    let installer = src.path().join("DeskBridge-Setup-9.9.9.exe");
+    let payload: Vec<u8> = (0..1_500_000u32).map(|i| (i * 7 % 256) as u8).collect();
+    std::fs::write(&installer, &payload).unwrap();
+
+    let mut lrx = lp.h.subscribe();
+    pc.h.request(UiRequest::OfferPartnerUpdate { path: installer.to_string_lossy().into_owned(), version: "9.9.9".into() })
+        .await
+        .unwrap();
+    wait_event(&mut lrx, "offer reaches laptop", |e| matches!(e, UiEvent::PartnerUpdateOffered { version, .. } if version == "9.9.9")).await;
+    lp.h.request(UiRequest::AnswerPartnerUpdate { accept: true }).await.unwrap();
+    let mut got = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while got.is_none() {
+        match tokio::time::timeout_at(deadline, lrx.recv()).await {
+            Ok(Ok(deskbridge_core::ipc::Push::Event { event: UiEvent::PartnerUpdateReady { path, version } })) => got = Some((path, version)),
+            Ok(_) => {}
+            Err(_) => panic!("update never arrived"),
+        }
+    }
+    let (path, version) = got.unwrap();
+    assert_eq!(version, "9.9.9");
+    assert_eq!(std::fs::read(path).unwrap(), payload);
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn focus_mode_streams_frames_and_restores_everything() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    let r = pc.h.request(UiRequest::SetFocus { mode: "full".into() }).await;
+    assert!(r.is_ok(), "focus start accepted: {r:?}");
+    wait_for("viewer opens", || pc.m.video.stats.presenter_open.load(SeqCst)).await;
+    wait_for("laptop captures", || lp.m.video.stats.capturer_running.load(SeqCst)).await;
+    wait_for("frames presented on the pc", || pc.m.video.stats.frames_presented.load(SeqCst) > 10).await;
+    assert!(lp.m.video.stats.keyframes_encoded.load(SeqCst) >= 1);
+    assert!(lp.m.display.world().virtual_enabled, "virtual display is on while streaming");
+    let st = pc.h.state().await;
+    assert_eq!(st.features.focus.phase, "streaming");
+    assert_eq!(st.features.focus.base.state, deskbridge_core::ipc::Live::Live);
+    // the pointer is mapped onto the stream while it runs
+    pc.m.capture.feed(CaptureEvent::MouseMove { x: 100, y: 100 });
+    wait_for("pc keyboard grabbed", || *pc.m.capture.grab.lock() == GrabMode::KeyboardOnly).await;
+
+    pc.h.request(UiRequest::SetFocus { mode: "off".into() }).await.unwrap();
+    wait_for("viewer closes", || !pc.m.video.stats.presenter_open.load(SeqCst)).await;
+    wait_for("capture stops", || !lp.m.video.stats.capturer_running.load(SeqCst)).await;
+    wait_for("virtual display off again", || !lp.m.display.world().virtual_enabled).await;
+    assert!(!lp.m.display.ever_blackout(), "never left the laptop without a display");
+    wait_for("keyboard released", || *pc.m.capture.grab.lock() == GrabMode::None).await;
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn focus_mode_is_rolled_back_when_the_connection_drops() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    pc.h.request(UiRequest::SetFocus { mode: "split".into() }).await.unwrap();
+    wait_for("streaming", || lp.m.video.stats.capturer_running.load(SeqCst) && pc.m.video.stats.frames_presented.load(SeqCst) > 3).await;
+    assert!(lp.m.display.world().virtual_enabled);
+    pc.h.stop(); // cable pulled
+    wait_for("laptop restores its display", || !lp.m.display.world().virtual_enabled).await;
+    wait_for("capture stopped", || !lp.m.video.stats.capturer_running.load(SeqCst)).await;
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn focus_start_failure_on_the_laptop_leaves_the_pc_clean() {
+    use deskbridge_display::mock::{Failure, Step};
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    lp.m.display.fail(Step::EnableVirtual, Failure::always());
+    pc.h.request(UiRequest::SetFocus { mode: "full".into() }).await.unwrap();
+    for _ in 0..100 {
+        if pc.h.state().await.features.focus.phase == "off" && lp.m.display.count(Step::EnableVirtual) > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(pc.h.state().await.features.focus.phase, "off");
+    assert!(!pc.m.video.stats.presenter_open.load(SeqCst));
+    assert!(!lp.m.display.world().virtual_enabled);
+    assert!(!lp.m.display.ever_blackout());
+    pc.h.stop();
+    lp.h.stop();
+}

@@ -89,4 +89,10 @@ pub trait VideoPresenter: Send {
     fn present(&mut self, frame: &Frame) -> Result<()>;
     fn set_cursor(&mut self, cursor: &CursorState);
     fn close(&mut self);
+    /// Current rectangle of the picture on the virtual desktop (window mode can be moved).
+    fn window_rect(&self) -> Option<(i32, i32, u32, u32)> {
+        None
+    }
+    /// Shows or hides the stats overlay with the given text (Ctrl+Alt+Shift+I).
+    fn set_stats_overlay(&mut self, _on: bool, _text: &str) {}
 }

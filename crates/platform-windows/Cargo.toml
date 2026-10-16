@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 deskbridge-platform.workspace = true
+deskbridge-display.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 parking_lot = "0.12"
@@ -49,12 +50,14 @@ features = [
     "Win32_Media_Audio_Endpoints",
     "Win32_Devices_FunctionDiscovery",
     "Win32_Devices_Properties",
+    "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Display",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D_Fxc",
     "Win32_Graphics_Dwm",
     "Win32_UI_Input",
     "Win32_UI_Input_KeyboardAndMouse",

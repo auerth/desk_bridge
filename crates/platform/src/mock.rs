@@ -363,10 +363,13 @@ impl Drop for FlagHandle {
     }
 }
 
+type CaptureSink = (CaptureSource, UnboundedSender<AudioFrame>, Arc<std::sync::atomic::AtomicBool>);
+type PlaybackSlot = (Option<String>, Arc<dyn PullSource>, Arc<std::sync::atomic::AtomicBool>);
+
 /// Capture whose frames are pushed by the test.
 #[derive(Default)]
 pub struct MockAudioCapture {
-    sinks: Mutex<Vec<(CaptureSource, UnboundedSender<AudioFrame>, Arc<std::sync::atomic::AtomicBool>)>>,
+    sinks: Mutex<Vec<CaptureSink>>,
 }
 
 impl MockAudioCapture {
@@ -400,7 +403,7 @@ impl AudioCapture for MockAudioCapture {
 /// Playback that is pulled by the test.
 #[derive(Default)]
 pub struct MockAudioPlayback {
-    current: Mutex<Option<(Option<String>, Arc<dyn PullSource>, Arc<std::sync::atomic::AtomicBool>)>>,
+    current: Mutex<Option<PlaybackSlot>>,
     pub starts: Mutex<Vec<Option<String>>>,
 }
 

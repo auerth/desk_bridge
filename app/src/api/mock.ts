@@ -10,6 +10,7 @@
 //   &mic=live             mic forwarding active (default: "not yet available")
 //   &update               an update is available
 //   &theme=dark|light  &lang=de|en
+//   &p95=high  &mismatch  &partner=offer  &warn=elevation|sas_unavailable|capture_failed|audio_capture  &nopublic
 //   &quiet                no ticking (stable screenshots)
 
 import type { AppInfo, Backend, ConnectionInfo, FileDropEvent, UpdateInfo, Unlisten } from './backend';
@@ -111,7 +112,7 @@ function seedState(): AppState {
       since_unix_ms: connected ? Date.now() - 3 * 3600_000 - 17 * 60_000 : null,
       error: null,
       version_mismatch: false,
-      peer_version: connected ? '0.1.0' : null,
+      peer_version: connected ? (has('mismatch') ? '0.0.9' : '0.1.0') : null,
     },
     peers: onboarding ? [] : [peer],
     discovered: onboarding
@@ -134,7 +135,7 @@ function seedState(): AppState {
         ...emptyAudio(),
         enabled: micLive,
         state: micLive ? 'live' : 'unavailable',
-        detail: micLive ? 'Teams' : 'Es gibt noch keinen signierten virtuellen Audiotreiber.',
+        detail: micLive ? 'Laptop nutzt dein Mikro (Teams)' : 'Es gibt noch keinen signierten virtuellen Audiotreiber.',
         codec: micLive ? 'opus' : '',
         latency_ms: micLive ? 21 : null,
         device_name: 'Headset-Mikrofon (USB-Dongle)',
@@ -161,7 +162,12 @@ function seedState(): AppState {
     screens: { screens, placements, revision: 1 },
     location: 'local',
     cursor_locked: false,
-    warnings: onboarding ? [] : [{ code: 'network_public', message: 'Dein Netzwerk ist als „Öffentlich“ eingestuft.' }],
+    warnings: onboarding
+      ? []
+      : [
+          ...(has('nopublic') ? [] : [{ code: 'network_public', message: 'Dein Netzwerk ist als „Öffentlich“ eingestuft.' }]),
+          ...(params.get('warn') ? [{ code: params.get('warn') ?? '', message: '' }] : []),
+        ],
     transfers: onboarding
       ? []
       : [
@@ -170,7 +176,7 @@ function seedState(): AppState {
           { id: 1, direction: 'receive', name: 'backup-2026-10.zip', files: 1, total_bytes: 1_380_000_000, done_bytes: 410_000_000, status: 'failed', path: null, started_unix_ms: Date.now() - 26 * 3600_000 },
         ],
     update: { current: '0.1.0', available: has('update') ? '0.2.0' : null, checking: false },
-    metrics: { rtt_history_us: connected ? Array.from({ length: 60 }, (_, i) => 900 + Math.round(Math.sin(i / 5) * 160 + ((i * 37) % 11) * 12)) : [], audio_buffer_fill_ms: 9.6, audio_drift_ppm: 12, audio_loss_pct: 0, agent_cpu_pct: 0.4, agent_rss_mb: 42 },
+    metrics: { rtt_history_us: connected ? Array.from({ length: 60 }, (_, i) => 900 + Math.round(Math.sin(i / 5) * 160 + ((i * 37) % 11) * 12)) : [], input_latency_p50_us: connected ? 480 : null, input_latency_p95_us: connected ? (params.get('p95') === 'high' ? 5200 : 1350) : null, input_latency_max_us: connected ? 3100 : null, audio_buffer_fill_ms: 9.6, audio_drift_ppm: 12, audio_loss_pct: 0, agent_cpu_pct: 0.4, agent_rss_mb: 42 },
     paused: false,
   };
   return state;
@@ -511,6 +517,14 @@ export function createMockBackend(): Backend {
         state.update.checking = false;
         pushState();
         return null;
+      case 'offer_partner_update':
+        emitEvent({ kind: 'notification', level: 'info', text: `Update ${req.version} wird an das Partnergerät gesendet.` });
+        return null;
+      case 'answer_partner_update':
+        if (req.accept) {
+          setTimeout(() => emitEvent({ kind: 'partner_update_ready', path: 'C:\Users\thorben\AppData\Local\softwelop\DeskBridge\Updates\DeskBridge-Setup-0.2.0.exe', version: '0.2.0' }), 1500);
+        }
+        return null;
       case 'make_network_private':
         state.warnings = state.warnings.filter((w) => w.code !== 'network_public');
         emitEvent({ kind: 'notification', level: 'info', text: 'Netzwerk ist jetzt als „Privat“ markiert.' });
@@ -561,6 +575,8 @@ export function createMockBackend(): Backend {
     return () => set.delete(cb);
   };
 
+  let offerScheduled = false;
+
   if (!agentOnline) {
     // Report offline shortly after startup, like the real backend would.
     setTimeout(() => setConn({ connected: false, reason: 'not_running', starting: true }), 50);
@@ -578,7 +594,15 @@ export function createMockBackend(): Backend {
       }
     },
     onState: (cb) => sub(stateSubs, cb),
-    onEvent: (cb) => sub(eventSubs, cb),
+    onEvent: (cb) => {
+      // Scenario `?partner=offer`: the partner offers an update shortly after the UI is listening.
+      if (params.get('partner') === 'offer' && !offerScheduled) {
+        offerScheduled = true;
+        console.log('mock: scheduling partner offer');
+        setTimeout(() => console.log('mock: emitting offer', agentOnline, eventSubs.size) || emitEvent({ kind: 'partner_update_offered', version: '0.2.0', size: 38_400_000, from: 'Thorbens Laptop' }), 1500);
+      }
+      return sub(eventSubs, cb);
+    },
     onConnection: (cb) => {
       const un = sub(connSubs, cb);
       // The real backend only emits on change; give subscribers the initial status.
@@ -596,6 +620,8 @@ export function createMockBackend(): Backend {
     },
     pickFolder: async () => 'C:\\Users\\thorben\\Downloads\\Desk Bridge',
     pickFiles: async () => ['C:\\Users\\thorben\\Documents\\Angebot_Kaiserstuhl.pdf', 'C:\\Users\\thorben\\Pictures\\Skizze.png'],
+    pickInstaller: async () => 'C:\Users\thorben\Downloads\DeskBridge-Setup-0.2.0.exe',
+    launchInstaller: async () => {},
     onFileDrop: (cb) => sub(fileDropListeners, cb),
     openUrl: async (url) => {
       window.open(url, '_blank', 'noopener');

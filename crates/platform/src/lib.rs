@@ -15,6 +15,7 @@ pub mod mock;
 pub mod power;
 pub mod screen;
 pub mod secret;
+pub mod system;
 pub mod video;
 
 pub use error::{PlatformError, Result};

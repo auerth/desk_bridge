@@ -16,10 +16,11 @@ import { useEffect, useState } from 'react';
 import { getBackend } from '../api';
 import appIcon from '../brand/app-icon/variant-a.svg';
 import { PRODUCT_NAME } from '../brand';
-import type { MessageKey } from '../i18n';
-import { useT } from '../i18n/useT';
+import { hasKey, type MessageKey } from '../i18n';
+import { useLang, useT } from '../i18n/useT';
 import { ROUTES, useStore, type Route } from '../store';
-import { Banner, Button, Pill } from './ui';
+import { formatBytes } from '../lib/format';
+import { Banner, Button, Modal, Pill } from './ui';
 
 // ---------------------------------------------------------------------------------------------
 // Title bar (frameless window with Windows-style caption buttons)
@@ -153,23 +154,43 @@ export function WarningBanners() {
   const dismissed = useStore((s) => s.dismissedWarnings);
   const dismiss = useStore((s) => s.dismissWarning);
   const send = useStore((s) => s.send);
+  const navigate = useStore((s) => s.navigate);
   const conn = useStore((s) => s.conn);
-  const hasState = useStore((s) => s.state != null);
+  const state = useStore((s) => s.state);
   const [busy, setBusy] = useState(false);
 
-  const visible = warnings.filter((w) => !dismissed.includes(w.code));
+  const own = state?.device.version ?? '';
+  const peerVersion = state?.connection.peer_version ?? null;
+  const mixed = !!state && (state.connection.version_mismatch || (peerVersion != null && own !== '' && peerVersion !== own));
+  const visible = warnings.filter((w) => !dismissed.includes(w.code) && !(mixed && w.code === 'version_mismatch'));
   return (
     <div className="banners">
-      {!conn.connected && hasState && <Banner tone="warn" title={t('agent.lost')} />}
+      {!conn.connected && state && <Banner tone="warn" title={t('agent.lost')} />}
+      {mixed && !dismissed.includes('versions_mixed') && (
+        <Banner
+          tone="info"
+          title={t('update.mismatchTitle')}
+          onDismiss={() => dismiss('versions_mixed')}
+          dismissLabel={t('warn.dismiss')}
+          action={
+            <Button variant="secondary" size="sm" onClick={() => navigate('settings')}>
+              {t('nav.settings')}
+            </Button>
+          }
+        >
+          {t('update.mismatchBody', { own, peer: peerVersion ?? '?' })}
+        </Banner>
+      )}
       {visible.map((w) => {
-        const titleKey = `warn.${w.code}` as MessageKey;
-        const known = titleKey in knownWarn;
+        const titleKey = `warn.${w.code}`;
+        const bodyKey = `warn.${w.code}.body`;
         const isPublic = w.code === 'network_public';
+        const body = isPublic ? t('warn.network_public.body') : w.message || (hasKey(bodyKey) ? t(bodyKey) : undefined);
         return (
           <Banner
             key={w.code}
             tone="warn"
-            title={known ? t(titleKey) : w.message}
+            title={hasKey(titleKey) ? t(titleKey) : w.message || w.code}
             onDismiss={() => dismiss(w.code)}
             dismissLabel={t('warn.dismiss')}
             action={
@@ -189,7 +210,7 @@ export function WarningBanners() {
               ) : undefined
             }
           >
-            {isPublic ? t('warn.network_public.body') : known ? w.message : undefined}
+            {body}
           </Banner>
         );
       })}
@@ -197,16 +218,77 @@ export function WarningBanners() {
   );
 }
 
-const knownWarn: Record<string, true> = {
-  'warn.network_public': true,
-  'warn.no_encoder': true,
-  'warn.no_virtual_display': true,
-  'warn.no_virtual_audio': true,
-  'warn.firewall': true,
-  'warn.version_mismatch': true,
-  'warn.elevation': true,
-  'warn.headset_missing': true,
-};
+/** Partner update flow: offer (accept/decline) and "received, start now?" - never silent. */
+export function PartnerUpdateDialogs() {
+  const t = useT();
+  const lang = useLang();
+  const offer = useStore((s) => s.partnerOffer);
+  const ready = useStore((s) => s.partnerReady);
+  const clearOffer = useStore((s) => s.clearPartnerOffer);
+  const clearReady = useStore((s) => s.clearPartnerReady);
+  const send = useStore((s) => s.send);
+  const toast = useStore((s) => s.pushToast);
+  const [starting, setStarting] = useState(false);
+
+  const answer = (accept: boolean) => {
+    void send({ type: 'answer_partner_update', accept });
+    clearOffer();
+  };
+
+  return (
+    <>
+      <Modal
+        open={offer != null}
+        onOpenChange={(o) => {
+          if (!o && offer) answer(false);
+        }}
+        title={t('pu.offerTitle')}
+        description={offer ? t('pu.offerBody', { from: offer.from, version: offer.version, size: formatBytes(offer.size, lang) }) : undefined}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => answer(false)}>
+              {t('pu.decline')}
+            </Button>
+            <Button variant="primary" onClick={() => answer(true)}>
+              {t('pu.accept')}
+            </Button>
+          </>
+        }
+      />
+      <Modal
+        open={ready != null}
+        onOpenChange={(o) => !o && clearReady()}
+        title={t('pu.readyTitle')}
+        description={ready ? t('pu.readyBody', { version: ready.version }) : undefined}
+        footer={
+          <>
+            <Button variant="ghost" onClick={clearReady}>
+              {t('pu.later')}
+            </Button>
+            <Button
+              variant="accent"
+              loading={starting}
+              onClick={async () => {
+                if (!ready) return;
+                setStarting(true);
+                try {
+                  await getBackend().launchInstaller(ready.path);
+                  clearReady();
+                } catch (e) {
+                  toast({ level: 'error', text: t('pu.launchFailed', { error: String(e instanceof Error ? e.message : e) }) });
+                } finally {
+                  setStarting(false);
+                }
+              }}
+            >
+              {t('pu.start')}
+            </Button>
+          </>
+        }
+      />
+    </>
+  );
+}
 
 export function Toaster() {
   const toasts = useStore((s) => s.toasts);

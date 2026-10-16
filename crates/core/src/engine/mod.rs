@@ -5,11 +5,13 @@ mod audio;
 mod clip;
 mod connect;
 mod dto;
+mod focus;
 mod features;
 mod input;
 mod pairing;
 pub mod session;
 mod transfers;
+mod update;
 mod ui;
 
 use crate::backoff::Backoff;
@@ -64,6 +66,14 @@ pub(crate) enum Msg {
     Warn { code: String, message: String },
     MicUsage(deskbridge_platform::audio::MicUsage),
     ToneDone,
+    FocusSourceUp {
+        screen_id: u32,
+        capturer: Box<dyn deskbridge_platform::video::ScreenCapturer>,
+        encoder: Box<dyn deskbridge_platform::video::VideoEncoder>,
+        cfg: deskbridge_platform::video::EncoderConfig,
+        link: PeerLink,
+    },
+    FocusSourceFailed { reason: String },
     AudioDevice(deskbridge_platform::audio::DeviceEvent),
     Tick,
     Shutdown,
@@ -176,6 +186,9 @@ pub(crate) struct Engine {
     pub clock: ClockSync,
     pub rtt_history: VecDeque<u32>,
     pub input_latency: VecDeque<u32>,
+    pub procstats: crate::procstats::ProcStats,
+    pub proc_cpu: f32,
+    pub proc_rss: f32,
     pub tick_count: u64,
 
     pub pairing: Option<Arc<PairingWindow>>,
@@ -188,8 +201,13 @@ pub(crate) struct Engine {
     pub capture_running: bool,
     pub(crate) clip: Option<clip::ClipRuntime>,
     pub(crate) audio: audio::AudioState,
+    pub(crate) focus: focus::FocusRt,
+    pub(crate) cursor_shape: Option<deskbridge_platform::video::CursorShapeData>,
+    pub(crate) cursor_shape_serial: u32,
     pub(crate) audio_rx_slots: Option<AudioSlots>,
     pub(crate) xfer: transfers::Transfers,
+    pub(crate) update_out: Option<update::OutgoingUpdate>,
+    pub(crate) update_in: Option<pb::UpdateOffer>,
     pub cursor_locked: bool,
     pub warnings: Vec<WarningDto>,
 
@@ -280,6 +298,9 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         clock: ClockSync::default(),
         rtt_history: VecDeque::new(),
         input_latency: VecDeque::new(),
+        procstats: crate::procstats::ProcStats::default(),
+        proc_cpu: 0.0,
+        proc_rss: 0.0,
         tick_count: 0,
         pairing: None,
         local_screens,
@@ -291,8 +312,13 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         capture_running: false,
         clip: None,
         audio: audio::AudioState::default(),
+        focus: focus::FocusRt::default(),
+        cursor_shape: None,
+        cursor_shape_serial: 0,
         audio_rx_slots: None,
         xfer: transfers::Transfers::new(Some(paths_data_dir)),
+        update_out: None,
+        update_in: None,
         cursor_locked: false,
         warnings: Vec::new(),
         dirty: true,
@@ -414,6 +440,7 @@ impl Engine {
 
     fn on_shutdown(&mut self) {
         self.close_session("shutdown");
+        self.focus_shutdown();
         self.platform.capture.stop();
         self.transport.close();
         if let Some(d) = &self.discovery {
@@ -445,6 +472,8 @@ impl Engine {
             Msg::Warn { code, message } => self.warn_once(&code, &message),
             Msg::MicUsage(u) => self.on_mic_usage(u),
             Msg::ToneDone => self.on_tone_done(),
+            Msg::FocusSourceUp { screen_id, capturer, encoder, cfg, link } => self.on_focus_source_up(screen_id, capturer, encoder, cfg, link),
+            Msg::FocusSourceFailed { reason } => self.on_focus_source_failed(&reason),
             Msg::AudioDevice(ev) => self.on_audio_device_event(ev),
             Msg::Shutdown => {}
         }
@@ -507,6 +536,9 @@ impl Engine {
         }
         if d.stream_source {
             c.push(caps::FOCUS_SOURCE);
+            if self.platform.display.virtual_available() {
+                c.push("focus.vdisplay");
+            }
             c.push(caps::AUDIO_SPEAKER_SOURCE);
             if self.platform.virtual_audio.available() {
                 c.push(caps::AUDIO_MIC_SINK);
@@ -520,7 +552,7 @@ impl Engine {
             proto_version: deskbridge_proto::PROTO_VERSION,
             caps: c.into_iter().map(|n| pb::Capability { name: n.to_string(), version: 1 }).collect(),
             screens: self.local_screens.iter().map(screen_to_pb).collect(),
-            video: None,
+            video: Some(focus::hello_video_caps(self.platform.video.as_ref(), d.stream_source, d.input_source)),
         };
         *self.hello.write() = hello;
     }
@@ -649,9 +681,15 @@ impl Engine {
             self.maybe_connect();
         }
 
+        if self.tick_count % 8 == 0 {
+            let (cpu, rss) = self.procstats.sample();
+            self.proc_cpu = cpu;
+            self.proc_rss = rss;
+        }
+        self.tick_focus();
         self.update_idle_state();
         self.tick_input();
-        if self.has_running_transfers() || self.audio_is_active() {
+        if self.has_running_transfers() || self.audio_is_active() || self.focus_is_active() {
             self.dirty = true;
         }
         if self.dirty && self.last_publish.elapsed() >= Duration::from_millis(100)

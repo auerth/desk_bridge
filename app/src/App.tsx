@@ -3,7 +3,7 @@ import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { Loader2, PlugZap } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { getBackend } from './api';
-import { Nav, Titlebar, Toaster, WarningBanners } from './components/Shell';
+import { Nav, PartnerUpdateDialogs, Titlebar, Toaster, WarningBanners } from './components/Shell';
 import { useT } from './i18n/useT';
 import { applyTheme } from './lib/theme';
 import { Flyout } from './routes/Flyout';
@@ -145,6 +145,7 @@ function MainShell() {
           </main>
         </div>
       )}
+      {state != null && !onboarding && <PartnerUpdateDialogs />}
       <Toaster />
     </div>
   );

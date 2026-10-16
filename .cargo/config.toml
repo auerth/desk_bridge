@@ -7,3 +7,5 @@ rustflags = ["-C", "target-feature=+crt-static"]
 [env]
 FFMPEG_DIR = { value = "vendor/ffmpeg", relative = true }
 LIBCLANG_PATH = { value = 'C:\Program Files\LLVM\bin', force = false }
+# libopus (audiopus_sys) uses an old CMake policy; newer CMake (4.x) needs this to configure it.
+CMAKE_POLICY_VERSION_MINIMUM = { value = "3.5", force = false }

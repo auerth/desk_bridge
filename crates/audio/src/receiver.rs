@@ -91,6 +91,7 @@ const TARGET_DECAY_MS_PER_S: f32 = 1.0;
 const JITTER_PEAK_TAU_S: f32 = 10.0;
 /// Smoothing factor of the loss / late statistics (per packet).
 const RATE_ALPHA: f32 = 1.0 / 500.0;
+const DRIFT_STAT_TAU_S: f64 = 10.0;
 const LOSS_SLOW_ALPHA: f32 = 1.0 / 2000.0;
 /// Integrator freeze after a target step (microseconds).
 const INT_FREEZE_US: u64 = 4_000_000;
@@ -261,6 +262,8 @@ struct Core {
     xf_left: usize,
     ratio: f64,
     drift_i: f64,
+    /// Integrator smoothed over ~10 s (reported drift).
+    drift_stat: f64,
     fill_f: f64,
     ctrl_init: bool,
     target_ms: f32,
@@ -340,6 +343,7 @@ impl Core {
             xf_left: 0,
             ratio: 1.0,
             drift_i: 0.0,
+            drift_stat: 0.0,
             fill_f: 0.0,
             ctrl_init: false,
             target_ms,
@@ -819,10 +823,6 @@ impl Core {
         ring - skipped + age_us * 1e-6 * f64::from(RATE)
     }
 
-    fn start_gain_target(muted_vol: f32) -> f32 {
-        muted_vol
-    }
-
     fn pull(&mut self, out: &mut [f32], now: u64, gain_target: f32) {
         let n = out.len() / 2;
         if n == 0 {
@@ -864,8 +864,8 @@ impl Core {
             } else if self.vol_cur > target {
                 self.vol_cur = (self.vol_cur - step).max(target);
             }
-            f[0] = (f[0] * self.vol_cur).max(-1.0).min(1.0);
-            f[1] = (f[1] * self.vol_cur).max(-1.0).min(1.0);
+            f[0] = saturate(f[0] * self.vol_cur);
+            f[1] = saturate(f[1] * self.vol_cur);
         }
     }
 
@@ -1000,6 +1000,7 @@ impl Core {
             self.drift_i = (self.drift_i + KI * err_ms * dt).clamp(-I_MAX, I_MAX);
         }
         let u = (self.drift_i + KP * err_ms).clamp(-U_MAX, U_MAX);
+        self.drift_stat += (self.drift_i - self.drift_stat) * (dt / DRIFT_STAT_TAU_S).min(1.0);
         let max_step = SLEW_PER_S * dt;
         self.ratio += (1.0 + u - self.ratio).clamp(-max_step, max_step);
     }
@@ -1013,7 +1014,7 @@ impl Core {
             plc_count: self.plc_count,
             underruns: self.underruns,
             overruns: self.overruns,
-            drift_ppm: (-self.drift_i * 1e6) as f32,
+            drift_ppm: (-self.drift_stat * 1e6) as f32,
             resample_ratio: self.ratio,
             packets: self.packets,
             jitter_ms: self.jit_avg,
@@ -1047,7 +1048,7 @@ impl PullSource for Shared {
             f32::from_bits(self.volume.load(Ordering::Relaxed))
         };
         let mut core = self.core.lock();
-        core.pull(out, now, Core::start_gain_target(gain));
+        core.pull(out, now, gain);
         self.peak
             .store(core.meter.peak().to_bits(), Ordering::Relaxed);
     }
@@ -1119,4 +1120,10 @@ impl AudioReceiver {
 
 fn frames_us(frames: usize) -> i64 {
     (frames as u64 * 1_000_000 / u64::from(RATE)) as i64
+}
+
+/// Clips to [-1, 1]; NaN becomes silence.
+#[inline]
+fn saturate(v: f32) -> f32 {
+    if v.is_nan() { 0.0 } else { v.clamp(-1.0, 1.0) }
 }
