@@ -33,6 +33,9 @@ pub struct SyncConfig {
     /// HTML, RTF and URL lists.
     pub sync_rich_text: bool,
     pub sync_files: bool,
+    /// Do not put the peer's files on the clipboard when they are copied, but only once the
+    /// user arrives on this device (`ClipboardSync::claim_pending_files`).
+    pub files_on_arrival: bool,
     /// Never sync content flagged by password managers.
     pub respect_sensitive: bool,
 }
@@ -47,6 +50,7 @@ impl Default for SyncConfig {
             sync_images: true,
             sync_rich_text: true,
             sync_files: true,
+            files_on_arrival: false,
             respect_sensitive: true,
         }
     }

@@ -9,10 +9,10 @@ use deskbridge_platform::screen::ScreenInfo;
 use deskbridge_proto::pb::{self, Edge, Placement};
 use uuid::Uuid;
 
-/// A cursor that reaches an edge this close (layout units, about one inch) to the neighbour's
-/// span still switches and is mapped to the nearest point, so nobody has to hunt for the exact
-/// spot along the edge.
-pub const SNAP: f64 = 96.0;
+/// A cursor anywhere along an edge that has a neighbour switches over (and is mapped to the
+/// nearest point of the neighbour's span): nobody should have to hunt for the exact spot, which
+/// felt like a long delay when the two screens differ in height.
+pub const SNAP: f64 = f64::INFINITY;
 
 /// Two edges closer than this (layout units) count as touching.
 pub const TOUCH_EPS: f64 = 2.0;
@@ -324,11 +324,11 @@ mod tests {
         assert!(top.rel < 0.01);
         let bottom = l.neighbor((pc, 0), Edge::Right, 1260.0 / 1440.0).unwrap();
         assert!(bottom.rel > 0.99);
-        // Above the laptop: nothing is there, the cursor is blocked.
-        assert!(l.neighbor((pc, 0), Edge::Right, 0.0).is_none());
-        // close to the span the cursor snaps to its nearest point
-        let snapped = l.neighbor((pc, 0), Edge::Right, 0.1).unwrap();
-        assert!(snapped.rel < 0.01);
+        // Above/below the laptop the cursor snaps to the nearest point of its span.
+        let above = l.neighbor((pc, 0), Edge::Right, 0.0).unwrap();
+        assert!(above.rel < 0.01);
+        let below = l.neighbor((pc, 0), Edge::Right, 1.0).unwrap();
+        assert!(below.rel > 0.99);
         let _ = lp;
     }
 

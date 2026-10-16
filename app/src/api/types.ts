@@ -302,6 +302,7 @@ export interface ClipboardConfig {
   sync_images: boolean;
   sync_rich_text: boolean;
   sync_files: boolean;
+  files_on_arrival: boolean;
   respect_sensitive: boolean;
 }
 
@@ -427,6 +428,7 @@ export function defaultConfig(): Config {
       sync_images: true,
       sync_rich_text: true,
       sync_files: true,
+      files_on_arrival: true,
       respect_sensitive: true,
     },
     files: { target_dir: '', parallel_streams: 4 },

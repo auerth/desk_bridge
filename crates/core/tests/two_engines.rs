@@ -744,7 +744,12 @@ async fn laptop_speakers_are_restored_when_the_connection_drops() {
 /// including a partial read followed by a backward seek (a reopen) and a second pass.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn clipboard_files_are_readable_through_the_virtual_provider() {
-    let (pc, lp) = setup().await;
+    let pc = node("PC", true, 2560, 1440).await;
+    let lp = node_with("Laptop", false, 1920, 1080, |c| {
+        c.clipboard.files_on_arrival = false;
+    })
+    .await;
+    let (pc, lp) = connect_nodes(pc, lp).await;
     let src = tempfile::tempdir().unwrap();
     let big: Vec<u8> = (0..2_000_000u32).map(|i| (i % 253) as u8).collect();
     let small = b"hallo welt".to_vec();
@@ -786,6 +791,34 @@ async fn clipboard_files_are_readable_through_the_virtual_provider() {
     assert!(got_big == big, "big file differs ({} bytes)", got_big.len());
     assert_eq!(got_small, small);
     assert!(got_big_again == big);
+    pc.h.stop();
+    lp.h.stop();
+}
+
+/// Copying files on the PC must not touch the laptop's clipboard until the cursor arrives there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn copied_files_take_over_the_clipboard_only_on_arrival() {
+    let (pc, lp) = setup().await;
+    let src = tempfile::tempdir().unwrap();
+    std::fs::write(src.path().join("a.txt"), "hallo").unwrap();
+    pc.m.clipboard
+        .user_copy_files(vec![src.path().join("a.txt")]);
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(
+        lp.m.clipboard.file_provider.lock().is_none(),
+        "the laptop clipboard must stay untouched until the cursor arrives"
+    );
+    assert!(
+        lp.h.state().await.transfers.is_empty(),
+        "no transfer entry before anything is pasted"
+    );
+    // cursor pushes over the right edge of the PC -> arrives on the laptop
+    pc.m.capture
+        .feed(CaptureEvent::MouseMove { x: 2559, y: 720 });
+    wait_for("files offered after arrival", || {
+        lp.m.clipboard.file_provider.lock().is_some()
+    })
+    .await;
     pc.h.stop();
     lp.h.stop();
 }

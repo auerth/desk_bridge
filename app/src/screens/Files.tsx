@@ -161,6 +161,12 @@ export function Files() {
           <SwitchRow title={t('clip.images')} checked={clip.sync_images} onChange={(v) => update((c) => void (c.clipboard.sync_images = v))} />
           <SwitchRow title={t('clip.richText')} checked={clip.sync_rich_text} onChange={(v) => update((c) => void (c.clipboard.sync_rich_text = v))} />
           <SwitchRow title={t('clip.files')} checked={clip.sync_files} onChange={(v) => update((c) => void (c.clipboard.sync_files = v))} />
+          <SwitchRow
+            title={t('clip.filesOnArrival')}
+            description={t('clip.filesOnArrivalHint')}
+            checked={clip.files_on_arrival}
+            onChange={(v) => update((c) => void (c.clipboard.files_on_arrival = v))}
+          />
           <SwitchRow title={t('clip.sensitive')} description={t('clip.sensitiveHint')} checked={clip.respect_sensitive} onChange={(v) => update((c) => void (c.clipboard.respect_sensitive = v))} />
           <Row title={t('clip.maxSize')}>
             <Select ariaLabel={t('clip.maxSize')} width={140} value={String(clip.max_size_mb)} options={sizeOpts.some((o) => o.value === String(clip.max_size_mb)) ? sizeOpts : [...sizeOpts, { value: String(clip.max_size_mb), label: `${clip.max_size_mb} MB` }]} onChange={(v) => update((c) => void (c.clipboard.max_size_mb = Number(v)))} />

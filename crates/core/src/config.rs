@@ -156,6 +156,9 @@ pub struct ClipboardConfig {
     pub sync_images: bool,
     pub sync_rich_text: bool,
     pub sync_files: bool,
+    /// Files copied on the other device only replace this clipboard once the cursor arrives here
+    /// (needs mouse sharing; otherwise they are applied immediately).
+    pub files_on_arrival: bool,
     /// Never sync items marked as sensitive by password managers.
     pub respect_sensitive: bool,
 }
@@ -170,6 +173,7 @@ impl Default for ClipboardConfig {
             sync_images: true,
             sync_rich_text: true,
             sync_files: true,
+            files_on_arrival: true,
             respect_sensitive: true,
         }
     }

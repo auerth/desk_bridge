@@ -501,20 +501,17 @@ impl FileSource for NetFileSource {
     ) -> Option<Arc<dyn VirtualFileProvider>> {
         let total: u64 = files.iter().map(|f| f.size).sum();
         let count = files.iter().filter(|f| !f.is_dir).count();
-        let handle = self.mgr.begin(
-            offer_id,
-            Direction::Receive,
-            display_name(files),
-            count as u32,
-            total,
-            None,
-        );
         Some(Arc::new(NetProvider {
             link: self.link.clone(),
             reg: self.reg.clone(),
             rt: self.rt.clone(),
             id: offer_id,
-            handle,
+            // The history entry appears when a file is actually pasted, not when it is offered.
+            handle: std::sync::OnceLock::new(),
+            mgr: self.mgr.clone(),
+            name: display_name(files),
+            count: count as u32,
+            total,
             remaining: Arc::new(AtomicUsize::new(count)),
             files: files.to_vec(),
         }))
@@ -588,7 +585,11 @@ struct NetProvider {
     reg: Arc<Registry>,
     rt: tokio::runtime::Handle,
     id: u64,
-    handle: TransferHandle,
+    handle: std::sync::OnceLock<TransferHandle>,
+    mgr: TransferManager,
+    name: String,
+    count: u32,
+    total: u64,
     remaining: Arc<AtomicUsize>,
     files: Vec<pb::FileEntry>,
 }
@@ -628,7 +629,19 @@ impl VirtualFileProvider for NetProvider {
             hasher: blake3::Hasher::new(),
             buf: Vec::new(),
             pos: 0,
-            handle: self.handle.clone(),
+            handle: self
+                .handle
+                .get_or_init(|| {
+                    self.mgr.begin(
+                        self.id,
+                        Direction::Receive,
+                        self.name.clone(),
+                        self.count,
+                        self.total,
+                        None,
+                    )
+                })
+                .clone(),
             remaining: self.remaining.clone(),
             counted: false,
         }))

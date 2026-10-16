@@ -667,6 +667,8 @@ pub(super) fn restore(saved: Option<&SavedTopology>) -> Result<&'static str> {
 
 /// Activates every connected target (`SDC_TOPOLOGY_EXTEND`).
 pub(super) fn extend_all() -> Result<()> {
-    set_topology(SDC_TOPOLOGY_EXTEND | SDC_ALLOW_CHANGES)
+    // SDC_ALLOW_CHANGES must not be combined with a topology flag (ERROR_INVALID_PARAMETER, 87;
+    // verified with SDC_VALIDATE in tests/ccd_flags.rs).
+    set_topology(SDC_TOPOLOGY_EXTEND)
         .map_err(|rc| os_err(i64::from(rc), "SetDisplayConfig(TOPOLOGY_EXTEND)"))
 }

@@ -26,6 +26,8 @@ pub(crate) enum ClipJob {
     Remote(pb::ClipboardOffer),
     Request(pb::ClipboardRequest),
     Config(SyncConfig),
+    /// The user arrived on this device: apply the held-back file offer.
+    Claim,
     Stop,
 }
 
@@ -81,6 +83,7 @@ pub(crate) fn sync_config(cfg: &Config) -> SyncConfig {
         sync_images: c.sync_images,
         sync_rich_text: c.sync_rich_text,
         sync_files: c.sync_files,
+        files_on_arrival: c.files_on_arrival && cfg.input.enabled,
         respect_sensitive: c.respect_sensitive,
     }
 }
@@ -147,6 +150,7 @@ impl Engine {
                         }
                         ClipJob::Remote(offer) => sync_w.on_remote_offer(offer),
                         ClipJob::Config(c) => sync_w.set_config(c),
+                        ClipJob::Claim => sync_w.claim_pending_files(),
                         ClipJob::Request(req) => {
                             let data = sync_w.serve_request(&req);
                             let link = link_w.clone();

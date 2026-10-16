@@ -281,7 +281,11 @@ impl TransferHandle {
     /// Adds `n` transferred bytes (callable from several parallel streams).
     pub fn add_bytes(&self, n: u64) {
         self.mgr.with_item(self.id, |item, rt| {
+            // A file that is read twice (probe + copy) must not show more than 100 %.
             item.done_bytes += n;
+            if item.total_bytes > 0 {
+                item.done_bytes = item.done_bytes.min(item.total_bytes);
+            }
             if let Some(rt) = rt {
                 let dt = rt.last_at.elapsed();
                 if dt >= SPEED_WINDOW {

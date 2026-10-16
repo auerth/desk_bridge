@@ -101,6 +101,8 @@ pub struct ClipboardSync {
     state: Mutex<State>,
     /// Serialises writes of remote offers to the local clipboard.
     write_lock: Mutex<()>,
+    /// A file offer from the peer that waits until the user arrives on this device.
+    pending_files: Mutex<Option<pb::ClipboardOffer>>,
     next_id: AtomicU64,
 }
 
@@ -166,6 +168,7 @@ impl ClipboardSync {
                 ticket: 0,
             }),
             write_lock: Mutex::new(()),
+            pending_files: Mutex::new(None),
             // Ids stay unique across restarts without any persistence.
             next_id: AtomicU64::new((now_ms << 12) | 1),
         }
@@ -236,6 +239,7 @@ impl ClipboardSync {
             }
             // Whatever is on the clipboard now, older offers are stale.
             st.current = None;
+            *self.pending_files.lock() = None;
             st.ticket += 1;
             if sensitive && st.cfg.respect_sensitive {
                 st.skip(
@@ -455,9 +459,16 @@ impl ClipboardSync {
         let _w = self.write_lock.lock();
 
         if !offer.files.is_empty() {
-            self.apply_remote_files(&offer, &cfg);
+            if cfg.sync_files && cfg.files_on_arrival {
+                // Keep the user's own clipboard until they actually come over.
+                *self.pending_files.lock() = Some(offer);
+            } else {
+                self.apply_remote_files(&offer, &cfg);
+            }
             return;
         }
+        // Newer content replaces a file offer that was still waiting.
+        *self.pending_files.lock() = None;
 
         // Filter by our own settings and size limit.
         let mut kept: Vec<pb::ClipFormat> = Vec::new();
@@ -536,6 +547,16 @@ impl ClipboardSync {
             self.backend.offer(infos, provider)
         };
         self.finish_remote_write(result);
+    }
+
+    /// Puts the file offer that was held back on the clipboard (the user arrived on this device).
+    pub fn claim_pending_files(&self) {
+        let _w = self.write_lock.lock();
+        let Some(offer) = self.pending_files.lock().take() else {
+            return;
+        };
+        let cfg = self.state.lock().cfg.clone();
+        self.apply_remote_files(&offer, &cfg);
     }
 
     fn apply_remote_files(&self, offer: &pb::ClipboardOffer, cfg: &SyncConfig) {

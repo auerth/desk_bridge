@@ -102,6 +102,9 @@ impl Engine {
                 Action::SetGrab(mode) => self.platform.capture.set_grab(mode),
                 Action::MoveCursor(p) => self.platform.capture.set_cursor_pos(p.x, p.y),
                 Action::Osd(loc) => {
+                    if matches!(loc, Location::Local) {
+                        self.claim_clipboard_files();
+                    }
                     let peer_name = self
                         .session
                         .as_ref()
@@ -118,6 +121,13 @@ impl Engine {
             }
         }
         self.dirty = true;
+    }
+
+    /// The user is on this device now: files copied on the other one may take over the clipboard.
+    fn claim_clipboard_files(&self) {
+        if let Some(c) = &self.clip {
+            c.job(super::clip::ClipJob::Claim);
+        }
     }
 
     fn on_hotkey(&mut self, h: HotkeyAction) {
@@ -178,6 +188,7 @@ impl Engine {
                     if now_active != was_active {
                         let name = self.cfg.device.name.clone();
                         if now_active {
+                            self.claim_clipboard_files();
                             self.emit(UiEvent::Osd {
                                 icon: "laptop".into(),
                                 text: name,
