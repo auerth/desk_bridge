@@ -174,14 +174,14 @@ pub fn install(ctx: &Ctx, args: &InstallArgs) -> Result<i32> {
                             tc.sha1,
                             spec.name
                         ));
-                        if !ctx.dry_run {
-                            if let Some(true) = step(&mut failures, "publisher trust", || {
+                        if !ctx.dry_run
+                            && let Some(true) = step(&mut failures, "publisher trust", || {
                                 crate::trust::add_publisher(&tc.file, &tc.sha1)
-                            }) {
-                                manifest
-                                    .trusted_certs
-                                    .push(crate::trust::normalize(&tc.sha1));
-                            }
+                            })
+                        {
+                            manifest
+                                .trusted_certs
+                                .push(crate::trust::normalize(&tc.sha1));
                         }
                     }
                     let what = format!("driver {}", spec.name);
