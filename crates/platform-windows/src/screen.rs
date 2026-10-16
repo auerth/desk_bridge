@@ -89,8 +89,8 @@ static IDS: Mutex<Option<IdTable>> = Mutex::new(None);
 
 /// Location of the persisted id table.
 fn ids_path() -> std::path::PathBuf {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    let base =
+        std::env::var_os("LOCALAPPDATA").map_or_else(std::env::temp_dir, std::path::PathBuf::from);
     base.join("softwelop")
         .join("DeskBridge")
         .join("screen-ids.txt")

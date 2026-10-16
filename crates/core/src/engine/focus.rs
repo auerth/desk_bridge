@@ -36,6 +36,15 @@ use tokio::sync::mpsc::unbounded_channel;
 type CaptureSetup = (Box<dyn ScreenCapturer>, Box<dyn VideoEncoder>);
 
 const START_TIMEOUT: Duration = Duration::from_secs(25);
+/// The viewer covers the PC monitor and holds the keyboard: without a picture the user is stuck
+/// in front of a black screen. No first picture within this time ends focus mode.
+const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(8);
+/// After the first picture the source sends at least a keep-alive every 500 ms.
+const STREAM_GAP_TIMEOUT: Duration = Duration::from_secs(4);
+/// The source gives up (and tells the viewer why) if nothing could be sent by then.
+const SOURCE_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long the "how to get out" hint stays on the picture.
+const EXIT_HINT_TIME: Duration = Duration::from_secs(6);
 /// Frames in flight on the sender before it drops (and requests an IDR later).
 const MAX_INFLIGHT: usize = 6;
 
@@ -77,6 +86,8 @@ pub(crate) struct FocusRt {
     stats_overlay: bool,
     screen_id: u32,
     // viewer side
+    streaming_since: Option<Instant>,
+    hint_until: Option<Instant>,
     plan: Option<ViewerPlan>,
     viewer: Option<Viewer>,
     // source side
@@ -105,12 +116,18 @@ enum ViewerCmd {
     Frame(VideoHeader, Vec<u8>, Instant),
     Cursor(CursorState),
     Overlay(bool),
+    /// Text shown on the picture (`None` hides it again, unless the stats overlay is on).
+    Hint(Option<String>),
     Stop,
 }
 
 #[derive(Default)]
 struct ViewerShared {
     presented: AtomicU64,
+    /// Frames presented since the start (never reset).
+    presented_total: AtomicU64,
+    /// `clock::now_us()` of the last frame or keep-alive that arrived; 0 = none yet.
+    last_rx_us: AtomicU64,
     bytes: AtomicU64,
     decode_us_sum: AtomicU64,
     decode_n: AtomicU64,
@@ -167,9 +184,10 @@ impl Engine {
     /// UI / hotkey: "off" | "full" | "split" | "window" | "cycle".
     pub(crate) fn set_focus(&mut self, mode: &str) -> Result<Value, String> {
         let target = match mode {
-            "cycle" => match (self.focus.phase, self.focus.mode.as_str()) {
-                (Phase::Off, _) => self.cfg.focus.mode.clone().replace("window", "full"),
-                (_, "full") => "split".to_string(),
+            // On, or off again: a hotkey that first switched to split left people in front of
+            // a second picture instead of their PC.
+            "cycle" => match self.focus.phase {
+                Phase::Off => self.cfg.focus.mode.clone().replace("window", "full"),
                 _ => "off".to_string(),
             },
             other => other.to_string(),
@@ -447,11 +465,15 @@ impl Engine {
         let (utx, mut urx) = unbounded_channel::<quinn::RecvStream>();
         link.set_uni_sink(uni::VIDEO, Some(utx));
         let cmd_for_streams = cmd_tx_plain.clone();
+        let sh_rx = shared.clone();
         tokio::spawn(async move {
             while let Some(mut r) = urx.recv().await {
                 let cmd = cmd_for_streams.clone();
+                let sh = sh_rx.clone();
                 tokio::spawn(async move {
                     if let Ok((h, payload)) = read_frame(&mut r).await {
+                        sh.last_rx_us
+                            .store(crate::clock::now_us().max(1), Ordering::Relaxed);
                         let _ = cmd.send(ViewerCmd::Frame(h, payload, Instant::now()));
                     }
                 });
@@ -477,19 +499,40 @@ impl Engine {
         }));
         self.exec_actions(actions, true);
 
+        let hint = format!("Fokusmodus beenden: {}", self.focus_exit_keys());
+        let _ = cmd_tx_plain.send(ViewerCmd::Hint(Some(hint.clone())));
         self.focus.viewer = Some(Viewer {
             cmd: cmd_tx_plain,
             shared,
             _thread: thread,
         });
+        tracing::info!(
+            screen = r.screen_id,
+            encoder = %r.encoder,
+            "focus mode: source ready, viewer open"
+        );
         self.focus.phase = Phase::Streaming;
         self.focus.deadline = None;
+        self.focus.streaming_since = Some(Instant::now());
+        self.focus.hint_until = Some(Instant::now() + EXIT_HINT_TIME);
         self.platform.power.set_keep_awake(true);
         self.emit(UiEvent::Osd {
             icon: "monitor".into(),
-            text: "Fokusmodus".into(),
+            text: hint,
         });
         self.dirty = true;
+    }
+
+    /// The binding that ends focus mode, in the words of a German keyboard.
+    fn focus_exit_keys(&self) -> String {
+        use deskbridge_input::hotkeys::HotkeyAction as H;
+        let b = self
+            .cfg
+            .hotkeys
+            .get(H::FocusCycle.key())
+            .cloned()
+            .unwrap_or_else(|| H::FocusCycle.default_binding().to_string());
+        b.replace("Ctrl", "Strg").replace("Shift", "Umschalt")
     }
 
     pub(crate) fn on_focus_failed(&mut self, reason: &str) {
@@ -739,10 +782,13 @@ impl Engine {
         }
         self.focus.viewer = None;
         self.focus.plan = None;
+        self.focus.streaming_since = None;
+        self.focus.hint_until = None;
         // source
         self.focus.source = None;
         self.end_display_async();
         if self.focus.phase != Phase::Off {
+            tracing::info!(mode = %self.focus.mode, "focus mode stopped");
             self.platform.power.set_keep_awake(false);
         }
         self.focus.phase = Phase::Off;
@@ -826,6 +872,15 @@ impl Engine {
             return;
         }
         let Some(v) = &self.focus.viewer else { return };
+        if let Some(reason) = self.viewer_stalled(&v.shared) {
+            tracing::warn!(reason, "focus mode: no picture from the source, stopping");
+            self.abort_focus(reason);
+            return;
+        }
+        if self.focus.hint_until.is_some_and(|t| Instant::now() > t) {
+            self.focus.hint_until = None;
+            let _ = v.cmd.send(ViewerCmd::Hint(None));
+        }
         v.shared
             .clock_offset_us
             .store(self.clock.offset_us().unwrap_or(0), Ordering::Relaxed);
@@ -885,6 +940,19 @@ impl Engine {
             }));
             let _ = actions; // region update only; no enter/leave side effects while unchanged
         }
+    }
+
+    /// Why the viewer should give up: no first picture, or the stream stopped arriving.
+    fn viewer_stalled(&self, sh: &ViewerShared) -> Option<&'static str> {
+        let since = self.focus.streaming_since?;
+        if sh.presented_total.load(Ordering::Relaxed) == 0 {
+            return (since.elapsed() > FIRST_FRAME_TIMEOUT)
+                .then_some("Kein Bild vom Laptop erhalten");
+        }
+        let last = sh.last_rx_us.load(Ordering::Relaxed);
+        let gap = crate::clock::now_us().saturating_sub(last);
+        (last != 0 && gap > STREAM_GAP_TIMEOUT.as_micros() as u64)
+            .then_some("Die Bildübertragung vom Laptop ist abgerissen")
     }
 
     /// Session ended: restore everything (viewer window, topology).
@@ -961,6 +1029,7 @@ fn viewer_thread(
     let epoch = Instant::now();
     let mut filter = LateFrameFilter::new();
     let mut interval = Instant::now();
+    let mut overlay_on = false;
     // Every frame must be decoded (P-frames depend on each other) but only the newest one of a
     // backlog is presented, so a stall never turns into seconds of latency.
     'outer: while let Ok(first) = rx.recv() {
@@ -975,8 +1044,14 @@ fn viewer_thread(
                 ViewerCmd::Stop => break 'outer,
                 ViewerCmd::Cursor(c) => presenter.set_cursor(&c),
                 ViewerCmd::Overlay(on) => {
+                    overlay_on = on;
                     let text = sh.last_text.lock().clone();
                     presenter.set_stats_overlay(on, &text);
+                }
+                ViewerCmd::Hint(Some(text)) => presenter.set_stats_overlay(true, &text),
+                ViewerCmd::Hint(None) => {
+                    let text = sh.last_text.lock().clone();
+                    presenter.set_stats_overlay(overlay_on, &text);
                 }
                 ViewerCmd::Frame(h, payload, arrived) => {
                     let now_ms = epoch.elapsed().as_millis() as u64;
@@ -1000,6 +1075,9 @@ fn viewer_thread(
                             let frame: Frame = frame;
                             let shown = !present_now || presenter.present(&frame).is_ok();
                             if shown {
+                                if sh.presented_total.fetch_add(1, Ordering::Relaxed) == 0 {
+                                    tracing::info!("focus mode: first picture shown");
+                                }
                                 sh.presented.fetch_add(1, Ordering::Relaxed);
                                 sh.bytes.fetch_add(payload.len() as u64, Ordering::Relaxed);
                                 sh.decode_us_sum.fetch_add(dec_us, Ordering::Relaxed);
@@ -1062,12 +1140,22 @@ async fn run_source(
     let mut last_shape_serial = 0u32;
     let (mut enc_us_sum, mut enc_n, mut fps_n) = (0u64, 0u64, 0u32);
     let mut last_abr = Instant::now();
+    // Why no picture went out yet: reported to the viewer instead of a silent black screen.
+    let (mut captured, mut sent_any, mut last_err) = (0u64, false, None::<String>);
     while !stop.load(Ordering::SeqCst) {
         tokio::select! {
             out = rx.recv() => {
                 let Some(out) = out else { break };
                 match out {
                     CaptureOutput::Frame(frame) => {
+                        captured += 1;
+                        if captured == 1 {
+                            tracing::info!(
+                                w = frame.width,
+                                h = frame.height,
+                                "focus source: first captured frame"
+                            );
+                        }
                         let now_ms = epoch.elapsed().as_millis() as u64;
                         let want_key = force_key.swap(false, Ordering::SeqCst);
                         let key = want_key && idr.request(now_ms);
@@ -1078,9 +1166,14 @@ async fn run_source(
                             Ok(p) => p,
                             Err(e) => {
                                 tracing::warn!("encode failed: {e}");
+                                last_err = Some(format!("Video-Encoder ({}): {e}", encoder.name()));
                                 continue;
                             }
                         };
+                        if !sent_any && !packets.is_empty() {
+                            sent_any = true;
+                            tracing::info!(encoder = %encoder.name(), "focus source: first frame encoded");
+                        }
                         enc_us_sum += t0.elapsed().as_micros() as u64;
                         enc_n += 1;
                         for p in packets {
@@ -1127,6 +1220,18 @@ async fn run_source(
             }
             _ = tick.tick() => {
                 let now_ms = epoch.elapsed().as_millis() as u64;
+                if !sent_any && epoch.elapsed() > SOURCE_FIRST_FRAME_TIMEOUT {
+                    let reason = last_err.take().unwrap_or_else(|| {
+                        if captured == 0 {
+                            "Die Bildschirmaufnahme am Laptop liefert keine Bilder".to_string()
+                        } else {
+                            format!("Der Video-Encoder liefert keine Daten ({captured} Bilder aufgenommen)")
+                        }
+                    });
+                    tracing::warn!(reason, "focus source: nothing sent, giving up");
+                    link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed { reason }));
+                    break;
+                }
                 if keepalive.keepalive_due(now_ms) {
                     keepalive.note_sent(now_ms);
                     let h = keepalive_header(frame_id, cfg.codec, cfg.width, cfg.height, crate::clock::now_us());

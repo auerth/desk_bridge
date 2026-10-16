@@ -389,7 +389,13 @@ impl Engine {
         let own = self.own_id().to_string();
         let peer = s.link.peer.id.to_string();
         let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-        for p in self.cfg.layout.placement.iter().filter(|p| p.device_id == own) {
+        for p in self
+            .cfg
+            .layout
+            .placement
+            .iter()
+            .filter(|p| p.device_id == own)
+        {
             let Some((w, h)) = self
                 .local_screens
                 .iter()

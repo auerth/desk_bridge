@@ -677,7 +677,8 @@ const MODE_IDX_INVALID: u32 = 0xffff_ffff;
 pub(super) fn activate_target(adapter: Luid, target_id: u32) -> Result<()> {
     let raw = query(true, false)?;
     let is_active = |p: &DISPLAYCONFIG_PATH_INFO| p.flags & PATH_ACTIVE != 0;
-    let target_of = |p: &DISPLAYCONFIG_PATH_INFO| (luid_to(p.targetInfo.adapterId), p.targetInfo.id);
+    let target_of =
+        |p: &DISPLAYCONFIG_PATH_INFO| (luid_to(p.targetInfo.adapterId), p.targetInfo.id);
     if raw
         .paths
         .iter()
@@ -715,7 +716,10 @@ pub(super) fn activate_target(adapter: Luid, target_id: u32) -> Result<()> {
             return Ok(());
         }
         last = rc;
-        tracing::warn!(rc, "SetDisplayConfig rejected the activation of the virtual monitor");
+        tracing::warn!(
+            rc,
+            "SetDisplayConfig rejected the activation of the virtual monitor"
+        );
     }
     Err(os_err(
         i64::from(last),

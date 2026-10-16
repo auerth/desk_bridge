@@ -597,9 +597,9 @@ impl Engine {
     pub(crate) fn toggle_laptop_mute(&mut self) {
         self.cfg.audio.laptop_to_pc.mute = !self.cfg.audio.laptop_to_pc.mute;
         let (icon, text) = if self.cfg.audio.laptop_to_pc.mute {
-            ("speaker-off", "Laptop-Ton stumm")
+            ("speaker-off", "Laptop-Ton im Headset stumm")
         } else {
-            ("speaker", "Laptop-Ton an")
+            ("speaker", "Laptop-Ton im Headset an")
         };
         self.emit(UiEvent::Osd {
             icon: icon.into(),

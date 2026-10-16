@@ -446,16 +446,28 @@ mod sys {
 
         let inf = HSTRING::from(p.inf_abs.as_os_str());
         let mut reboot = BOOL(0);
-        unsafe {
+        match unsafe {
             DiInstallDriverW(
                 HWND::default(),
                 &inf,
                 DIINSTALLDRIVER_FLAGS(0),
                 Some(&mut reboot),
             )
+        } {
+            Ok(()) => out.reboot_required |= reboot.as_bool(),
+            // The same (or a newer) package is installed already: every reinstall reported this
+            // as a failed setup step.
+            Err(e) if e.code() == ERROR_NO_MORE_ITEMS.to_hresult() => {
+                tracing::info!(
+                    "driver package {} is already installed",
+                    p.inf_abs.display()
+                );
+            }
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("DiInstallDriverW({})", p.inf_abs.display()));
+            }
         }
-        .with_context(|| format!("DiInstallDriverW({})", p.inf_abs.display()))?;
-        out.reboot_required |= reboot.as_bool();
 
         if !existed {
             create_device(&p)?;

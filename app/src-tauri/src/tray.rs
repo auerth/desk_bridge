@@ -62,7 +62,7 @@ struct Labels {
 
 const DE: Labels = Labels {
     focus: "Fokusmodus",
-    mute_laptop: "Laptop-Ton stumm",
+    mute_laptop: "Laptop-Ton im Headset stumm",
     mute_mic: "Mikro-Weiterleitung stumm",
     lock: "Cursor sperren",
     send: "Datei senden…",
@@ -82,7 +82,7 @@ const DE: Labels = Labels {
 
 const EN: Labels = Labels {
     focus: "Focus mode",
-    mute_laptop: "Mute laptop sound",
+    mute_laptop: "Mute laptop sound in the headset",
     mute_mic: "Mute microphone forwarding",
     lock: "Lock cursor",
     send: "Send file…",

@@ -678,10 +678,7 @@ mod tests {
     fn overshooting_hook_position_still_switches() {
         // A fast flick: the hook reports a point beyond the screen, never the edge pixel itself.
         let mut r = router(RouterConfig::default());
-        let a = r.on_capture(
-            CaptureEvent::MouseMove { x: 2571, y: 720 },
-            Instant::now(),
-        );
+        let a = r.on_capture(CaptureEvent::MouseMove { x: 2571, y: 720 }, Instant::now());
         assert!(has_enter(&a), "{a:?}");
         // Same with a dwell time: the follow-up raw deltas keep pushing against the edge.
         let mut r = router(RouterConfig {
