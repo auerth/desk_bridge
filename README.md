@@ -22,19 +22,36 @@ Everything stays on your LAN: encrypted end to end, no cloud, no account, no tel
 
 One installer does everything: driver, firewall rule, autostart, no manual prerequisites.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/img/dashboard-light.png" width="48%" alt="Overview, light theme">
+  <img src="docs/img/dashboard-dark.png" width="48%" alt="Overview, dark theme">
+</p>
+<p align="center">
+  <img src="docs/img/screens-light.png" width="48%" alt="Screen layout editor">
+  <img src="docs/img/focus-light.png" width="48%" alt="Focus mode settings">
+</p>
+
+(Rendered from the UI's built-in mock agent.)
+
 ## Status
 
-Early development, following [`docs/PLAN.md`](docs/PLAN.md).
+Feature complete in code for all milestones of [`docs/PLAN.md`](docs/PLAN.md); everything that needs
+real hardware (two PCs, the headset dongle, the RTX laptop, UAC/lock screen, drivers) is covered by
+the checklists in [`docs/testing.md`](docs/testing.md) and has to be signed off there.
 
-| Milestone | State |
-|---|---|
-| M0 Foundation (workspace, UI shell, installer helper, CI) | in progress |
-| M1 Connection (identity, pairing, QUIC session, reconnect) | in progress |
-| M2 Mouse, keyboard, text clipboard | planned |
-| M3 Audio and microphone | planned |
-| M4 Clipboard and files | planned |
-| M5 Focus mode | planned |
-| M6 Robustness, M7 release | planned |
+| Milestone | Code | Hardware sign-off |
+|---|---|---|
+| M0 Foundation (workspace, UI shell, installer, CI) | done | installer on a clean machine |
+| M1 Connection (identity, pairing, QUIC, reconnect) | done, tested on loopback | sleep/wake, 24 h |
+| M2 Mouse, keyboard, text clipboard | done, tested with mocks | real hooks/injection, week of daily use |
+| M3 Audio (laptop sound to headset) | done | latency, dongle hot-plug |
+| M3b Virtual microphone | backend for a signed virtual cable, **needs your decision** ([ADR 0003](docs/adr/0003-virtual-audio-driver.md)) | with the chosen driver |
+| M4 Clipboard and files | done | Explorer copy dialog, 2 GB file |
+| M5 Focus mode | done, pipeline tested with a synthetic backend | 5120x1440@120 on the laptop |
+| M6 Service, diagnostics | done | UAC / lock screen |
+| M7 Release preparation | done | signing, project page |
 
 Platform: Windows 10 22H2+ and Windows 11 (x64). macOS and Linux later.
 There is no release yet; see [CHANGELOG.md](CHANGELOG.md).

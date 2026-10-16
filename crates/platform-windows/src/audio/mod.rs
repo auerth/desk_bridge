@@ -21,6 +21,7 @@
 //! stream only delivers packets while something is rendering. Treat as unverified on the laptop;
 //! see `endpoint_volume` and the `audio_probe` example for the read-only inspection.
 
+mod cable;
 mod capture;
 mod devices;
 mod playback;
@@ -30,6 +31,7 @@ mod stream;
 pub mod util;
 mod wasapi;
 
+pub use cable::CableVirtualAudio;
 pub use capture::{CaptureHandle, WasapiCapture};
 pub use devices::{DeviceDetails, EndpointVolume, WasapiDevices, endpoint_volume};
 pub use playback::{PlaybackHandle, PlaybackInfo, WasapiPlayback};

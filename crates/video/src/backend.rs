@@ -7,7 +7,7 @@
 
 use deskbridge_platform::Result;
 use deskbridge_platform::video::{
-    CursorState, EncoderConfig, Frame, ScreenCapturer, VideoDecoder, VideoEncoder, VideoPresenter,
+    EncoderConfig, ScreenCapturer, VideoDecoder, VideoEncoder, VideoPresenter,
 };
 use deskbridge_proto::pb;
 

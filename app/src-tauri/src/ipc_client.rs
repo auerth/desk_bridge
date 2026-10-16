@@ -156,10 +156,10 @@ impl AgentLauncher {
         if self.attempts >= MAX_AGENT_STARTS {
             return None;
         }
-        if let Some(last) = self.last {
-            if last.elapsed() < self.backoff() {
-                return None;
-            }
+        if let Some(last) = self.last
+            && last.elapsed() < self.backoff()
+        {
+            return None;
         }
         self.attempts += 1;
         self.last = Some(Instant::now());

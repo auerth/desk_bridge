@@ -72,7 +72,7 @@ export function FeatureChip({ model, compact }: { model: ChipModel; compact?: bo
           <span className="fchip__state">
             <span className="fchip__dot" aria-hidden />
             {stateText}
-            {!compact && model.detail && model.state !== 'off' && <span className="fchip__detail"> · {model.detail}</span>}
+            {!compact && model.feature !== 'mic' && model.detail && model.state !== 'off' && <span className="fchip__detail"> · {model.detail}</span>}
           </span>
         </span>
         <span className="fchip__toggle" aria-hidden>

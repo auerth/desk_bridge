@@ -598,8 +598,7 @@ export function createMockBackend(): Backend {
       // Scenario `?partner=offer`: the partner offers an update shortly after the UI is listening.
       if (params.get('partner') === 'offer' && !offerScheduled) {
         offerScheduled = true;
-        console.log('mock: scheduling partner offer');
-        setTimeout(() => console.log('mock: emitting offer', agentOnline, eventSubs.size) || emitEvent({ kind: 'partner_update_offered', version: '0.2.0', size: 38_400_000, from: 'Thorbens Laptop' }), 1500);
+        setTimeout(() => emitEvent({ kind: 'partner_update_offered', version: '0.2.0', size: 38_400_000, from: 'Thorbens Laptop' }), 1500);
       }
       return sub(eventSubs, cb);
     },

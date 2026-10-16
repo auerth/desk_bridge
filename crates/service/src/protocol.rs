@@ -30,12 +30,27 @@ pub enum Request {
     /// State of the secure-desktop helper (service pipe only).
     HelperStatus,
     /// Key by USB HID usage (helper pipe only from here on).
-    Key { hid: u16, down: bool },
-    MouseRel { dx: i32, dy: i32 },
+    Key {
+        hid: u16,
+        down: bool,
+    },
+    MouseRel {
+        dx: i32,
+        dy: i32,
+    },
     /// Absolute position in physical virtual-desktop pixels.
-    MouseAbs { x: i32, y: i32 },
-    Button { button: Button, down: bool },
-    Wheel { dx: i32, dy: i32 },
+    MouseAbs {
+        x: i32,
+        y: i32,
+    },
+    Button {
+        button: Button,
+        down: bool,
+    },
+    Wheel {
+        dx: i32,
+        dy: i32,
+    },
     /// Release every key and button the helper has pressed.
     ReleaseAll,
 }
@@ -103,7 +118,10 @@ pub enum Response {
 impl Response {
     #[must_use]
     pub fn error(code: ErrorCode, text: impl Into<String>) -> Self {
-        Self::Error { code, text: text.into() }
+        Self::Error {
+            code,
+            text: text.into(),
+        }
     }
 }
 
@@ -179,7 +197,11 @@ impl<'a> Reader<'a> {
         }
     }
     fn finish(self) -> Result<(), ProtocolError> {
-        if self.0.is_empty() { Ok(()) } else { Err(ProtocolError::BadPayload("trailing bytes")) }
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            Err(ProtocolError::BadPayload("trailing bytes"))
+        }
     }
 }
 
@@ -244,15 +266,30 @@ impl Request {
             tag::PING => Self::Ping,
             tag::SEND_SAS => Self::SendSas,
             tag::HELPER_STATUS => Self::HelperStatus,
-            tag::KEY => Self::Key { hid: r.u16()?, down: r.bool()? },
-            tag::MOUSE_REL => Self::MouseRel { dx: r.i32()?, dy: r.i32()? },
-            tag::MOUSE_ABS => Self::MouseAbs { x: r.i32()?, y: r.i32()? },
+            tag::KEY => Self::Key {
+                hid: r.u16()?,
+                down: r.bool()?,
+            },
+            tag::MOUSE_REL => Self::MouseRel {
+                dx: r.i32()?,
+                dy: r.i32()?,
+            },
+            tag::MOUSE_ABS => Self::MouseAbs {
+                x: r.i32()?,
+                y: r.i32()?,
+            },
             tag::BUTTON => {
                 let b = Button::from_wire(u32::from(r.u8()?))
                     .ok_or(ProtocolError::BadPayload("button"))?;
-                Self::Button { button: b, down: r.bool()? }
+                Self::Button {
+                    button: b,
+                    down: r.bool()?,
+                }
             }
-            tag::WHEEL => Self::Wheel { dx: r.i32()?, dy: r.i32()? },
+            tag::WHEEL => Self::Wheel {
+                dx: r.i32()?,
+                dy: r.i32()?,
+            },
             tag::RELEASE_ALL => Self::ReleaseAll,
             other => return Err(ProtocolError::UnknownTag(other)),
         };
@@ -279,7 +316,11 @@ impl Response {
                 p.push(t.len() as u8);
                 p.extend_from_slice(t.as_bytes());
             }
-            Self::HelperStatus { running, pid, session } => {
+            Self::HelperStatus {
+                running,
+                pid,
+                session,
+            } => {
                 p.push(tag::R_HELPER_STATUS);
                 p.push(u8::from(*running));
                 p.extend_from_slice(&pid.to_le_bytes());
@@ -298,17 +339,23 @@ impl Response {
         let mut r = Reader(payload);
         let t = r.u8()?;
         let resp = match t {
-            tag::R_PONG => Self::Pong { version: r.u16()?, pid: r.u32()? },
+            tag::R_PONG => Self::Pong {
+                version: r.u16()?,
+                pid: r.u32()?,
+            },
             tag::R_OK => Self::Ok,
             tag::R_ERROR => {
-                let code = ErrorCode::from_u16(r.u16()?).ok_or(ProtocolError::BadPayload("code"))?;
+                let code =
+                    ErrorCode::from_u16(r.u16()?).ok_or(ProtocolError::BadPayload("code"))?;
                 let n = usize::from(r.u8()?);
                 let text = String::from_utf8_lossy(r.take(n)?).into_owned();
                 Self::Error { code, text }
             }
-            tag::R_HELPER_STATUS => {
-                Self::HelperStatus { running: r.bool()?, pid: r.u32()?, session: r.u32()? }
-            }
+            tag::R_HELPER_STATUS => Self::HelperStatus {
+                running: r.bool()?,
+                pid: r.u32()?,
+                session: r.u32()?,
+            },
             other => return Err(ProtocolError::UnknownTag(other)),
         };
         r.finish()?;
@@ -367,12 +414,24 @@ mod tests {
             Request::Ping,
             Request::SendSas,
             Request::HelperStatus,
-            Request::Key { hid: 0x04, down: true },
-            Request::Key { hid: 0x2E4, down: false },
+            Request::Key {
+                hid: 0x04,
+                down: true,
+            },
+            Request::Key {
+                hid: 0x2E4,
+                down: false,
+            },
             Request::MouseRel { dx: -5, dy: 700 },
             Request::MouseAbs { x: -1920, y: 1439 },
-            Request::Button { button: Button::X2, down: true },
-            Request::Button { button: Button::Left, down: false },
+            Request::Button {
+                button: Button::X2,
+                down: true,
+            },
+            Request::Button {
+                button: Button::Left,
+                down: false,
+            },
             Request::Wheel { dx: 0, dy: -120 },
             Request::ReleaseAll,
         ]
@@ -382,7 +441,10 @@ mod tests {
     fn request_round_trip() {
         for r in all_requests() {
             let frame = r.encode();
-            assert_eq!(usize::from(u16::from_le_bytes([frame[0], frame[1]])), frame.len() - 2);
+            assert_eq!(
+                usize::from(u16::from_le_bytes([frame[0], frame[1]])),
+                frame.len() - 2
+            );
             assert_eq!(Request::decode(&frame[2..]).unwrap(), r, "{r:?}");
         }
     }
@@ -390,11 +452,18 @@ mod tests {
     #[test]
     fn response_round_trip() {
         let all = [
-            Response::Pong { version: PROTOCOL_VERSION, pid: 4242 },
+            Response::Pong {
+                version: PROTOCOL_VERSION,
+                pid: 4242,
+            },
             Response::Ok,
             Response::error(ErrorCode::SasNotAllowed, "policy"),
             Response::error(ErrorCode::Failed, ""),
-            Response::HelperStatus { running: true, pid: 77, session: 2 },
+            Response::HelperStatus {
+                running: true,
+                pid: 77,
+                session: 2,
+            },
         ];
         for r in all {
             let f = r.encode();
@@ -413,8 +482,14 @@ mod tests {
 
     #[test]
     fn decode_rejects_garbage() {
-        assert_eq!(Request::decode(&[]), Err(ProtocolError::BadPayload("truncated")));
-        assert_eq!(Request::decode(&[0x7F]), Err(ProtocolError::UnknownTag(0x7F)));
+        assert_eq!(
+            Request::decode(&[]),
+            Err(ProtocolError::BadPayload("truncated"))
+        );
+        assert_eq!(
+            Request::decode(&[0x7F]),
+            Err(ProtocolError::UnknownTag(0x7F))
+        );
         // truncated key
         assert!(Request::decode(&[tag::KEY, 1]).is_err());
         // trailing bytes

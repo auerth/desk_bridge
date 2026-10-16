@@ -82,6 +82,15 @@ pub trait VideoEncoder: Send {
 pub trait VideoDecoder: Send {
     /// Returns the decoded picture (GPU texture where possible).
     fn decode(&mut self, data: &[u8], key: bool) -> Result<Option<Frame>>;
+    /// Like [`VideoDecoder::decode`] but stamps the picture with the sender timestamp from the
+    /// video header (decoders cannot know it; there are no B-frames, so output order = input order).
+    fn decode_with_ts(&mut self, data: &[u8], key: bool, ts_us: u64) -> Result<Option<Frame>> {
+        let mut f = self.decode(data, key)?;
+        if let Some(fr) = f.as_mut() {
+            fr.ts_us = ts_us;
+        }
+        Ok(f)
+    }
     fn name(&self) -> String;
 }
 

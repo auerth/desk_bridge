@@ -35,7 +35,9 @@ deskbridge-service.exe --helper [--user-sid S-1-5-...] [--parent-pid N] [--pipe 
 deskbridge-service.exe --version | --help";
 
 pub fn parse(args: &[String]) -> Result<Mode, String> {
-    let Some(first) = args.first() else { return Ok(Mode::Service) };
+    let Some(first) = args.first() else {
+        return Ok(Mode::Service);
+    };
     match first.as_str() {
         "--helper" => Ok(Mode::Helper(args[1..].to_vec())),
         "--console" => {
@@ -75,7 +77,11 @@ mod tests {
         );
         assert_eq!(
             parse(&s(&["--console", "--no-sas", "--no-agent"])),
-            Ok(Mode::Console(ConsoleOptions { no_sas: true, no_agent: true, no_helper: false }))
+            Ok(Mode::Console(ConsoleOptions {
+                no_sas: true,
+                no_agent: true,
+                no_helper: false
+            }))
         );
         assert!(parse(&s(&["--console", "--wat"])).is_err());
         assert!(parse(&s(&["--wat"])).is_err());

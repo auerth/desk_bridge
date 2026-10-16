@@ -48,6 +48,7 @@ impl Runtime {
             .enable_all()
             .thread_name("dbs-rt")
             .build()?;
+        crate::launch::enable_service_privileges();
         let shared = Shared::new();
         let (shutdown, shutdown_rx) = watch::channel(false);
 
@@ -55,7 +56,10 @@ impl Runtime {
             let shared = shared.clone();
             Arc::new(move || PipeAccess::production(shared.user_sid.lock().clone()))
         };
-        let handler = Arc::new(ControlHandler { sas: opts.sas.clone(), helper: shared.helper.clone() });
+        let handler = Arc::new(ControlHandler {
+            sas: opts.sas.clone(),
+            helper: shared.helper.clone(),
+        });
         tokio.spawn(pipe_server::serve(
             opts.control_pipe.clone(),
             access,
@@ -77,12 +81,18 @@ impl Runtime {
             .name("dbs-supervisor".into())
             .spawn(move || {
                 // A panic here must not take the SCM callbacks down with it.
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| supervisor.run(&rx)));
+                let r =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| supervisor.run(&rx)));
                 if r.is_err() {
                     tracing::error!("supervisor thread panicked");
                 }
             })?;
-        Ok(Self { tokio: Some(tokio), shutdown, events, thread: Some(thread) })
+        Ok(Self {
+            tokio: Some(tokio),
+            shutdown,
+            events,
+            thread: Some(thread),
+        })
     }
 
     /// Forwards `SERVICE_CONTROL_SESSIONCHANGE`.

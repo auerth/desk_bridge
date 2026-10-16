@@ -2830,3 +2830,24 @@ a {
 .app--onb:has(.onb--sunset) .caption-btn:hover {
   background: rgba(33, 38, 78, 0.12);
 }
+
+.mic-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: var(--s-3) 0 0;
+  padding: 6px 14px;
+  border-radius: var(--r-pill);
+  background: var(--c-accent-soft);
+  color: var(--c-accent-ink);
+  font-size: var(--fs-label);
+  font-weight: 500;
+}
+
+.fchip--compact {
+  min-height: 50px;
+  padding: 6px var(--s-3);
+}
+.flyout__chips .fchip {
+  flex: none;
+}

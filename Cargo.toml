@@ -18,12 +18,13 @@ members = [
     "app/src-tauri",
     "tools/latency-probe",
     "tools/fake-peer",
+    "tools/video-spike",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 authors = ["softwelop"]
 repository = "https://github.com/softwelop/desk-bridge"

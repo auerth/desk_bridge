@@ -7,7 +7,9 @@ use crate::protocol::HELPER_PIPE;
 use deskbridge_platform_windows::input::WinInputInjector;
 use std::sync::Arc;
 use tokio::sync::{Notify, watch};
-use windows::Win32::System::Threading::{INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+use windows::Win32::System::Threading::{
+    INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+};
 
 /// Command-line options of the helper.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,7 +25,11 @@ pub struct HelperArgs {
 
 impl Default for HelperArgs {
     fn default() -> Self {
-        Self { user_sid: None, parent_pid: None, pipe_name: HELPER_PIPE.to_string() }
+        Self {
+            user_sid: None,
+            parent_pid: None,
+            pipe_name: HELPER_PIPE.to_string(),
+        }
     }
 }
 
@@ -67,12 +73,14 @@ pub fn run(args: &HelperArgs) -> i32 {
     };
 
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
-    let worker = std::thread::Builder::new().name("dbh-inject".into()).spawn(move || {
-        // Created on the worker thread so the injector and the desktop attachment share it.
-        let injector = WinInputInjector::new();
-        let mut follower = SystemDesktopFollower::new();
-        run_worker(&cmd_rx, &injector, &mut follower);
-    });
+    let worker = std::thread::Builder::new()
+        .name("dbh-inject".into())
+        .spawn(move || {
+            // Created on the worker thread so the injector and the desktop attachment share it.
+            let injector = WinInputInjector::new();
+            let mut follower = SystemDesktopFollower::new();
+            run_worker(&cmd_rx, &injector, &mut follower);
+        });
     let Ok(worker) = worker else {
         tracing::error!("helper: cannot start the injection thread");
         return 1;
@@ -81,11 +89,13 @@ pub fn run(args: &HelperArgs) -> i32 {
     let (stop_tx, stop_rx) = watch::channel(false);
     if let Some(pid) = args.parent_pid {
         let stop_tx = stop_tx.clone();
-        let _ = std::thread::Builder::new().name("dbh-parent".into()).spawn(move || {
-            wait_for_process(pid);
-            tracing::info!("parent process {pid} is gone, helper exits");
-            let _ = stop_tx.send(true);
-        });
+        let _ = std::thread::Builder::new()
+            .name("dbh-parent".into())
+            .spawn(move || {
+                wait_for_process(pid);
+                tracing::info!("parent process {pid} is gone, helper exits");
+                let _ = stop_tx.send(true);
+            });
     }
 
     let user_sid = args.user_sid.clone();
@@ -111,7 +121,9 @@ pub fn run(args: &HelperArgs) -> i32 {
 fn wait_for_process(pid: u32) {
     // SAFETY: plain OpenProcess/Wait calls; the handle is closed after the wait.
     unsafe {
-        let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) else { return };
+        let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) else {
+            return;
+        };
         WaitForSingleObject(h, INFINITE);
         let _ = windows::Win32::Foundation::CloseHandle(h);
     }
@@ -127,7 +139,13 @@ mod tests {
 
     #[test]
     fn parses_helper_arguments() {
-        let a = parse_args(&s(&["--user-sid", "S-1-5-21-1-2-3-1000", "--parent-pid", "812"])).unwrap();
+        let a = parse_args(&s(&[
+            "--user-sid",
+            "S-1-5-21-1-2-3-1000",
+            "--parent-pid",
+            "812",
+        ]))
+        .unwrap();
         assert_eq!(a.user_sid.as_deref(), Some("S-1-5-21-1-2-3-1000"));
         assert_eq!(a.parent_pid, Some(812));
         assert_eq!(a.pipe_name, HELPER_PIPE);

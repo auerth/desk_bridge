@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Builds the release binaries and stages everything the NSIS installer bundles into installer/stage/.
 
@@ -45,8 +45,7 @@ $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Pa
 $bin = Join-Path $targetDir $profileDir
 
 # pip-installed cmake (needed to build libopus) lives here on the dev PC.
-$pyScripts = Join-Path $env:APPDATA 'Python\Python313\Scripts'
-if ((Test-Path $pyScripts) -and ($env:PATH -notlike "*$pyScripts*")) { $env:PATH = "$pyScripts;$env:PATH" }
+. "$PSScriptRoot\dev-env.ps1"
 
 if (-not $SkipBuild) {
     Write-Host "==> cargo build ($Config): agent, service, setup" -ForegroundColor Cyan

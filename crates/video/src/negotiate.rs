@@ -9,6 +9,10 @@ use deskbridge_proto::pb::{Codec, VideoCaps};
 /// then H.264 as the universal fallback. ADR 0005 confirms the order for the owner's setup.
 pub const DEFAULT_CODEC_ORDER: [VideoCodec; 3] = [VideoCodec::Hevc, VideoCodec::Av1, VideoCodec::H264];
 
+/// Hardware H.264 encoders and decoders support at most 4096 pixels per side (measured: NVENC
+/// rejects 5120 wide; ADR 0005).
+pub const H264_MAX_SIDE: u32 = 4096;
+
 /// What the user / engine would like to stream.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WantedStream {
@@ -147,8 +151,14 @@ pub fn negotiate(
     }
 
     // Size: both ends' maxima (0 = unlimited). Keep the aspect ratio, round down to even numbers.
-    let max_w = min_nonzero(encoder_side.max_width, decoder_side.max_width);
-    let max_h = min_nonzero(encoder_side.max_height, decoder_side.max_height);
+    let mut max_w = min_nonzero(encoder_side.max_width, decoder_side.max_width);
+    let mut max_h = min_nonzero(encoder_side.max_height, decoder_side.max_height);
+    if codec == VideoCodec::H264 {
+        // Hardware H.264 (NVENC, D3D11VA) is limited to 4096 pixels per side regardless of what
+        // the caps (which hold one maximum for all codecs) say.
+        max_w = Some(max_w.map_or(H264_MAX_SIDE, |m| m.min(H264_MAX_SIDE)));
+        max_h = Some(max_h.map_or(H264_MAX_SIDE, |m| m.min(H264_MAX_SIDE)));
+    }
     let (mut width, mut height) = (want.width, want.height);
     let mut scale = 1.0_f64;
     if let Some(mw) = max_w.filter(|&mw| width > mw) {
@@ -336,6 +346,19 @@ mod tests {
         assert_eq!(n.width, 4096);
         assert_eq!(n.height, 1152); // 1440 * 0.8
         assert!(n.notes.iter().any(|s| s.contains("size reduced")));
+    }
+
+    #[test]
+    fn h264_is_limited_to_4096_per_side() {
+        let e = enc_side(&[Codec::H264]);
+        let d = dec_side(&[Codec::H264]);
+        let n = negotiate(&e, &d, &WantedStream::new(5120, 1440, 60)).unwrap();
+        assert_eq!(n.codec, VideoCodec::H264);
+        assert_eq!(n.width, 4096);
+        assert_eq!(n.height, 1152);
+        // HEVC available: no clamp
+        let n = negotiate(&enc_side(&ALL), &dec_side(&ALL), &WantedStream::new(5120, 1440, 60)).unwrap();
+        assert_eq!(n.width, 5120);
     }
 
     #[test]

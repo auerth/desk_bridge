@@ -206,6 +206,8 @@ impl LateFrameFilter {
             // First frame of the stream: only a keyframe can start decoding.
             if key {
                 self.newest = Some(h.frame_id);
+                self.waiting_for_key = false;
+                self.last_request_ms = None;
                 self.stats.accepted += 1;
                 return FilterOutcome { verdict: Verdict::Accept, request_keyframe: false };
             }
@@ -322,9 +324,9 @@ mod tests {
         let (mut a, mut b) = duplex(1 << 20);
         let payload: Vec<u8> = (0..100_000u32).map(|i| (i % 251) as u8).collect();
         let h = hdr(42, true);
-        let p2 = payload.clone();
+        let (h2, p2) = (h.clone(), payload.clone());
         let w = tokio::spawn(async move {
-            write_frame(&mut a, &h, &p2).await.unwrap();
+            write_frame(&mut a, &h2, &p2).await.unwrap();
             write_frame(&mut a, &keepalive_header(43, VideoCodec::Hevc, 5120, 1440, 7), &[])
                 .await
                 .unwrap();

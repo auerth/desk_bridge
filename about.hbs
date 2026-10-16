@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Desk Bridge – third-party licenses</title>
+<style>
+body { font: 14px/1.5 system-ui, sans-serif; color: #21264e; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+h1 { font-size: 1.6rem; } h2 { font-size: 1.1rem; margin-top: 2rem; }
+pre { white-space: pre-wrap; background: #f6e9df; padding: .75rem; border-radius: 8px; font-size: 12px; }
+.used-by { color: #555; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Third-party licenses</h1>
+<p>Desk Bridge is licensed under MIT OR Apache-2.0. It uses the following open source components.
+FFmpeg (LGPL 2.1+) is loaded as separate DLLs (shared build, no GPL components); Montserrat is licensed under the SIL Open Font License 1.1;
+the bundled virtual display driver is MIT licensed (see <code>drivers/display/LICENSE</code>).</p>
+<h2>Overview</h2>
+<ul>
+{{#each overview}}
+  <li><a href="#{{id}}">{{name}}</a> ({{count}})</li>
+{{/each}}
+</ul>
+{{#each licenses}}
+<h2 id="{{id}}">{{name}}</h2>
+<p class="used-by">Used by:
+{{#each used_by}}{{crate.name}} {{crate.version}}{{#unless @last}}, {{/unless}}{{/each}}</p>
+<pre>{{text}}</pre>
+{{/each}}
+</body>
+</html>

@@ -56,6 +56,49 @@ Environment overrides honoured by the agent (used by `scripts/dev-two-instances.
 | `DESKBRIDGE_PORT` | UDP port of the QUIC listener (default 47820) |
 | `DESKBRIDGE_PIPE` | full name of the UI pipe (default `\\.\pipe\deskbridge-ui`) |
 
+### 2.1 Service, secure-desktop helper and pipes (M6)
+
+Design, risks and rejected options: [ADR 0006](adr/0006-service-and-secure-desktop.md).
+
+```mermaid
+flowchart LR
+  subgraph S0["Session 0"]
+    SVC["deskbridge-service.exe<br/>(LocalSystem, DeskBridgeService)"]
+  end
+  subgraph S1["Console session"]
+    AG["deskbridge-agent.exe<br/>(elevated user token)"]
+    HLP["deskbridge-service.exe --helper<br/>(SYSTEM, winsta0\\Winlogon)"]
+  end
+  SVC -- "CreateProcessAsUser<br/>(linked token, 1 s poll, backoff 1..30 s)" --> AG
+  SVC -- "CreateProcessAsUser<br/>(SYSTEM token, session id set)" --> HLP
+  AG -- "\\\\.\\pipe\\deskbridge-service<br/>ping, send_sas, helper_status" --> SVC
+  AG -- "\\\\.\\pipe\\deskbridge-helper<br/>key / mouse / wheel / release_all" --> HLP
+```
+
+* **Supervisor** (service): once per second looks at the console session (`WTSGetActiveConsoleSessionId`
+  + user name). Never starts a second agent: the agent's mutex `Global\softwelop-deskbridge-agent`
+  and a process lookup decide. After a logon the scheduled task gets 20 s; after a crash the agent
+  is restarted with 1, 1, 2, 4 ... 30 s backoff (reset after 60 s of healthy running). Exit code 0
+  (user quit the agent) is respected. The crash exit code is logged to
+  `%ProgramData%\softwelop\DeskBridge\logs\service.log.<date>`; the restarted agent calls
+  `release_stuck_keys()` (target devices only) before doing anything else.
+* **Helper**: injects with the same `WinInputInjector` as the agent, on a dedicated thread that
+  follows the input desktop (`OpenInputDesktop` + `SetThreadDesktop`). When the agent connection
+  drops, the helper releases all keys itself.
+* **Agent side** (`crates/agent/src/secure.rs`): `SecureDesktopInjector` probes the input desktop
+  (cached 100 ms; name != `Default` or access denied means secure) and routes to the normal
+  injector or the helper pipe, releasing everything on the side it leaves. `ServiceClient`
+  implements `SystemServices` for `M::SendSas` (Ctrl+Alt+End on the PC).
+* **Pipes** are protected by DACL (SYSTEM + the console user's SID, remote clients rejected) plus a
+  High-integrity mandatory label, so a non-elevated process of the same user cannot use the SYSTEM
+  helper to bypass UIPI. The wire format is `crates/service/src/protocol.rs` (length-prefixed
+  binary; injection commands have no response).
+* `deskbridge-service.exe --console [--no-sas] [--no-agent] [--no-helper]` runs the same logic in
+  the foreground without the SCM (needs SYSTEM, e.g. via `psexec -s`).
+* `SendSAS` needs the policy `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\SoftwareSASGeneration`
+  = 1 (or 3). Without it the service refuses the request (error shown in the UI) instead of
+  silently doing nothing; the service logs the `reg add` command that enables it.
+
 ## 3. Crates
 
 ```mermaid

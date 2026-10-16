@@ -35,6 +35,9 @@ pub struct Manifest {
     pub send_to_shortcut: Option<String>,
     #[serde(default)]
     pub service: Option<String>,
+    /// The installer created the `SoftwareSASGeneration` policy value (and removes it again).
+    #[serde(default)]
+    pub sas_policy: bool,
     #[serde(default)]
     pub drivers: Vec<DriverRecord>,
 }
@@ -53,6 +56,7 @@ impl Manifest {
             scheduled_task: None,
             send_to_shortcut: None,
             service: None,
+            sas_policy: false,
             drivers: Vec::new(),
         }
     }

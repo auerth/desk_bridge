@@ -44,4 +44,59 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
   heartbeat (degraded after 3 s, reconnect after 6 s) and exponential backoff, UI protocol over a
   named pipe (NDJSON), mock platform for tests.
 
+### Added - M2 Mouse, keyboard, text clipboard
+
+- `input`: shared layout in 96-dpi-normalised units with relative-position edge mapping, source
+  router (local/remote/absolute region, dwell delay, required modifier, corner lock, double bump,
+  held-modifier replay), target receiver (injection only between Enter and Leave, return-edge
+  detection with `EdgeHit`, lock-key sync, `release_all` on Leave/disconnect/Emergency), hotkey
+  actions with conflict detection.
+- `platform-windows`: low-level hooks + Raw Input capture with stuck-key-safe grab, `SendInput`
+  injector (scancodes, extended keys, AltGr, XButtons, wheel), German 105-key HID keymap, screens
+  with per-monitor DPI and change watching, DPAPI secrets, power/lid/network events.
+- `agent`: elevated agent binary with named-pipe UI server (user-only ACL), single instance,
+  `send <paths>` and `--stop` subcommands, environment overrides for two-instance development.
+- Input latency measurement (Ping/Pong clock offset) shown in diagnostics; `latency-probe`.
+
+### Added - M3 Audio
+
+- `audio`: Opus (static libopus) and PCM paths with seamless auto-switching, adaptive jitter buffer
+  with PLC, drift compensation (own Kaiser-sinc resampler), silence suppression; simulated-network
+  tests including +-200 ppm drift, loss, reordering and a 10-minute soak.
+- `platform-windows`: WASAPI loopback/microphone capture, event-driven render with `IAudioClient3`,
+  device enumeration and hot-plug (`IMMNotificationClient`), `IPolicyConfig` default-device setting,
+  mic-session enumeration.
+- Engine: laptop sound to the headset with pause/resume when the headset disappears, microphone
+  only while the laptop uses it, mute hotkeys, test tone. ADR 0002 (loopback and mute),
+  ADR 0003 (virtual audio driver spike: no driver meets all criteria, F3 deferred, conditional
+  proposal for the owner).
+
+### Added - M4 Clipboard and files
+
+- `clipboard`: sync policy (eager text, delayed rendering, loop avoidance, size and privacy rules);
+  `files`: chunked transfers with BLAKE3, resume, path hardening, history.
+- `platform-windows`: clipboard listener with CF_HTML/RTF/PNG/DIB conversion, `CF_HDROP`, sensitive
+  flags, virtual files through a custom `IDataObject` (Explorer's own copy dialog).
+- Send files from the UI/SendTo; partner update offers with SHA-256 verification.
+
+### Added - M5 Focus mode
+
+- `video`: capability negotiation, adaptive bitrate, IDR throttling and keep-alives, late-frame
+  filter, FFmpeg (LGPL, shared) encode/decode, DXGI capture, D3D11 presenter (flip model, tearing,
+  AppBar split); `display`: focus plan (full/split), virtual display control, topology save/restore
+  with crash recovery; ADR 0004 (virtual display driver), ADR 0005 (video spike).
+- Engine: full, split and window focus mode with absolute pointer mapping, automatic rollback on
+  every failure and disconnect, lid automation request.
+
+### Added - M6 Robustness
+
+- `service`: SYSTEM service with agent supervisor, secure-desktop input helper, Ctrl+Alt+Del
+  (`SendSAS`); ADR 0006.
+- Diagnostics export (ZIP without keys), crash reports, process CPU/RAM metrics, third-party licence
+  report (`THIRD_PARTY_LICENSES.html`), `cargo deny` clean with documented exceptions.
+
+### Added - M7 Release preparation
+
+- English and German UI texts, README screenshots, contribution and security documents.
+
 [Unreleased]: https://github.com/softwelop/desk-bridge/commits/main

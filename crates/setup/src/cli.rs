@@ -65,9 +65,12 @@ pub struct InstallArgs {
     /// Do not start the agent task after registering it.
     #[arg(long)]
     pub no_start: bool,
-    /// Also register deskbridge-service.exe as a Windows service (M6).
+    /// Do not register deskbridge-service.exe (secure desktop, Ctrl+Alt+Del, crash watchdog).
     #[arg(long)]
-    pub with_service: bool,
+    pub no_service: bool,
+    /// Do not set the `SoftwareSASGeneration` policy (needed for Ctrl+Alt+End, set only if unset).
+    #[arg(long)]
+    pub no_sas_policy: bool,
     /// Run the task at logon of this user (DOMAIN\user) instead of any user.
     #[arg(long, value_name = "DOMAIN\\USER")]
     pub task_user: Option<String>,

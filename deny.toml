@@ -3,7 +3,21 @@ targets = [{ triple = "x86_64-pc-windows-msvc" }]
 
 [advisories]
 version = 2
-ignore = []
+# Each ignore is a conscious, documented decision (see docs/adr/0001-tech-stack.md, "Supply chain").
+ignore = [
+    # audiopus_sys: unmaintained binding that only builds/links libopus statically; the C library
+    # itself is current. Alternative (pure-Rust unsafe-libopus) evaluated and rejected for now.
+    { id = "RUSTSEC-2026-0150", reason = "build-time libopus binding, no network-facing parser" },
+    # quick-xml via plist via tauri-utils: only parses our own build-time plist/manifest files.
+    { id = "RUSTSEC-2026-0194", reason = "tauri build tooling only, trusted input" },
+    { id = "RUSTSEC-2026-0195", reason = "tauri build tooling only, trusted input" },
+    # unic-* via urlpattern via tauri-utils: unmaintained, no known vulnerability.
+    { id = "RUSTSEC-2025-0075", reason = "transitive of tauri, unmaintained only" },
+    { id = "RUSTSEC-2025-0080", reason = "transitive of tauri, unmaintained only" },
+    { id = "RUSTSEC-2025-0081", reason = "transitive of tauri, unmaintained only" },
+    { id = "RUSTSEC-2025-0098", reason = "transitive of tauri, unmaintained only" },
+    { id = "RUSTSEC-2025-0100", reason = "transitive of tauri, unmaintained only" },
+]
 
 [licenses]
 version = 2
@@ -24,6 +38,7 @@ allow = [
     "OpenSSL",
     "BSL-1.0",
     "0BSD",
+    "WTFPL", # ffmpeg-next bindings (the FFmpeg *library* itself is LGPL, loaded as DLL)
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8

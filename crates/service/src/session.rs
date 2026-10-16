@@ -24,13 +24,22 @@ pub fn usable_session(id: u32) -> Option<u32> {
     (id != NO_SESSION && id != 0).then_some(id)
 }
 
-fn query_string(session: u32, class: windows::Win32::System::RemoteDesktop::WTS_INFO_CLASS) -> Option<String> {
+fn query_string(
+    session: u32,
+    class: windows::Win32::System::RemoteDesktop::WTS_INFO_CLASS,
+) -> Option<String> {
     let mut p = PWSTR::null();
     let mut bytes = 0u32;
     // SAFETY: out pointers are valid; the returned buffer is released with WTSFreeMemory.
     unsafe {
-        WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, session, class, &mut p, &mut bytes)
-            .ok()?;
+        WTSQuerySessionInformationW(
+            WTS_CURRENT_SERVER_HANDLE,
+            session,
+            class,
+            &mut p,
+            &mut bytes,
+        )
+        .ok()?;
         let s = p.to_string().ok();
         WTSFreeMemory(p.0.cast());
         s

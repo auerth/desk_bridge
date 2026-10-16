@@ -195,8 +195,8 @@ pub fn install(ctx: &Ctx, args: &InstallArgs) -> Result<i32> {
         }
     }
 
-    // (e) service (M6, opt-in)
-    if args.with_service {
+    // (e) service (M6): secure desktop helper, Ctrl+Alt+Del, crash watchdog
+    if !args.no_service {
         let exe = dir.join(SERVICE_EXE);
         ctx.plan(&format!(
             "register service {SERVICE_NAME} -> {} (skipped if absent)",
@@ -206,6 +206,16 @@ pub fn install(ctx: &Ctx, args: &InstallArgs) -> Result<i32> {
             && step(&mut failures, "service", || service::install(&exe)).unwrap_or(false)
         {
             manifest.service = Some(SERVICE_NAME.to_owned());
+        }
+    }
+
+    // (f) allow the service to generate Ctrl+Alt+Del (only if the admin has not set the policy)
+    if !args.no_service && !args.no_sas_policy {
+        ctx.plan("set policy SoftwareSASGeneration=1 if not configured (Ctrl+Alt+End support)");
+        if !ctx.dry_run {
+            if let Some(true) = step(&mut failures, "SAS policy", crate::sas_policy::enable_if_unset) {
+                manifest.sas_policy = true;
+            }
         }
     }
 
@@ -349,6 +359,14 @@ pub fn uninstall(ctx: &Ctx, args: &UninstallArgs) -> Result<i32> {
                     let _ = std::fs::remove_dir(parent); // only succeeds when empty
                 }
             }
+        }
+    }
+
+    // SoftwareSASGeneration: only if we created it
+    if manifest.as_ref().is_some_and(|m| m.sas_policy) {
+        ctx.plan("remove policy SoftwareSASGeneration (created by the installer)");
+        if !ctx.dry_run {
+            step(&mut failures, "SAS policy", crate::sas_policy::remove);
         }
     }
 

@@ -1,4 +1,4 @@
-import { Lock, LockOpen, MoveRight, Play, Square } from 'lucide-react';
+import { Lock, LockOpen, Mic, MoveRight, Play, Square } from 'lucide-react';
 import { useMemo } from 'react';
 import type { AppState } from '../api/types';
 import { chipModels, FeatureChip } from '../components/FeatureChip';
@@ -169,6 +169,12 @@ export function Dashboard() {
           <FeatureChip key={c.feature} model={c} />
         ))}
       </div>
+
+      {state.features.mic.state === 'live' && state.features.mic.detail && (
+        <p className="mic-hint" role="status">
+          <Mic size={15} aria-hidden /> {state.features.mic.detail}
+        </p>
+      )}
 
       <div className="dash-grid">
         <Card className="dash-cta">

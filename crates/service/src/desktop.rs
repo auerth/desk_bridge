@@ -67,8 +67,14 @@ fn desktop_name(h: HDESK) -> Option<String> {
 /// Opens the current input desktop with `access`. `Err(code)` carries the Win32 error.
 fn open_input(access: u32) -> Result<HDESK, u32> {
     // SAFETY: no pointer arguments.
-    unsafe { OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(access)) }
-        .map_err(|e| (e.code().0 & 0xFFFF) as u32)
+    unsafe {
+        OpenInputDesktop(
+            DESKTOP_CONTROL_FLAGS(0),
+            false,
+            DESKTOP_ACCESS_FLAGS(access),
+        )
+    }
+    .map_err(|e| (e.code().0 & 0xFFFF) as u32)
 }
 
 /// Cheap probe used by the agent: which desktop receives input right now?
@@ -82,11 +88,15 @@ pub fn probe_input_desktop() -> InputDesktop {
             unsafe {
                 let _ = CloseDesktop(h);
             }
-            InputDesktop { kind: classify(name.as_deref(), false), name }
+            InputDesktop {
+                kind: classify(name.as_deref(), false),
+                name,
+            }
         }
-        Err(code) => {
-            InputDesktop { kind: classify(None, code == ERROR_ACCESS_DENIED.0), name: None }
-        }
+        Err(code) => InputDesktop {
+            kind: classify(None, code == ERROR_ACCESS_DENIED.0),
+            name: None,
+        },
     }
 }
 

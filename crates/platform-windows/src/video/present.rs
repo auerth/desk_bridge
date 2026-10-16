@@ -331,6 +331,31 @@ impl VideoPresenter for D3dPresenter {
     fn close(&mut self) {
         self.close_window();
     }
+
+    fn window_rect(&self) -> Option<(i32, i32, u32, u32)> {
+        if self.is_closed() {
+            return None;
+        }
+        let client = self.window_rect();
+        // The picture is letterboxed inside the client area; report the picture itself.
+        let scene = self.shared.render.lock().as_ref().and_then(|r| r.scene_size());
+        let (cx, cy, cw, ch) = (client.x, client.y, client.w, client.h);
+        if cw == 0 || ch == 0 {
+            return None;
+        }
+        match scene {
+            Some((sw, sh)) if sw > 0 && sh > 0 => {
+                let scale = (cw as f32 / sw as f32).min(ch as f32 / sh as f32);
+                let (dw, dh) = ((sw as f32 * scale).round() as u32, (sh as f32 * scale).round() as u32);
+                Some((cx + ((cw - dw) / 2) as i32, cy + ((ch - dh) / 2) as i32, dw, dh))
+            }
+            _ => Some((cx, cy, cw, ch)),
+        }
+    }
+
+    fn set_stats_overlay(&mut self, on: bool, text: &str) {
+        D3dPresenter::set_stats_overlay(self, on, text);
+    }
 }
 
 impl Drop for D3dPresenter {
@@ -396,12 +421,12 @@ fn redraw_now(shared: &Shared, force: bool) {
     let Some(mut guard) = shared.render.try_lock() else {
         return; // a frame is being presented right now; it will include the new state
     };
-    if let Some(r) = guard.as_mut() {
-        if r.has_scene() {
-            let draw = DrawInput::collect(shared, r);
-            if let Err(e) = r.compose_and_present(&draw) {
-                tracing::debug!("redraw failed: {e}");
-            }
+    if let Some(r) = guard.as_mut()
+        && r.has_scene()
+    {
+        let draw = DrawInput::collect(shared, r);
+        if let Err(e) = r.compose_and_present(&draw) {
+            tracing::debug!("redraw failed: {e}");
         }
     }
 }
@@ -433,7 +458,6 @@ struct Params {
 }
 
 struct Sprite {
-    tex: ID3D11Texture2D,
     srv: ID3D11ShaderResourceView,
     w: u32,
     h: u32,
@@ -678,6 +702,10 @@ impl Renderer {
         self.scene.is_some()
     }
 
+    fn scene_size(&self) -> Option<(u32, u32)> {
+        self.scene.as_ref().map(|(_, _, w, h)| (*w, *h))
+    }
+
     fn ensure_scene(&mut self, w: u32, h: u32) -> Result<()> {
         if matches!(&self.scene, Some((_, _, sw, sh)) if (*sw, *sh) == (w, h)) {
             return Ok(());
@@ -831,7 +859,6 @@ impl Renderer {
                 .map_err(|e| os_err("CreateShaderResourceView(sprite)", &e))?;
         }
         Ok(Sprite {
-            tex: tex.ok_or_else(|| PlatformError::other("null sprite texture"))?,
             srv: srv.ok_or_else(|| PlatformError::other("null sprite SRV"))?,
             w,
             h,
@@ -918,10 +945,10 @@ impl Renderer {
                 self.draw_quad(rect, &sp.srv, true);
             }
         }
-        if d.overlay.is_some() {
-            if let Some(sp) = &self.overlay {
-                self.draw_quad((8.0, 8.0, sp.w as f32, sp.h as f32), &sp.srv, true);
-            }
+        if d.overlay.is_some()
+            && let Some(sp) = &self.overlay
+        {
+            self.draw_quad((8.0, 8.0, sp.w as f32, sp.h as f32), &sp.srv, true);
         }
         // SAFETY: plain COM call.
         let r = unsafe {
@@ -1333,10 +1360,10 @@ fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESUL
                 if wparam.0 as u32 != SIZE_MINIMIZED {
                     let (w, h) = update_client_rect(hwnd, shared);
                     if w > 0 && h > 0 {
-                        if let Some(r) = shared.render.lock().as_mut() {
-                            if let Err(e) = r.resize(w, h) {
-                                tracing::warn!("swap chain resize failed: {e}");
-                            }
+                        if let Some(r) = shared.render.lock().as_mut()
+                            && let Err(e) = r.resize(w, h)
+                        {
+                            tracing::warn!("swap chain resize failed: {e}");
                         }
                         let _ = shared.events.send(PresenterEvent::Resized { width: w, height: h });
                         redraw_now(shared, true);
@@ -1380,8 +1407,10 @@ fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESUL
             }
             WM_MOUSEACTIVATE if passive => LRESULT(MA_NOACTIVATE as isize),
             WM_APPBAR_CALLBACK => {
-                if wparam.0 == ABN_POSCHANGED {
-                    if let PresentMode::Region { rect, appbar: true } = shared.mode {
+                if wparam.0 == ABN_POSCHANGED
+                    && let PresentMode::Region { rect, appbar: true } = shared.mode
+                {
+                    {
                         let guard = shared.appbar.lock();
                         if let Some(g) = guard.as_ref() {
                             let (hmon, mut mi) = (

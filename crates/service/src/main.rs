@@ -73,7 +73,10 @@ mod app {
             }
         };
         let _log = logging::init("service-helper", true, false);
-        tracing::info!(version = env!("CARGO_PKG_VERSION"), "secure-desktop helper starting");
+        tracing::info!(
+            version = env!("CARGO_PKG_VERSION"),
+            "secure-desktop helper starting"
+        );
         let r = std::panic::catch_unwind(|| helper_proc::run(&args));
         r.unwrap_or_else(|_| {
             tracing::error!("helper panicked");
@@ -98,8 +101,11 @@ mod app {
             );
         }
         winsvc::warn_if_sas_not_configured();
-        let sas: Arc<dyn SasSender> =
-            if opts.no_sas { Arc::new(DisabledSas) } else { Arc::new(SystemSas) };
+        let sas: Arc<dyn SasSender> = if opts.no_sas {
+            Arc::new(DisabledSas)
+        } else {
+            Arc::new(SystemSas)
+        };
         let mut ro = RuntimeOptions::new(sas);
         ro.manage_agent = !opts.no_agent;
         ro.manage_helper = !opts.no_helper;

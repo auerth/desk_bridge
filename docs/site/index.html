@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desk Bridge – ein Schreibtisch, zwei Rechner | softwelop</title>
+<meta name="description" content="Desk Bridge teilt Maus, Tastatur, Zwischenablage, Dateien und Headset zwischen zwei Windows-Rechnern im LAN. Open Source, verschlüsselt, ohne Cloud.">
+<link rel="stylesheet" href="brand-tokens.css">
+<style>
+  :root { --bg: var(--sw-white); --fg: var(--sw-deep-trust); --card: var(--sw-cream); --muted: #5a5f86; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161a38; --fg: #f6e9df; --card: #21264e; --muted: #b7b9d3; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 300 17px/1.6 "Montserrat", system-ui, sans-serif; }
+  header.hero { background: var(--sw-gradient-deep); color: #f6e9df; padding: 72px 24px 88px; text-align: center; }
+  header.hero h1 { font-weight: 700; font-size: clamp(32px, 6vw, 52px); margin: 0 0 12px; letter-spacing: -.01em; }
+  header.hero p { font-size: clamp(16px, 2.4vw, 22px); margin: 0 auto 28px; max-width: 640px; }
+  .btn { display: inline-block; background: var(--sw-signal-orange); color: #21264e; font-weight: 500; text-decoration: none; padding: 12px 24px; border-radius: 8px; }
+  .btn.secondary { background: transparent; color: #f6e9df; border: 1px solid #a3c7eb; margin-left: 8px; }
+  main { max-width: 1040px; margin: -48px auto 0; padding: 0 20px 64px; }
+  .shot { width: 100%; border-radius: 12px; box-shadow: 0 12px 48px rgba(33, 38, 78, .25); display: block; }
+  h2 { font-weight: 700; font-size: 26px; margin: 56px 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border-radius: 12px; padding: 20px; }
+  .card h3 { margin: 0 0 6px; font-weight: 600; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  footer { text-align: center; color: var(--muted); font-size: 14px; padding: 32px 16px 56px; }
+  a { color: var(--sw-core-logic); } @media (prefers-color-scheme: dark) { a { color: var(--sw-bright-code); } }
+</style>
+</head>
+<body>
+<header class="hero">
+  <h1>Ein Schreibtisch. Zwei Rechner. Null Umschalten.</h1>
+  <p>Desk Bridge teilt Maus, Tastatur, Zwischenablage, Dateien und Headset zwischen deinen Windows-Rechnern – schnell, verschlüsselt, im eigenen Netzwerk.</p>
+  <a class="btn" href="https://github.com/softwelop/desk-bridge/releases/latest">Herunterladen</a>
+  <a class="btn secondary" href="https://github.com/softwelop/desk-bridge">Quellcode</a>
+</header>
+<main>
+  <img class="shot" src="dashboard-light.png" alt="Desk Bridge Übersicht">
+  <h2>Was Desk Bridge kann</h2>
+  <div class="grid">
+    <div class="card"><h3>Maus &amp; Tastatur</h3><p>Maus über den Bildschirmrand schieben – schon steuerst du den Laptop. Unter 3 ms zusätzliche Latenz im Kabelnetz.</p></div>
+    <div class="card"><h3>Laptop-Ton im Headset</h3><p>Alles, was der Laptop abspielt, kommt im Headset am PC an – gemischt mit dem PC-Ton.</p></div>
+    <div class="card"><h3>Zwischenablage &amp; Dateien</h3><p>Text, Bilder, Dateien: auf dem einen Gerät kopieren, auf dem anderen einfügen – mit dem Kopierdialog des Explorers.</p></div>
+    <div class="card"><h3>Fokusmodus</h3><p>Der Laptop im Vollbild oder als Hälfte deines Ultrawide, in nativer Auflösung und bis zu 120 Hz.</p></div>
+    <div class="card"><h3>Ein Installer</h3><p>Treiber, Firewall-Regel und Autostart bringt die Installation selbst mit. Koppeln mit einem 6-stelligen Code.</p></div>
+    <div class="card"><h3>Privat &amp; offen</h3><p>Keine Cloud, kein Konto, keine Telemetrie. MIT oder Apache-2.0.</p></div>
+  </div>
+  <h2>So sieht es aus</h2>
+  <div class="grid">
+    <img class="shot" src="screens-light.png" alt="Bildschirm-Layout">
+    <img class="shot" src="audio-dark.png" alt="Audio-Einstellungen">
+  </div>
+</main>
+<footer>Desk Bridge ist ein Projekt von <a href="https://softwelop.com">softwelop</a>.</footer>
+</body>
+</html>

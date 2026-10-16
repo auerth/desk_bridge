@@ -13,7 +13,7 @@ use tauri::{
 /// Logical size of the OSD window (the pill is drawn centred inside, with room for a shadow).
 const OSD_SIZE: (f64, f64) = (360.0, 96.0);
 /// Logical size of the tray flyout.
-const FLYOUT_SIZE: (f64, f64) = (344.0, 452.0);
+const FLYOUT_SIZE: (f64, f64) = (344.0, 504.0);
 /// How long the OSD window stays visible (frontend fades out at ~600 ms).
 const OSD_VISIBLE: Duration = Duration::from_millis(900);
 
@@ -131,22 +131,22 @@ pub fn show_osd(app: &AppHandle, icon: &str, text: &str) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(OSD_VISIBLE).await;
         // A newer OSD request restarts the timer; only the latest one hides the window.
-        if OSD_GENERATION.load(Ordering::SeqCst) == generation {
-            if let Some(win) = app.get_webview_window("osd") {
-                let _ = win.hide();
-            }
+        if OSD_GENERATION.load(Ordering::SeqCst) == generation
+            && let Some(win) = app.get_webview_window("osd")
+        {
+            let _ = win.hide();
         }
     });
 }
 
 pub fn hide_flyout(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("flyout") {
-        if win.is_visible().unwrap_or(false) {
-            if let Ok(mut t) = FLYOUT_HIDDEN_AT.lock() {
-                *t = Some(Instant::now());
-            }
-            let _ = win.hide();
+    if let Some(win) = app.get_webview_window("flyout")
+        && win.is_visible().unwrap_or(false)
+    {
+        if let Ok(mut t) = FLYOUT_HIDDEN_AT.lock() {
+            *t = Some(Instant::now());
         }
+        let _ = win.hide();
     }
 }
 

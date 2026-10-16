@@ -23,6 +23,7 @@ mod elevation;
 #[cfg(windows)]
 mod network;
 #[cfg(windows)]
+mod sas_policy;
 mod service;
 #[cfg(windows)]
 mod shortcut;

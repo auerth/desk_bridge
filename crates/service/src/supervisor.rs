@@ -98,7 +98,11 @@ pub fn decide_agent(v: &AgentView) -> AgentDecision {
     }
     // After a crash the backoff alone gates the restart; after a logon the scheduled task gets
     // INITIAL_GRACE to start the agent first (never two instances).
-    let needed = if v.seen_alive { v.backoff } else { INITIAL_GRACE };
+    let needed = if v.seen_alive {
+        v.backoff
+    } else {
+        INITIAL_GRACE
+    };
     if v.down_for < needed {
         return AgentDecision::Wait;
     }
@@ -250,7 +254,11 @@ impl Supervisor {
             match rx.recv_timeout(TICK) {
                 Ok(Event::Stop) | Err(RecvTimeoutError::Disconnected) => break,
                 Ok(Event::SessionChange(ev, sid)) => {
-                    tracing::info!(session = sid, "session change: {}", session::describe_event(ev));
+                    tracing::info!(
+                        session = sid,
+                        "session change: {}",
+                        session::describe_event(ev)
+                    );
                     if !session::wakes_supervisor(ev) {
                         // lock/unlock: nothing to re-evaluate, wait for the regular tick
                         continue;
@@ -265,9 +273,8 @@ impl Supervisor {
     }
 
     fn observe_session(&mut self, now: Instant) {
-        let current = session::active_console_session().and_then(|s| {
-            session::session_user(s).map(|user| SessionKey { session: s, user })
-        });
+        let current = session::active_console_session()
+            .and_then(|s| session::session_user(s).map(|user| SessionKey { session: s, user }));
         if current == self.key {
             return;
         }
@@ -280,7 +287,10 @@ impl Supervisor {
         self.agent_down_since = now;
         self.agent_last_start = None;
         self.agent_backoff.reset();
-        let sid = self.key.as_ref().and_then(|k| launch::session_user_sid(k.session));
+        let sid = self
+            .key
+            .as_ref()
+            .and_then(|k| launch::session_user_sid(k.session));
         self.shared.set_user_sid(sid);
     }
 
@@ -298,34 +308,42 @@ impl Supervisor {
 
     fn tick_agent(&mut self, now: Instant) {
         let Some(key) = self.key.clone() else { return };
-        if let Some(t) = &self.agent {
-            if let Some(code) = launch::exit_code(&t.process) {
-                let ran_for = now.duration_since(t.since);
-                if is_clean_exit(code) {
-                    tracing::info!(pid = t.pid, ?ran_for, "agent exited normally (code 0), not restarting");
-                    self.agent_suppressed = true;
-                } else {
-                    // Watchdog: a crashed agent may have left injected keys pressed. The
-                    // restarted agent releases them at startup (`release_stuck_keys`).
-                    tracing::warn!(
-                        pid = t.pid,
-                        exit_code = format!("{code:#010x}"),
-                        ?ran_for,
-                        "agent crashed, will restart"
-                    );
-                    self.agent_backoff.on_exit(ran_for);
-                }
-                self.agent = None;
-                self.agent_down_since = now;
+        if let Some(t) = &self.agent
+            && let Some(code) = launch::exit_code(&t.process)
+        {
+            let ran_for = now.duration_since(t.since);
+            if is_clean_exit(code) {
+                tracing::info!(
+                    pid = t.pid,
+                    ?ran_for,
+                    "agent exited normally (code 0), not restarting"
+                );
+                self.agent_suppressed = true;
+            } else {
+                // Watchdog: a crashed agent may have left injected keys pressed. The
+                // restarted agent releases them at startup (`release_stuck_keys`).
+                tracing::warn!(
+                    pid = t.pid,
+                    exit_code = format!("{code:#010x}"),
+                    ?ran_for,
+                    "agent crashed, will restart"
+                );
+                self.agent_backoff.on_exit(ran_for);
             }
+            self.agent = None;
+            self.agent_down_since = now;
         }
         if self.agent.is_none() {
             // Adopt an instance the scheduled task started, to learn when it dies and how.
-            if let Some(pid) = launch::find_process_in_session(AGENT_EXE, key.session) {
-                if let Some(process) = launch::open_for_wait(pid) {
-                    tracing::info!(pid, "adopted running agent");
-                    self.agent = Some(Tracked { process, pid, since: now });
-                }
+            if let Some(pid) = launch::find_process_in_session(AGENT_EXE, key.session)
+                && let Some(process) = launch::open_for_wait(pid)
+            {
+                tracing::info!(pid, "adopted running agent");
+                self.agent = Some(Tracked {
+                    process,
+                    pid,
+                    since: now,
+                });
             }
         }
         let alive = self.agent.is_some() || launch::mutex_exists(AGENT_MUTEX);
@@ -356,9 +374,15 @@ impl Supervisor {
             Ok((Launched { process, pid }, elevated)) => {
                 tracing::info!(pid, elevated, session = key.session, "agent started");
                 if !elevated {
-                    tracing::warn!("agent token is not elevated (standard user?): UIPI limits apply");
+                    tracing::warn!(
+                        "agent token is not elevated (standard user?): UIPI limits apply"
+                    );
                 }
-                self.agent = Some(Tracked { process, pid, since: now });
+                self.agent = Some(Tracked {
+                    process,
+                    pid,
+                    since: now,
+                });
             }
             Err(e) => {
                 tracing::error!("cannot start the agent ({}): {e}", exe.display());
@@ -370,14 +394,19 @@ impl Supervisor {
     // ---- helper -------------------------------------------------------------------------
 
     fn tick_helper(&mut self, now: Instant) {
-        if let Some((t, _)) = &self.helper {
-            if let Some(code) = launch::exit_code(&t.process) {
-                let ran_for = now.duration_since(t.since);
-                tracing::warn!(pid = t.pid, exit_code = format!("{code:#010x}"), ?ran_for, "helper exited");
-                self.helper_backoff.on_exit(ran_for);
-                self.helper_last_exit = Some(now);
-                self.helper = None;
-            }
+        if let Some((t, _)) = &self.helper
+            && let Some(code) = launch::exit_code(&t.process)
+        {
+            let ran_for = now.duration_since(t.since);
+            tracing::warn!(
+                pid = t.pid,
+                exit_code = format!("{code:#010x}"),
+                ?ran_for,
+                "helper exited"
+            );
+            self.helper_backoff.on_exit(ran_for);
+            self.helper_last_exit = Some(now);
+            self.helper = None;
         }
         let key_matches = match (&self.helper, &self.key) {
             (Some((_, hk)), Some(k)) => hk == k,
@@ -407,7 +436,11 @@ impl Supervisor {
                 return;
             }
         };
-        let mut args = vec!["--helper".to_string(), "--parent-pid".into(), std::process::id().to_string()];
+        let mut args = vec![
+            "--helper".to_string(),
+            "--parent-pid".into(),
+            std::process::id().to_string(),
+        ];
         if let Some(sid) = self.shared.user_sid.lock().clone() {
             args.push("--user-sid".into());
             args.push(sid);
@@ -416,7 +449,14 @@ impl Supervisor {
         match launch::launch_helper(key.session, &exe, &args) {
             Ok(Launched { process, pid }) => {
                 tracing::info!(pid, session = key.session, "secure-desktop helper started");
-                self.helper = Some((Tracked { process, pid, since: now }, key));
+                self.helper = Some((
+                    Tracked {
+                        process,
+                        pid,
+                        since: now,
+                    },
+                    key,
+                ));
             }
             Err(e) => {
                 tracing::error!("cannot start the secure-desktop helper: {e}");
@@ -436,7 +476,11 @@ impl Supervisor {
 
     fn publish_helper(&self) {
         let status = match &self.helper {
-            Some((t, k)) => HelperStatus { running: true, pid: t.pid, session: k.session },
+            Some((t, k)) => HelperStatus {
+                running: true,
+                pid: t.pid,
+                session: k.session,
+            },
             None => HelperStatus::default(),
         };
         *self.shared.helper.lock() = status;
@@ -481,13 +525,21 @@ mod tests {
 
     #[test]
     fn no_session_means_no_start() {
-        let v = AgentView { session_ready: false, down_for: Duration::from_secs(999), ..view() };
+        let v = AgentView {
+            session_ready: false,
+            down_for: Duration::from_secs(999),
+            ..view()
+        };
         assert_eq!(decide_agent(&v), AgentDecision::NoSession);
     }
 
     #[test]
     fn never_starts_a_second_instance() {
-        let v = AgentView { alive: true, down_for: Duration::from_secs(999), ..view() };
+        let v = AgentView {
+            alive: true,
+            down_for: Duration::from_secs(999),
+            ..view()
+        };
         assert_eq!(decide_agent(&v), AgentDecision::Running);
     }
 
@@ -502,7 +554,11 @@ mod tests {
 
     #[test]
     fn after_a_crash_only_the_backoff_applies() {
-        let mut v = AgentView { seen_alive: true, backoff: Duration::from_secs(4), ..view() };
+        let mut v = AgentView {
+            seen_alive: true,
+            backoff: Duration::from_secs(4),
+            ..view()
+        };
         v.down_for = Duration::from_secs(3);
         assert_eq!(decide_agent(&v), AgentDecision::Wait);
         v.down_for = Duration::from_secs(4);
@@ -519,13 +575,21 @@ mod tests {
             ..view()
         };
         assert_eq!(decide_agent(&v), AgentDecision::Wait);
-        let v = AgentView { since_last_start: Some(Duration::from_secs(8)), ..v };
+        let v = AgentView {
+            since_last_start: Some(Duration::from_secs(8)),
+            ..v
+        };
         assert_eq!(decide_agent(&v), AgentDecision::Start);
     }
 
     #[test]
     fn a_deliberately_stopped_agent_stays_stopped() {
-        let v = AgentView { suppressed: true, seen_alive: true, down_for: Duration::from_secs(999), ..view() };
+        let v = AgentView {
+            suppressed: true,
+            seen_alive: true,
+            down_for: Duration::from_secs(999),
+            ..view()
+        };
         assert_eq!(decide_agent(&v), AgentDecision::Suppressed);
         assert!(is_clean_exit(0));
         assert!(!is_clean_exit(1));
@@ -536,13 +600,34 @@ mod tests {
     #[test]
     fn helper_decisions() {
         let b = BACKOFF_MIN;
-        assert_eq!(decide_helper(false, false, false, None, b), HelperDecision::Idle);
-        assert_eq!(decide_helper(false, true, true, None, b), HelperDecision::Stop);
-        assert_eq!(decide_helper(true, true, true, None, b), HelperDecision::Idle);
-        assert_eq!(decide_helper(true, true, false, None, b), HelperDecision::Stop);
-        assert_eq!(decide_helper(true, false, false, None, b), HelperDecision::Start);
-        assert_eq!(decide_helper(true, false, false, Some(Duration::ZERO), b), HelperDecision::Wait);
-        assert_eq!(decide_helper(true, false, false, Some(b), b), HelperDecision::Start);
+        assert_eq!(
+            decide_helper(false, false, false, None, b),
+            HelperDecision::Idle
+        );
+        assert_eq!(
+            decide_helper(false, true, true, None, b),
+            HelperDecision::Stop
+        );
+        assert_eq!(
+            decide_helper(true, true, true, None, b),
+            HelperDecision::Idle
+        );
+        assert_eq!(
+            decide_helper(true, true, false, None, b),
+            HelperDecision::Stop
+        );
+        assert_eq!(
+            decide_helper(true, false, false, None, b),
+            HelperDecision::Start
+        );
+        assert_eq!(
+            decide_helper(true, false, false, Some(Duration::ZERO), b),
+            HelperDecision::Wait
+        );
+        assert_eq!(
+            decide_helper(true, false, false, Some(b), b),
+            HelperDecision::Start
+        );
     }
 
     #[test]
@@ -553,6 +638,9 @@ mod tests {
             .find(|l| l.trim_start().starts_with("pub const AGENT_INSTANCE_ID:"))
             .expect("AGENT_INSTANCE_ID in core brand.rs");
         let escaped = AGENT_MUTEX.replace('\\', "\\\\");
-        assert!(line.contains(&format!("\"{escaped}\"")), "drifted from core: {line}");
+        assert!(
+            line.contains(&format!("\"{escaped}\"")),
+            "drifted from core: {line}"
+        );
     }
 }

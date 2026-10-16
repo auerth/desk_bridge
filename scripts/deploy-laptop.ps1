@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Builds Desk Bridge and copies the binaries to the laptop (SMB share) or to a local folder.
 
@@ -72,8 +72,7 @@ $marker = '.deskbridge-deploy'
 $taskName = 'DeskBridge Agent'
 
 # cmake from pip lives here on the dev PC (libopus build).
-$pyScripts = Join-Path $env:APPDATA 'Python\Python313\Scripts'
-if ((Test-Path $pyScripts) -and ($env:PATH -notlike "*$pyScripts*")) { $env:PATH = "$pyScripts;$env:PATH" }
+. "$PSScriptRoot\dev-env.ps1"
 
 # Which machine is the destination on?
 $remoteHost = $null

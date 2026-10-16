@@ -28,7 +28,10 @@ impl PipeAccess {
     /// Production policy: SYSTEM + `user_sid`, elevated clients only.
     #[must_use]
     pub fn production(user_sid: Option<String>) -> Self {
-        Self { user_sid, require_high_integrity: true }
+        Self {
+            user_sid,
+            require_high_integrity: true,
+        }
     }
 }
 
@@ -36,17 +39,25 @@ impl PipeAccess {
 /// else (parentheses, semicolons) could change the meaning of the descriptor.
 #[must_use]
 pub fn is_valid_sid_string(s: &str) -> bool {
-    let Some(rest) = s.strip_prefix("S-1-") else { return false };
+    let Some(rest) = s.strip_prefix("S-1-") else {
+        return false;
+    };
     !rest.is_empty()
         && rest.len() <= 120
-        && rest.split('-').all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        && rest
+            .split('-')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// SDDL for [`PipeAccess`]. Invalid SIDs are dropped (SYSTEM-only is the safe fallback).
 #[must_use]
 pub fn build_sddl(access: &PipeAccess) -> String {
     let mut s = String::from("D:P(A;;GA;;;SY)");
-    if let Some(sid) = access.user_sid.as_deref().filter(|s| is_valid_sid_string(s)) {
+    if let Some(sid) = access
+        .user_sid
+        .as_deref()
+        .filter(|s| is_valid_sid_string(s))
+    {
         s.push_str(&format!("(A;;GA;;;{sid})"));
     }
     if access.require_high_integrity {
@@ -110,9 +121,16 @@ mod tests {
     fn sid_validation() {
         assert!(is_valid_sid_string(SID));
         assert!(is_valid_sid_string("S-1-5-18"));
-        for bad in
-            ["", "S-1-", "S-1-5-", "S-2-5-18", "S-1-5-18)(A;;GA;;;WD", "S-1-5-1 8", "x", "S-1-a"]
-        {
+        for bad in [
+            "",
+            "S-1-",
+            "S-1-5-",
+            "S-2-5-18",
+            "S-1-5-18)(A;;GA;;;WD",
+            "S-1-5-1 8",
+            "x",
+            "S-1-a",
+        ] {
             assert!(!is_valid_sid_string(bad), "{bad}");
         }
     }
@@ -125,7 +143,10 @@ mod tests {
 
     #[test]
     fn no_user_means_system_only() {
-        let s = build_sddl(&PipeAccess { user_sid: None, require_high_integrity: false });
+        let s = build_sddl(&PipeAccess {
+            user_sid: None,
+            require_high_integrity: false,
+        });
         assert_eq!(s, "D:P(A;;GA;;;SY)");
     }
 
@@ -148,7 +169,10 @@ mod tests {
                 require_high_integrity: high,
             });
             let sd = SecurityDescriptor::from_sddl(&sddl).expect("valid SDDL");
-            assert_eq!(sd.attributes().nLength as usize, size_of::<SECURITY_ATTRIBUTES>());
+            assert_eq!(
+                sd.attributes().nLength as usize,
+                size_of::<SECURITY_ATTRIBUTES>()
+            );
         }
     }
 }

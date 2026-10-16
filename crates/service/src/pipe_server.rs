@@ -112,16 +112,20 @@ async fn connection(
                 Ok(req) => handler.handle(req),
                 Err(e) => Some(Response::error(ErrorCode::BadRequest, e.to_string())),
             };
-            if let Some(resp) = response {
-                if pipe.write_all(&resp.encode()).await.is_err() {
-                    return;
-                }
+            if let Some(resp) = response
+                && pipe.write_all(&resp.encode()).await.is_err()
+            {
+                return;
             }
         }
     }
 }
 
-fn create_instance(name: &str, first: bool, access: &PipeAccess) -> std::io::Result<NamedPipeServer> {
+fn create_instance(
+    name: &str,
+    first: bool,
+    access: &PipeAccess,
+) -> std::io::Result<NamedPipeServer> {
     let sd = SecurityDescriptor::from_sddl(&build_sddl(access))?;
     let mut sa = sd.attributes();
     let mut opts = ServerOptions::new();

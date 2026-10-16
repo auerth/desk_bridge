@@ -15,9 +15,11 @@ request.
 | # | Title | Status |
 |---|---|---|
 | [0001](0001-tech-stack.md) | Technology stack | Accepted |
-| 0002 | (reserved, written by the transport/protocol work) | - |
+| [0002](0002-audio-loopback-and-mute.md) | Laptop sound via WASAPI loopback, mute behaviour | Accepted (laptop check pending) |
 | [0003](0003-virtual-audio-driver.md) | Virtual audio driver / virtual microphone (F3) | Proposed |
 | [0004](0004-virtual-display-driver.md) | Virtual display driver for focus mode | Proposed |
+| [0005](0005-video-spike.md) | Video spike: 5120x1440@120 capture, encode, decode | see file |
+| [0006](0006-service-and-secure-desktop.md) | SYSTEM service, secure-desktop helper, Ctrl+Alt+Del | Accepted |
 
 Add new rows when you add a file.
 

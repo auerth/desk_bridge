@@ -51,8 +51,14 @@ pub fn token_user_sid(token: HANDLE) -> Option<String> {
             return None;
         }
         let mut buf = vec![0u8; len as usize];
-        GetTokenInformation(token, TokenUser, Some(buf.as_mut_ptr().cast::<c_void>()), len, &mut len)
-            .ok()?;
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr().cast::<c_void>()),
+            len,
+            &mut len,
+        )
+        .ok()?;
         let user = &*buf.as_ptr().cast::<TOKEN_USER>();
         let mut sid = PWSTR::null();
         ConvertSidToStringSidW(user.User.Sid, &mut sid).ok()?;
@@ -77,8 +83,10 @@ pub fn current_user_sid() -> Option<String> {
 /// `%ProgramData%\softwelop\DeskBridge`.
 #[must_use]
 pub fn program_data_dir() -> std::path::PathBuf {
-    let base = std::env::var_os("ProgramData")
-        .map_or_else(|| std::path::PathBuf::from(r"C:\ProgramData"), std::path::PathBuf::from);
+    let base = std::env::var_os("ProgramData").map_or_else(
+        || std::path::PathBuf::from(r"C:\ProgramData"),
+        std::path::PathBuf::from,
+    );
     base.join("softwelop").join("DeskBridge")
 }
 

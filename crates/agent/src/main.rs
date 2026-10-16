@@ -12,6 +12,8 @@
 #[cfg(windows)]
 mod pipe;
 #[cfg(windows)]
+mod secure;
+#[cfg(windows)]
 mod winplatform;
 
 #[cfg(windows)]
@@ -74,6 +76,10 @@ fn run_agent() -> i32 {
         let _ = deskbridge_platform_windows::power::restore_lid_action_if_backup_exists();
     }
     tracing::info!(version = brand::VERSION, "agent starting");
+    if !config.device.input_source {
+        // Target device: a crashed predecessor may have left injected keys pressed.
+        secure::release_stuck_keys();
+    }
 
     let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().thread_name("db-rt").build() {
         Ok(r) => r,

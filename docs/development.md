@@ -15,20 +15,14 @@ needs on first use.
 
 ### cmake / PATH note (libopus)
 
-`audiopus`/`opus` build the Opus library from source and need `cmake` on `PATH`. GitHub's
-`windows-latest` runners have it. On the development PC cmake was installed with `pip install cmake`,
-which puts it into a directory that is *not* on `PATH` by default:
-
-```powershell
-$env:PATH = "$env:APPDATA\Python\Python313\Scripts;$env:PATH"   # current shell
-cmake --version
-# permanent (user PATH):
-[Environment]::SetEnvironmentVariable('PATH', "$env:APPDATA\Python\Python313\Scripts;" + [Environment]::GetEnvironmentVariable('PATH','User'), 'User')
-```
-
-The helper scripts (`stage-installer.ps1`, `deploy-laptop.ps1`, `dev-two-instances.ps1`) add that
-directory automatically if it exists. If a build fails in a `*-sys` crate with "is `cmake` not
-installed?", this is the cause.
+`audiopus_sys` builds the Opus library from source and needs `cmake` on `PATH`. GitHub's
+`windows-latest` runners have it. On a development PC install it with `winget install Kitware.CMake`
+or `pip install --user cmake`. The pip variant puts it into a directory that is *not* on `PATH` by
+default (for Microsoft Store Python: `%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.13_*\LocalCache\local-packages\Python313\Scripts`).
+The helper scripts dot-source `scripts/dev-env.ps1`, which finds it and prepends it to `PATH`; in your
+own shell run `. .\scripts\dev-env.ps1` first. `.cargo/config.toml` sets
+`CMAKE_POLICY_VERSION_MINIMUM=3.5` so CMake 4.x can configure libopus. If a build fails in a `*-sys`
+crate with "is `cmake` not installed?", this is the cause.
 
 ## Build and test
 

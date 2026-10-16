@@ -368,9 +368,7 @@ fn convert_pointer_shape(buf: &[u8], si: &DXGI_OUTDUPL_POINTER_SHAPE_INFO) -> Op
                     let o = (y * w + x) * 4;
                     if si.Type == SHAPE_COLOR {
                         rgba[o..o + 4].copy_from_slice(&[r, g, b, a]);
-                    } else if a == 0 {
-                        rgba[o..o + 4].copy_from_slice(&[r, g, b, 255]);
-                    } else if r != 0 || g != 0 || b != 0 {
+                    } else if a == 0 || r != 0 || g != 0 || b != 0 {
                         rgba[o..o + 4].copy_from_slice(&[r, g, b, 255]);
                     }
                 }
@@ -473,10 +471,10 @@ fn capture_thread(
                 // SAFETY: a frame is currently acquired.
                 let _ = unsafe { session.dup.ReleaseFrame() };
                 drop(res);
-                if let Some(c) = cursor_out {
-                    if sink.send(CaptureOutput::Cursor(c)).is_err() {
-                        return;
-                    }
+                if let Some(c) = cursor_out
+                    && sink.send(CaptureOutput::Cursor(c)).is_err()
+                {
+                    return;
                 }
             }
             Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {}

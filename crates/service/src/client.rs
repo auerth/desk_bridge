@@ -44,7 +44,7 @@ impl Drop for PipeClient {
 }
 
 fn win_err(e: &windows::core::Error) -> io::Error {
-    io::Error::from_raw_os_error((e.code().0 & 0xFFFF) as i32)
+    io::Error::from_raw_os_error(e.code().0 & 0xFFFF)
 }
 
 fn remaining(deadline: Instant) -> Option<u32> {
@@ -91,7 +91,11 @@ impl PipeClient {
                             return Err(win_err(&e));
                         }
                     };
-                    return Ok(Self { handle, event, frames: FrameBuffer::default() });
+                    return Ok(Self {
+                        handle,
+                        event,
+                        frames: FrameBuffer::default(),
+                    });
                 }
                 Err(e) if e.code() == ERROR_PIPE_BUSY.to_hresult() => {
                     let Some(ms) = remaining(deadline) else {
@@ -111,7 +115,10 @@ impl PipeClient {
         deadline: Instant,
         start: impl FnOnce(HANDLE, *mut OVERLAPPED) -> windows::core::Result<()>,
     ) -> io::Result<usize> {
-        let mut ov = OVERLAPPED { hEvent: self.event, ..Default::default() };
+        let mut ov = OVERLAPPED {
+            hEvent: self.event,
+            ..Default::default()
+        };
         // SAFETY: `ov` lives on this stack frame until the operation has completed or been
         // cancelled and drained below; `self.event` is a valid event handle.
         unsafe {
@@ -143,7 +150,10 @@ impl PipeClient {
             let _ = CancelIoEx(self.handle, Some(&raw const ov));
             let _ = GetOverlappedResult(self.handle, &raw const ov, &mut n, true);
             if wait == WAIT_TIMEOUT {
-                Err(io::Error::new(io::ErrorKind::TimedOut, "pipe operation timed out"))
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "pipe operation timed out",
+                ))
             } else {
                 Err(io::Error::other("wait failed"))
             }
@@ -207,7 +217,9 @@ fn proto_err(e: ProtocolError) -> io::Error {
 /// One-shot `Ping`; true if the server answers with a matching protocol version.
 #[must_use]
 pub fn ping(name: &str, timeout: Duration) -> bool {
-    let Ok(mut c) = PipeClient::connect(name, timeout) else { return false };
+    let Ok(mut c) = PipeClient::connect(name, timeout) else {
+        return false;
+    };
     matches!(
         c.call(&Request::Ping, timeout),
         Ok(Response::Pong { version, .. }) if version == crate::protocol::PROTOCOL_VERSION

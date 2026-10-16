@@ -37,14 +37,19 @@ static STATUS_HANDLE: AtomicIsize = AtomicIsize::new(0);
 static EVENTS: Mutex<Option<Sender<SvcEvent>>> = Mutex::new(None);
 
 fn send_event(ev: SvcEvent) {
-    if let Ok(g) = EVENTS.lock() {
-        if let Some(tx) = g.as_ref() {
-            let _ = tx.send(ev);
-        }
+    if let Ok(g) = EVENTS.lock()
+        && let Some(tx) = g.as_ref()
+    {
+        let _ = tx.send(ev);
     }
 }
 
-fn set_status(state: SERVICE_STATUS_CURRENT_STATE, accepted: u32, exit_code: u32, wait_hint_ms: u32) {
+fn set_status(
+    state: SERVICE_STATUS_CURRENT_STATE,
+    accepted: u32,
+    exit_code: u32,
+    wait_hint_ms: u32,
+) {
     let h = STATUS_HANDLE.load(Ordering::Acquire);
     if h == 0 {
         return;
@@ -57,7 +62,11 @@ fn set_status(state: SERVICE_STATUS_CURRENT_STATE, accepted: u32, exit_code: u32
         dwControlsAccepted: accepted,
         dwWin32ExitCode: exit_code,
         dwServiceSpecificExitCode: 0,
-        dwCheckPoint: if pending { CHECKPOINT.fetch_add(1, Ordering::Relaxed) + 1 } else { 0 },
+        dwCheckPoint: if pending {
+            CHECKPOINT.fetch_add(1, Ordering::Relaxed) + 1
+        } else {
+            0
+        },
         dwWaitHint: wait_hint_ms,
     };
     // SAFETY: valid status handle obtained from RegisterServiceCtrlHandlerExW; `st` is initialised.
@@ -107,14 +116,21 @@ fn service_main_impl() {
     let name = crate::winutil::wide(SERVICE_NAME);
     // SAFETY: `name` is NUL-terminated; the handler is a valid `extern "system"` function.
     let handle = unsafe {
-        RegisterServiceCtrlHandlerExW(windows::core::PCWSTR(name.as_ptr()), Some(ctrl_handler), None)
+        RegisterServiceCtrlHandlerExW(
+            windows::core::PCWSTR(name.as_ptr()),
+            Some(ctrl_handler),
+            None,
+        )
     };
     let Ok(handle) = handle else { return };
     STATUS_HANDLE.store(handle.0 as isize, Ordering::Release);
     set_status(SERVICE_START_PENDING, 0, 0, 10_000);
 
     let _log = logging::init("service", true, false);
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Desk Bridge service starting");
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "Desk Bridge service starting"
+    );
     warn_if_sas_not_configured();
 
     let sas: Arc<dyn SasSender> = Arc::new(SystemSas);
@@ -133,11 +149,8 @@ fn service_main_impl() {
         0,
     );
     tracing::info!("service running");
-    loop {
-        match rx.recv() {
-            Ok(SvcEvent::Session(ev, sid)) => runtime.session_change(ev, sid),
-            Ok(SvcEvent::Stop) | Err(_) => break,
-        }
+    while let Ok(SvcEvent::Session(ev, sid)) = rx.recv() {
+        runtime.session_change(ev, sid);
     }
     tracing::info!("service stopping");
     set_status(SERVICE_STOP_PENDING, 0, 0, 10_000);
@@ -164,8 +177,14 @@ pub fn warn_if_sas_not_configured() {
 pub fn run_dispatcher() -> windows::core::Result<()> {
     let mut name = crate::winutil::wide(SERVICE_NAME);
     let table = [
-        SERVICE_TABLE_ENTRYW { lpServiceName: PWSTR(name.as_mut_ptr()), lpServiceProc: Some(service_main) },
-        SERVICE_TABLE_ENTRYW { lpServiceName: PWSTR::null(), lpServiceProc: None },
+        SERVICE_TABLE_ENTRYW {
+            lpServiceName: PWSTR(name.as_mut_ptr()),
+            lpServiceProc: Some(service_main),
+        },
+        SERVICE_TABLE_ENTRYW {
+            lpServiceName: PWSTR::null(),
+            lpServiceProc: None,
+        },
     ];
     // SAFETY: the table is NULL-terminated and outlives the call, which blocks until the service ends.
     unsafe { StartServiceCtrlDispatcherW(table.as_ptr()) }
@@ -178,12 +197,18 @@ mod tests {
     #[test]
     fn names_match_setup_brand() {
         let setup = include_str!("../../setup/src/brand.rs");
-        for (name, value) in [("SERVICE_NAME", SERVICE_NAME), ("SERVICE_DISPLAY_NAME", SERVICE_DISPLAY_NAME)] {
+        for (name, value) in [
+            ("SERVICE_NAME", SERVICE_NAME),
+            ("SERVICE_DISPLAY_NAME", SERVICE_DISPLAY_NAME),
+        ] {
             let line = setup
                 .lines()
                 .find(|l| l.trim_start().starts_with(&format!("pub const {name}:")))
                 .unwrap_or_else(|| panic!("{name} missing in setup brand.rs"));
-            assert!(line.contains(&format!("\"{value}\"")), "{name} drifted: {line}");
+            assert!(
+                line.contains(&format!("\"{value}\"")),
+                "{name} drifted: {line}"
+            );
         }
     }
 }

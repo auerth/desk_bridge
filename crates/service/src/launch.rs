@@ -13,13 +13,13 @@ use crate::winutil::{OwnedHandle, wide};
 use std::ffi::c_void;
 use std::io;
 use std::path::Path;
-use windows::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, HANDLE, WAIT_OBJECT_0,
-};
+use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, HANDLE, LUID, WAIT_OBJECT_0};
 use windows::Win32::Security::{
-    DuplicateTokenEx, GetTokenInformation, SecurityImpersonation, SetTokenInformation,
-    TOKEN_ACCESS_MASK, TOKEN_ELEVATION_TYPE, TOKEN_LINKED_TOKEN, TokenElevationType,
-    TokenElevationTypeLimited, TokenLinkedToken, TokenPrimary, TokenSessionId,
+    AdjustTokenPrivileges, DuplicateTokenEx, GetTokenInformation, LUID_AND_ATTRIBUTES,
+    LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED, SecurityImpersonation, SetTokenInformation,
+    TOKEN_ACCESS_MASK, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION_TYPE, TOKEN_LINKED_TOKEN,
+    TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevationType, TokenElevationTypeLimited, TokenLinkedToken,
+    TokenPrimary, TokenSessionId,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
@@ -29,8 +29,8 @@ use windows::Win32::System::RemoteDesktop::{ProcessIdToSessionId, WTSQueryUserTo
 use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, GetCurrentProcess,
     GetExitCodeProcess, OpenMutexW, OpenProcess, OpenProcessToken, PROCESS_INFORMATION,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, STARTUPINFOW, SYNCHRONIZATION_SYNCHRONIZE, TerminateProcess,
-    WaitForSingleObject,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, STARTUPINFOW,
+    SYNCHRONIZATION_SYNCHRONIZE, TerminateProcess, WaitForSingleObject,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -58,7 +58,11 @@ pub enum TokenPlan {
 /// Pure decision on `TokenElevationType`.
 #[must_use]
 pub fn plan_token(elevation_type: i32) -> TokenPlan {
-    if elevation_type == TokenElevationTypeLimited.0 { TokenPlan::UseLinked } else { TokenPlan::UseDirect }
+    if elevation_type == TokenElevationTypeLimited.0 {
+        TokenPlan::UseLinked
+    } else {
+        TokenPlan::UseDirect
+    }
 }
 
 fn win_err(e: &windows::core::Error) -> io::Error {
@@ -129,11 +133,19 @@ pub fn agent_token(session: u32) -> io::Result<AgentToken> {
             }
             .map_err(|e| win_err(&e))?;
             let linked = OwnedHandle(linked.LinkedToken);
-            Ok(AgentToken { token: duplicate_primary(linked.raw())?, elevated: true, user_sid })
+            Ok(AgentToken {
+                token: duplicate_primary(linked.raw())?,
+                elevated: true,
+                user_sid,
+            })
         }
         // WTSQueryUserToken already returns a primary token.
         TokenPlan::UseDirect => {
-            Ok(AgentToken { token: user, elevated: ty.0 == 2 /* TokenElevationTypeFull */, user_sid })
+            Ok(AgentToken {
+                token: user,
+                elevated: ty.0 == 2, /* TokenElevationTypeFull */
+                user_sid,
+            })
         }
     }
 }
@@ -141,15 +153,23 @@ pub fn agent_token(session: u32) -> io::Result<AgentToken> {
 /// SID string of the user logged on in `session`.
 #[must_use]
 pub fn session_user_sid(session: u32) -> Option<String> {
-    user_token(session).ok().and_then(|t| crate::winutil::token_user_sid(t.raw()))
+    user_token(session)
+        .ok()
+        .and_then(|t| crate::winutil::token_user_sid(t.raw()))
 }
 
 /// SYSTEM primary token whose session id is `session`.
 fn system_token_for_session(session: u32) -> io::Result<OwnedHandle> {
     let mut own = HANDLE::default();
     // SAFETY: valid out pointer.
-    unsafe { OpenProcessToken(GetCurrentProcess(), windows::Win32::Security::TOKEN_ACCESS_MASK(TOKEN_FOR_HELPER), &mut own) }
-        .map_err(|e| win_err(&e))?;
+    unsafe {
+        OpenProcessToken(
+            GetCurrentProcess(),
+            windows::Win32::Security::TOKEN_ACCESS_MASK(TOKEN_FOR_HELPER),
+            &mut own,
+        )
+    }
+    .map_err(|e| win_err(&e))?;
     let own = OwnedHandle(own);
     let dup = duplicate_primary(own.raw())?;
     // SAFETY: `session` is a u32 as TokenSessionId requires.
@@ -222,7 +242,10 @@ fn create_as_user(
     }
     .map_err(|e| win_err(&e))?;
     drop(OwnedHandle(pi.hThread));
-    Ok(Launched { process: OwnedHandle(pi.hProcess), pid: pi.dwProcessId })
+    Ok(Launched {
+        process: OwnedHandle(pi.hProcess),
+        pid: pi.dwProcessId,
+    })
 }
 
 /// Starts the agent in `session` with the user's elevated token on `winsta0\default`.
@@ -253,6 +276,50 @@ pub fn launch_helper(session: u32, exe: &Path, args: &[String]) -> io::Result<La
     create_as_user(token.raw(), exe, args, r"winsta0\winlogon", None)
 }
 
+/// Enables the privileges `CreateProcessAsUserW` / `SetTokenInformation(TokenSessionId)` need.
+///
+/// LocalSystem holds them but some are disabled by default; enabling is best effort and only
+/// logged, because the calls that need them report their own errors.
+pub fn enable_service_privileges() {
+    for name in [
+        "SeTcbPrivilege",
+        "SeAssignPrimaryTokenPrivilege",
+        "SeIncreaseQuotaPrivilege",
+    ] {
+        if let Err(e) = enable_privilege(name) {
+            tracing::debug!("cannot enable {name}: {e}");
+        }
+    }
+}
+
+fn enable_privilege(name: &str) -> io::Result<()> {
+    let wname = wide(name);
+    let mut luid = LUID::default();
+    let mut token = HANDLE::default();
+    // SAFETY: valid out pointers and NUL-terminated name; the token handle is closed by the
+    // wrapper; `tp` is a fully initialised single-privilege TOKEN_PRIVILEGES.
+    unsafe {
+        LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(wname.as_ptr()), &mut luid)
+            .map_err(|e| win_err(&e))?;
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        )
+        .map_err(|e| win_err(&e))?;
+        let token = OwnedHandle(token);
+        let tp = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES {
+                Luid: luid,
+                Attributes: SE_PRIVILEGE_ENABLED,
+            }],
+        };
+        AdjustTokenPrivileges(token.raw(), false, Some(&raw const tp), 0, None, None)
+            .map_err(|e| win_err(&e))
+    }
+}
+
 /// Exit code if the process has ended, `None` while it runs.
 #[must_use]
 pub fn exit_code(process: &OwnedHandle) -> Option<u32> {
@@ -279,9 +346,15 @@ pub fn terminate(process: &OwnedHandle) {
 #[must_use]
 pub fn open_for_wait(pid: u32) -> Option<OwnedHandle> {
     // SAFETY: plain OpenProcess.
-    unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
-        .ok()
-        .map(OwnedHandle)
+    unsafe {
+        OpenProcess(
+            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            pid,
+        )
+    }
+    .ok()
+    .map(OwnedHandle)
 }
 
 /// PID of a process called `exe_name` (case-insensitive) running in `session`.
@@ -290,10 +363,17 @@ pub fn find_process_in_session(exe_name: &str, session: u32) -> Option<u32> {
     // SAFETY: standard snapshot walk; `entry.dwSize` is initialised as required.
     unsafe {
         let snap = OwnedHandle(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?);
-        let mut entry = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
         let mut ok = Process32FirstW(snap.raw(), &mut entry).is_ok();
         while ok {
-            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.szExeFile.len());
             let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
             if name.eq_ignore_ascii_case(exe_name) {
                 let mut sid = 0u32;
@@ -328,7 +408,10 @@ mod tests {
 
     #[test]
     fn token_plan() {
-        assert_eq!(plan_token(TokenElevationTypeLimited.0), TokenPlan::UseLinked);
+        assert_eq!(
+            plan_token(TokenElevationTypeLimited.0),
+            TokenPlan::UseLinked
+        );
         assert_eq!(plan_token(1), TokenPlan::UseDirect); // Default (standard user, UAC off)
         assert_eq!(plan_token(2), TokenPlan::UseDirect); // Full
     }
@@ -337,10 +420,16 @@ mod tests {
     fn command_lines() {
         let exe = Path::new(r"C:\Program Files\Desk Bridge\deskbridge-service.exe");
         assert_eq!(
-            command_line(exe, &["--helper".into(), "--user-sid".into(), "S-1-5-18".into()]),
+            command_line(
+                exe,
+                &["--helper".into(), "--user-sid".into(), "S-1-5-18".into()]
+            ),
             r#""C:\Program Files\Desk Bridge\deskbridge-service.exe" --helper --user-sid S-1-5-18"#
         );
-        assert_eq!(command_line(exe, &["a b".into()]), format!("\"{}\" \"a b\"", exe.display()));
+        assert_eq!(
+            command_line(exe, &["a b".into()]),
+            format!("\"{}\" \"a b\"", exe.display())
+        );
     }
 
     #[test]
@@ -353,6 +442,8 @@ mod tests {
         unsafe { ProcessIdToSessionId(std::process::id(), &mut sid) }.unwrap();
         assert!(find_process_in_session(&name, sid).is_some());
         assert!(find_process_in_session("definitely-not-a-process.exe", sid).is_none());
-        assert!(!mutex_exists(r"Global\softwelop-deskbridge-test-does-not-exist"));
+        assert!(!mutex_exists(
+            r"Global\softwelop-deskbridge-test-does-not-exist"
+        ));
     }
 }

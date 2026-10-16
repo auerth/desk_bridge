@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Runs two Desk Bridge agents on this PC (A and B) for development without a second computer.
 
@@ -55,8 +55,7 @@ $profileDir = if ($Config -eq 'Release') { 'release' } else { 'debug' }
 $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $repo 'target' }
 $bin = Join-Path $targetDir $profileDir
 
-$pyScripts = Join-Path $env:APPDATA 'Python\Python313\Scripts'
-if ((Test-Path $pyScripts) -and ($env:PATH -notlike "*$pyScripts*")) { $env:PATH = "$pyScripts;$env:PATH" }
+. "$PSScriptRoot\dev-env.ps1"
 
 if (-not $NoBuild) {
     $cargoArgs = @('build', '-p', 'deskbridge-agent')

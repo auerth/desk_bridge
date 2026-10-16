@@ -32,17 +32,23 @@ pub struct HelperHandler {
 impl HelperHandler {
     #[must_use]
     pub fn new(tx: Sender<Cmd>) -> Self {
-        Self { tx: parking_lot::Mutex::new(tx) }
+        Self {
+            tx: parking_lot::Mutex::new(tx),
+        }
     }
 }
 
 impl Handler for HelperHandler {
     fn handle(&self, req: Request) -> Option<Response> {
         match req {
-            Request::Ping => Some(Response::Pong { version: PROTOCOL_VERSION, pid: std::process::id() }),
-            Request::SendSas | Request::HelperStatus => {
-                Some(Response::error(ErrorCode::BadRequest, "not served by the helper pipe"))
-            }
+            Request::Ping => Some(Response::Pong {
+                version: PROTOCOL_VERSION,
+                pid: std::process::id(),
+            }),
+            Request::SendSas | Request::HelperStatus => Some(Response::error(
+                ErrorCode::BadRequest,
+                "not served by the helper pipe",
+            )),
             injection => {
                 // A closed channel means the worker died; the helper process is restarted by the
                 // service, nothing sensible to answer for fire-and-forget commands.
@@ -72,7 +78,10 @@ pub struct SystemDesktopFollower {
 impl SystemDesktopFollower {
     #[must_use]
     pub fn new() -> Self {
-        Self { desktop: ThreadDesktop::default(), last_error: None }
+        Self {
+            desktop: ThreadDesktop::default(),
+            last_error: None,
+        }
     }
 }
 
@@ -169,14 +178,23 @@ mod tests {
     fn handler_forwards_injection_and_answers_control() {
         let (tx, rx) = channel();
         let h = HelperHandler::new(tx);
-        assert!(matches!(h.handle(Request::Ping), Some(Response::Pong { .. })));
+        assert!(matches!(
+            h.handle(Request::Ping),
+            Some(Response::Pong { .. })
+        ));
         assert!(matches!(
             h.handle(Request::SendSas),
-            Some(Response::Error { code: ErrorCode::BadRequest, .. })
+            Some(Response::Error {
+                code: ErrorCode::BadRequest,
+                ..
+            })
         ));
         assert_eq!(h.handle(Request::Key { hid: 4, down: true }), None);
         h.on_disconnect();
-        assert_eq!(rx.try_recv().unwrap(), Cmd::Input(Request::Key { hid: 4, down: true }));
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            Cmd::Input(Request::Key { hid: 4, down: true })
+        );
         assert_eq!(rx.try_recv().unwrap(), Cmd::ReleaseAll);
         assert!(rx.try_recv().is_err());
     }
@@ -185,31 +203,72 @@ mod tests {
     fn worker_applies_commands_and_releases_on_disconnect() {
         let (tx, rx) = channel();
         let inj = Arc::new(MockInjector::default());
-        tx.send(Cmd::Input(Request::Key { hid: 0xE0, down: true })).unwrap();
-        tx.send(Cmd::Input(Request::MouseRel { dx: 3, dy: -4 })).unwrap();
-        tx.send(Cmd::Input(Request::MouseAbs { x: 10, y: 20 })).unwrap();
-        tx.send(Cmd::Input(Request::Button { button: Button::Right, down: true })).unwrap();
-        tx.send(Cmd::Input(Request::Wheel { dx: 0, dy: 120 })).unwrap();
+        tx.send(Cmd::Input(Request::Key {
+            hid: 0xE0,
+            down: true,
+        }))
+        .unwrap();
+        tx.send(Cmd::Input(Request::MouseRel { dx: 3, dy: -4 }))
+            .unwrap();
+        tx.send(Cmd::Input(Request::MouseAbs { x: 10, y: 20 }))
+            .unwrap();
+        tx.send(Cmd::Input(Request::Button {
+            button: Button::Right,
+            down: true,
+        }))
+        .unwrap();
+        tx.send(Cmd::Input(Request::Wheel { dx: 0, dy: 120 }))
+            .unwrap();
         tx.send(Cmd::ReleaseAll).unwrap();
         drop(tx);
-        run_worker(&rx, inj.as_ref(), &mut FakeFollower { changes: vec![], calls: 0 });
+        run_worker(
+            &rx,
+            inj.as_ref(),
+            &mut FakeFollower {
+                changes: vec![],
+                calls: 0,
+            },
+        );
         let ops = inj.ops();
-        assert_eq!(ops[0], InjectedOp::Key { hid: 0xE0, down: true });
+        assert_eq!(
+            ops[0],
+            InjectedOp::Key {
+                hid: 0xE0,
+                down: true
+            }
+        );
         assert_eq!(ops[1], InjectedOp::MouseRel { dx: 3, dy: -4 });
         assert_eq!(ops[2], InjectedOp::MouseAbs { x: 10, y: 20 });
-        assert_eq!(ops[3], InjectedOp::Button { button: Button::Right, down: true });
+        assert_eq!(
+            ops[3],
+            InjectedOp::Button {
+                button: Button::Right,
+                down: true
+            }
+        );
         assert_eq!(ops[4], InjectedOp::Wheel { dx: 0, dy: 120 });
-        assert!(inj.pressed_keys().is_empty(), "release_all must lift the key");
+        assert!(
+            inj.pressed_keys().is_empty(),
+            "release_all must lift the key"
+        );
     }
 
     #[test]
     fn worker_releases_everything_when_the_desktop_changes() {
         let (tx, rx) = channel();
         let inj = Arc::new(MockInjector::default());
-        tx.send(Cmd::Input(Request::Key { hid: 4, down: true })).unwrap();
+        tx.send(Cmd::Input(Request::Key { hid: 4, down: true }))
+            .unwrap();
         drop(tx);
         // first call (priming) = no change, second (before the first command) = changed
-        run_worker(&rx, inj.as_ref(), &mut FakeFollower { changes: vec![false, true], calls: 0 });
+        run_worker(
+            &rx,
+            inj.as_ref(),
+            &mut FakeFollower {
+                changes: vec![false, true],
+                calls: 0,
+            },
+        );
         assert_eq!(*inj.release_all_calls.lock(), 1);
         // the key pressed after the switch is still down
         assert_eq!(inj.pressed_keys(), vec![4]);

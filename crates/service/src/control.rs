@@ -5,10 +5,10 @@ use crate::protocol::{ErrorCode, PROTOCOL_VERSION, Request, Response};
 use crate::winutil::wide;
 use parking_lot::Mutex;
 use std::sync::Arc;
+use windows::Win32::Foundation::FreeLibrary;
 use windows::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
-use windows::Win32::Foundation::FreeLibrary;
 use windows::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::core::{PCSTR, PCWSTR};
 
@@ -140,7 +140,16 @@ pub struct ControlHandler {
 impl Handler for ControlHandler {
     fn handle(&self, req: Request) -> Option<Response> {
         Some(match req {
-            Request::Ping => Response::Pong { version: PROTOCOL_VERSION, pid: std::process::id() },
+            // Injection commands are fire-and-forget on the wire, so refusing them must stay
+            // silent too (an unexpected response would desynchronise the client).
+            r if r.is_injection() => {
+                tracing::debug!("ignoring injection request on the control pipe");
+                return None;
+            }
+            Request::Ping => Response::Pong {
+                version: PROTOCOL_VERSION,
+                pid: std::process::id(),
+            },
             Request::SendSas => match self.sas.send() {
                 Ok(()) => {
                     tracing::info!("SendSAS issued");
@@ -153,7 +162,11 @@ impl Handler for ControlHandler {
             },
             Request::HelperStatus => {
                 let s = *self.helper.lock();
-                Response::HelperStatus { running: s.running, pid: s.pid, session: s.session }
+                Response::HelperStatus {
+                    running: s.running,
+                    pid: s.pid,
+                    session: s.session,
+                }
             }
             _ => Response::error(ErrorCode::BadRequest, "not served by the service pipe"),
         })
@@ -185,20 +198,30 @@ mod tests {
     #[test]
     fn control_handler_dispatch() {
         let sas = Arc::new(CountingSas(Mutex::new(0)));
-        let helper: SharedHelperStatus =
-            Arc::new(Mutex::new(HelperStatus { running: true, pid: 9, session: 1 }));
-        let h = ControlHandler { sas: sas.clone(), helper };
-        assert!(matches!(h.handle(Request::Ping), Some(Response::Pong { .. })));
+        let helper: SharedHelperStatus = Arc::new(Mutex::new(HelperStatus {
+            running: true,
+            pid: 9,
+            session: 1,
+        }));
+        let h = ControlHandler {
+            sas: sas.clone(),
+            helper,
+        };
+        assert!(matches!(
+            h.handle(Request::Ping),
+            Some(Response::Pong { .. })
+        ));
         assert_eq!(h.handle(Request::SendSas), Some(Response::Ok));
         assert_eq!(*sas.0.lock(), 1);
         assert_eq!(
             h.handle(Request::HelperStatus),
-            Some(Response::HelperStatus { running: true, pid: 9, session: 1 })
+            Some(Response::HelperStatus {
+                running: true,
+                pid: 9,
+                session: 1
+            })
         );
-        assert!(matches!(
-            h.handle(Request::ReleaseAll),
-            Some(Response::Error { code: ErrorCode::BadRequest, .. })
-        ));
+        assert_eq!(h.handle(Request::ReleaseAll), None);
         assert_eq!(*sas.0.lock(), 1);
     }
 
@@ -210,7 +233,10 @@ mod tests {
         };
         assert!(matches!(
             h.handle(Request::SendSas),
-            Some(Response::Error { code: ErrorCode::Disabled, .. })
+            Some(Response::Error {
+                code: ErrorCode::Disabled,
+                ..
+            })
         ));
     }
 
@@ -218,11 +244,17 @@ mod tests {
     fn sas_errors_map_to_codes() {
         assert!(matches!(
             SasError::NotAllowedByPolicy.to_response(),
-            Response::Error { code: ErrorCode::SasNotAllowed, .. }
+            Response::Error {
+                code: ErrorCode::SasNotAllowed,
+                ..
+            }
         ));
         assert!(matches!(
             SasError::Unavailable("x".into()).to_response(),
-            Response::Error { code: ErrorCode::Unsupported, .. }
+            Response::Error {
+                code: ErrorCode::Unsupported,
+                ..
+            }
         ));
     }
 }

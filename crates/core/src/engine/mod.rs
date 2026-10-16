@@ -233,6 +233,15 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         Some(i) => i,
         None => Identity::load_or_create(&paths.identity_file(), platform.secrets.as_ref())?,
     });
+    // A crashed focus session on this device must not leave the displays rearranged (plan 8.7).
+    {
+        let (tp, dm) = (paths.topology_file(), platform.display.clone());
+        match tokio::task::spawn_blocking(move || deskbridge_display::recover_on_startup(&tp, &dm)).await {
+            Ok(Ok(outcome)) => tracing::info!(?outcome, "display recovery check"),
+            Ok(Err(e)) => tracing::warn!("display recovery failed: {e}"),
+            Err(e) => tracing::warn!("display recovery task failed: {e}"),
+        }
+    }
     let peers = PeerStore::load(paths.peers_file())?;
     let transport = Arc::new(Transport::bind(identity.clone(), peers.clone(), bind)?);
     let local_addr = transport.local_addr()?;
