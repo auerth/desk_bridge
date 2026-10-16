@@ -9,6 +9,11 @@ use deskbridge_platform::screen::ScreenInfo;
 use deskbridge_proto::pb::{self, Edge, Placement};
 use uuid::Uuid;
 
+/// A cursor that reaches an edge this close (layout units, about one inch) to the neighbour's
+/// span still switches and is mapped to the nearest point, so nobody has to hunt for the exact
+/// spot along the edge.
+pub const SNAP: f64 = 96.0;
+
 /// Two edges closer than this (layout units) count as touching.
 pub const TOUCH_EPS: f64 = 2.0;
 
@@ -184,6 +189,7 @@ impl Layout {
             Edge::Bottom => (src.x + rel * src.w, src.bottom()),
             Edge::Unspecified => return None,
         };
+        let mut best: Option<(f64, Hit)> = None;
         for t in &self.screens {
             if t.device == src.device && t.screen == src.screen {
                 continue;
@@ -230,17 +236,30 @@ impl Layout {
                 Edge::Left | Edge::Right => py,
                 _ => px,
             };
-            if along >= lo && along <= hi {
+            let dist = if along < lo {
+                lo - along
+            } else if along > hi {
+                along - hi
+            } else {
+                0.0
+            };
+            if dist <= SNAP {
                 let rel_t = ((along - start) / len).clamp(0.0, 1.0);
-                return Some(Hit {
+                let hit = Hit {
                     device: t.device,
                     screen: t.screen,
                     rel: rel_t,
                     entry_edge: entry,
-                });
+                };
+                if dist == 0.0 {
+                    return Some(hit);
+                }
+                if best.as_ref().is_none_or(|(d, _)| dist < *d) {
+                    best = Some((dist, hit));
+                }
             }
         }
-        None
+        best.map(|(_, h)| h)
     }
 
     /// Wire representation for `LayoutUpdate`.
@@ -306,7 +325,10 @@ mod tests {
         let bottom = l.neighbor((pc, 0), Edge::Right, 1260.0 / 1440.0).unwrap();
         assert!(bottom.rel > 0.99);
         // Above the laptop: nothing is there, the cursor is blocked.
-        assert!(l.neighbor((pc, 0), Edge::Right, 0.05).is_none());
+        assert!(l.neighbor((pc, 0), Edge::Right, 0.0).is_none());
+        // close to the span the cursor snaps to its nearest point
+        let snapped = l.neighbor((pc, 0), Edge::Right, 0.1).unwrap();
+        assert!(snapped.rel < 0.01);
         let _ = lp;
     }
 

@@ -615,7 +615,8 @@ impl VirtualFileProvider for NetProvider {
             }));
         let stream = self
             .rt
-            .block_on(tokio::time::timeout(Duration::from_secs(30), rx))
+            // The timer must be created inside the runtime: this runs on the clipboard thread.
+            .block_on(async { tokio::time::timeout(Duration::from_secs(30), rx).await })
             .map_err(|_| {
                 deskbridge_platform::PlatformError::other("Zeitüberschreitung beim Abruf der Datei")
             })?

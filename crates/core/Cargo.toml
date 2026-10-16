@@ -41,6 +41,9 @@ sha2.workspace = true
 [dev-dependencies]
 tempfile = "3"
 
+[target.'cfg(windows)'.dev-dependencies]
+deskbridge-platform-windows.workspace = true
+
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.58"
 features = [

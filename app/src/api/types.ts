@@ -318,6 +318,7 @@ export interface LaptopAudioConfig {
   codec: 'auto' | 'pcm' | 'opus';
   opus_bitrate_kbps: number;
   buffer_ms: number;
+  mute_local_output: boolean;
 }
 
 export interface MicAudioConfig {
@@ -438,6 +439,7 @@ export function defaultConfig(): Config {
         codec: 'auto',
         opus_bitrate_kbps: 160,
         buffer_ms: 0,
+        mute_local_output: true,
       },
       mic_to_laptop: { enabled: true, input_device: '', only_when_used: true, mute: false, set_as_default: false },
     },

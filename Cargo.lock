@@ -1007,6 +1007,7 @@ dependencies = [
  "deskbridge-input",
  "deskbridge-net",
  "deskbridge-platform",
+ "deskbridge-platform-windows",
  "deskbridge-proto",
  "deskbridge-video",
  "directories",

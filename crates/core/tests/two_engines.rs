@@ -699,15 +699,28 @@ async fn focus_start_failure_on_the_laptop_leaves_the_pc_clean() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn laptop_speakers_are_muted_while_streaming_and_restored_afterwards() {
     let (pc, lp) = setup().await;
-    wait_for("laptop captures loopback", || lp.m.audio_capture.active(true)).await;
-    wait_for("laptop speakers muted", || lp.m.local_output.is_muted("out1")).await;
+    wait_for("laptop captures loopback", || {
+        lp.m.audio_capture.active(true)
+    })
+    .await;
+    wait_for("laptop speakers muted", || {
+        lp.m.local_output.is_muted("out1")
+    })
+    .await;
 
     // Headset gone → the stream pauses → the laptop gets its speakers back.
     let mut cfg: deskbridge_core::config::Config =
         serde_json::from_value(pc.h.request(UiRequest::GetConfig).await.unwrap()).unwrap();
     cfg.audio.laptop_to_pc.enabled = false;
-    pc.h.request(UiRequest::SetConfig { config: Box::new(cfg) }).await.unwrap();
-    wait_for("laptop speakers restored", || !lp.m.local_output.is_muted("out1")).await;
+    pc.h.request(UiRequest::SetConfig {
+        config: Box::new(cfg),
+    })
+    .await
+    .unwrap();
+    wait_for("laptop speakers restored", || {
+        !lp.m.local_output.is_muted("out1")
+    })
+    .await;
     pc.h.stop();
     lp.h.stop();
 }
@@ -715,8 +728,64 @@ async fn laptop_speakers_are_muted_while_streaming_and_restored_afterwards() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn laptop_speakers_are_restored_when_the_connection_drops() {
     let (pc, lp) = setup().await;
-    wait_for("laptop speakers muted", || lp.m.local_output.is_muted("out1")).await;
+    wait_for("laptop speakers muted", || {
+        lp.m.local_output.is_muted("out1")
+    })
+    .await;
     pc.h.stop(); // cable pulled
-    wait_for("laptop speakers restored", || !lp.m.local_output.is_muted("out1")).await;
+    wait_for("laptop speakers restored", || {
+        !lp.m.local_output.is_muted("out1")
+    })
+    .await;
+    lp.h.stop();
+}
+
+/// Explorer pasting virtual files: the laptop reads the PC's copied files through the provider,
+/// including a partial read followed by a backward seek (a reopen) and a second pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn clipboard_files_are_readable_through_the_virtual_provider() {
+    let (pc, lp) = setup().await;
+    let src = tempfile::tempdir().unwrap();
+    let big: Vec<u8> = (0..2_000_000u32).map(|i| (i % 253) as u8).collect();
+    let small = b"hallo welt".to_vec();
+    std::fs::write(src.path().join("big.bin"), &big).unwrap();
+    std::fs::write(src.path().join("klein.txt"), &small).unwrap();
+    pc.m.clipboard.user_copy_files(vec![
+        src.path().join("big.bin"),
+        src.path().join("klein.txt"),
+    ]);
+    wait_for("laptop offers virtual files", || {
+        lp.m.clipboard.file_provider.lock().is_some()
+    })
+    .await;
+    let offered = lp.m.clipboard.offered_files.lock().clone();
+    assert_eq!(offered.len(), 2);
+    let provider = lp.m.clipboard.file_provider.lock().clone().unwrap();
+    let idx = |n: &str| offered.iter().position(|o| o.rel_path == n).unwrap();
+    let (ib, is) = (idx("big.bin"), idx("klein.txt"));
+    // A plain OS thread without Tokio context, like Explorer's clipboard thread.
+    let (got_big, got_small, got_big_again) = tokio::task::spawn_blocking(move || {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let read_all = |i: usize| {
+                let mut v = Vec::new();
+                provider.open(i).unwrap().read_to_end(&mut v).unwrap();
+                v
+            };
+            // Probe: read a little, drop (as Explorer does for type detection) ...
+            let mut head = [0u8; 16];
+            provider.open(ib).unwrap().read_exact(&mut head).unwrap();
+            // ... then the real copies.
+            (read_all(ib), read_all(is), read_all(ib))
+        })
+        .join()
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(got_big == big, "big file differs ({} bytes)", got_big.len());
+    assert_eq!(got_small, small);
+    assert!(got_big_again == big);
+    pc.h.stop();
     lp.h.stop();
 }

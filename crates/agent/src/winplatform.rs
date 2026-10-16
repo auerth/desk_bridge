@@ -3,7 +3,10 @@
 use crate::secure::{SecureDesktopInjector, ServiceClient};
 use deskbridge_core::platform::Platform;
 use deskbridge_platform_windows::{
-    audio::{WinLocalOutput, CableVirtualAudio, VirtualAudioStub, WasapiCapture, WasapiDevices, WasapiPlayback},
+    audio::{
+        CableVirtualAudio, VirtualAudioStub, WasapiCapture, WasapiDevices, WasapiPlayback,
+        WinLocalOutput,
+    },
     clipboard::WinClipboard,
     input::{WinInputCapture, WinInputInjector},
     power::WinPowerManager,

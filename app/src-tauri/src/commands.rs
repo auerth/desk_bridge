@@ -129,8 +129,9 @@ pub fn set_window_theme(app: AppHandle, theme: String) {
         "dark" => (Some(Theme::Dark), Some(true)),
         _ => (None, None),
     };
-    let _ = win.set_theme(t);
-    windows::apply_backdrop(&app, &win, dark);
+    // The window has no native frame (custom title bar) and no Mica, so the native theme does not
+    // matter; changing it caused WebView2 repaints (bright flashes), hence it is left alone.
+    let _ = (&t, &dark, &win);
 }
 
 #[derive(Serialize)]

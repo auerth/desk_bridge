@@ -167,9 +167,31 @@ export function Onboarding() {
     const i = STEPS.indexOf(p as Step);
     return i >= 0 ? i : 0;
   }, []);
-  const [idx, setIdx] = useState(initialStep);
+  // Survive a webview reload: the wizard position is kept for the session.
+  const [idx, setIdx] = useState(() => {
+    try {
+      const saved = Number(sessionStorage.getItem('db.onb.idx'));
+      return Number.isInteger(saved) && saved > 0 && saved < STEPS.length ? saved : initialStep;
+    } catch {
+      return initialStep;
+    }
+  });
   const [dir, setDir] = useState(1);
-  const [name, setName] = useState(state?.device.name ?? '');
+  const [name, setName] = useState(() => {
+    try {
+      return sessionStorage.getItem('db.onb.name') ?? state?.device.name ?? '';
+    } catch {
+      return state?.device.name ?? '';
+    }
+  });
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('db.onb.idx', String(idx));
+      sessionStorage.setItem('db.onb.name', name);
+    } catch {
+      /* storage may be unavailable */
+    }
+  }, [idx, name]);
   const [isPc, setIsPc] = useState<boolean | null>(state ? state.device.input_source : null);
   const [pairedName, setPairedName] = useState<string | null | undefined>(undefined);
 

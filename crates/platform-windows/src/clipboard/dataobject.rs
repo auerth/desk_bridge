@@ -488,13 +488,19 @@ impl StreamState {
             return Ok(0);
         }
         self.sync_reader()?;
-        let n = self.read_raw(&mut buf[..want])?;
-        if n == 0 {
-            // Declared size not delivered: report an error rather than silently truncating.
-            return Err(io::ErrorKind::UnexpectedEof.into());
+        // Fill the caller's buffer like a file stream does: a network source delivers short
+        // reads, and consumers (Explorer) may treat `read < requested` as the end of the file.
+        let mut filled = 0;
+        while filled < want {
+            let n = self.read_raw(&mut buf[filled..want])?;
+            if n == 0 {
+                // Declared size not delivered: report an error rather than silently truncating.
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            filled += n;
+            self.pos += n as u64;
         }
-        self.pos += n as u64;
-        Ok(n)
+        Ok(filled)
     }
 }
 
@@ -834,7 +840,7 @@ mod tests {
             rpos: 0,
         };
         let mut b = [0u8; 8];
-        assert_eq!(st.read(&mut b).unwrap(), 3);
+        // The buffer is filled completely, so running out of data is an error right away.
         assert!(st.read(&mut b).is_err());
     }
 }

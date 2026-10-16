@@ -198,6 +198,8 @@ export const en: Record<MessageKey, string> = {
   'audio.codecHint': 'Automatic uses uncompressed PCM with minimal delay on wired LAN and switches to Opus seamlessly when needed.',
   'audio.opusBitrate': 'Opus bitrate',
   'audio.testTone': 'Play test tone',
+  'audio.muteLocal': 'Mute laptop speakers while sound plays on the PC',
+  'audio.muteLocalHint': 'Sound only plays in the headset on the PC. The laptop output is restored on stop, disconnect or crash.',
   'audio.testToneHint': 'Plays a short tone “from the laptop” in the headset.',
   'audio.deviceMissing': 'The headset was not found. Sound is paused and resumes by itself once it is back.',
   'audio.refresh': 'Reload devices',

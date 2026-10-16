@@ -29,7 +29,15 @@ pub fn setup_main(app: &AppHandle) {
     apply_backdrop(app, &win, None);
 }
 
+/// Mica is disabled: with a transparent window the backdrop follows the *system* theme while the
+/// UI follows the *app* theme, which showed light text on a bright backdrop (unreadable). The main
+/// window is opaque now. Flip this to `true` to experiment again.
+const USE_MICA: bool = false;
+
 pub fn apply_backdrop(app: &AppHandle, win: &WebviewWindow, dark: Option<bool>) {
+    if !USE_MICA {
+        return;
+    }
     match window_vibrancy::apply_mica(win, dark) {
         Ok(()) => {
             if let Some(shared) = app.try_state::<Shared>() {

@@ -198,6 +198,8 @@ export const de = {
   'audio.codecHint': 'Automatisch nutzt im Kabel-LAN unkomprimiertes PCM mit minimaler Verzögerung und wechselt bei Bedarf nahtlos zu Opus.',
   'audio.opusBitrate': 'Opus-Bitrate',
   'audio.testTone': 'Testton abspielen',
+  'audio.muteLocal': 'Laptop-Lautsprecher stumm schalten, solange der Ton am PC ankommt',
+  'audio.muteLocalHint': 'Der Ton läuft nur noch im Headset am PC. Beim Beenden, Trennen oder Absturz wird die Lautstärke des Laptops wiederhergestellt.',
   'audio.testToneHint': 'Spielt einen kurzen Ton „vom Laptop“ im Headset ab.',
   'audio.deviceMissing': 'Das Headset wurde nicht gefunden. Der Ton pausiert und läuft von selbst weiter, sobald es wieder da ist.',
   'audio.refresh': 'Geräte neu laden',

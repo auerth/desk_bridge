@@ -638,3 +638,70 @@ fn live_hold_virtual_files() {
     std::thread::sleep(Duration::from_secs(secs));
     cb.stop();
 }
+
+/// Reader that behaves like the network stream: short, uneven reads with latency.
+struct Choppy(Cursor<Vec<u8>>, usize);
+
+impl Read for Choppy {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        std::thread::sleep(Duration::from_millis(3));
+        self.1 += 1;
+        let cap = if self.1.is_multiple_of(3) {
+            4_096
+        } else {
+            70_000
+        };
+        let n = out.len().min(cap);
+        self.0.read(&mut out[..n])
+    }
+}
+
+struct ChoppyProvider(Vec<Vec<u8>>);
+
+impl VirtualFileProvider for ChoppyProvider {
+    fn open(&self, index: usize) -> deskbridge_platform::Result<Box<dyn Read + Send>> {
+        std::thread::sleep(Duration::from_millis(400));
+        Ok(Box::new(Choppy(Cursor::new(self.0[index].clone()), 0)))
+    }
+}
+
+#[test]
+#[ignore = "overwrites the real clipboard"]
+fn live_virtual_files_with_short_reads_and_latency() {
+    let (cb, _rx) = start();
+    let big: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+    let datas = vec![b"hello virtual".to_vec(), big];
+    let offers = vec![
+        FileOffer {
+            rel_path: "a.txt".into(),
+            size: datas[0].len() as u64,
+            mtime_unix_ms: 1_700_000_000_000,
+            is_dir: false,
+        },
+        FileOffer {
+            rel_path: "big.bin".into(),
+            size: datas[1].len() as u64,
+            mtime_unix_ms: 1_700_000_000_000,
+            is_dir: false,
+        },
+    ];
+    cb.offer_files(offers, Arc::new(ChoppyProvider(datas.clone())))
+        .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let script = format!(
+        "Add-Type -AssemblyName System.Windows.Forms; [void][Windows.Forms.Clipboard]::ContainsText(); $sh = New-Object -ComObject Shell.Application; $ns = $sh.Namespace('{}'); $ns.Self.InvokeVerb('paste'); Start-Sleep -Seconds 8",
+        out.path().display()
+    );
+    let _ = ps(&script, true);
+    let listing = walk(out.path());
+    assert_eq!(
+        std::fs::read(out.path().join("a.txt")).unwrap_or_default(),
+        datas[0],
+        "files={listing:?}"
+    );
+    assert!(
+        std::fs::read(out.path().join("big.bin")).unwrap_or_default() == datas[1],
+        "big.bin differs, files={listing:?}"
+    );
+    cb.stop();
+}

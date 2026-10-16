@@ -2,7 +2,7 @@
 
 use crate::audio::{
     AudioCapture, AudioDeviceInfo, AudioDevices, AudioFrame, AudioPlayback, CaptureSource,
-    DeviceEvent, DeviceKind, MicUsage, PullSource, StreamHandle, VirtualAudio, LocalOutput,
+    DeviceEvent, DeviceKind, LocalOutput, MicUsage, PullSource, StreamHandle, VirtualAudio,
 };
 use crate::clipboard::{
     ClipFormatInfo, ClipboardBackend, ClipboardEvent, ClipboardProvider, FileOffer,
@@ -257,6 +257,21 @@ impl MockClipboard {
                 sensitive: false,
                 text: Some(text.to_string()),
                 files: vec![],
+            });
+        }
+    }
+
+    /// Simulates copying files in Explorer.
+    pub fn user_copy_files(&self, paths: Vec<PathBuf>) {
+        if let Some(tx) = self.tx.lock().as_ref() {
+            let _ = tx.send(ClipboardEvent::Changed {
+                formats: vec![ClipFormatInfo {
+                    mime: "application/x-deskbridge-files".into(),
+                    size: 0,
+                }],
+                sensitive: false,
+                text: None,
+                files: paths,
             });
         }
     }

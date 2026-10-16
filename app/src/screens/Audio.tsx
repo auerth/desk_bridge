@@ -82,6 +82,12 @@ export function Audio() {
             onChange={(v) => update((c) => void (c.audio.laptop_to_pc.volume = v / 100))}
           />
         </Row>
+        <SwitchRow
+          title={t('audio.muteLocal')}
+          description={t('audio.muteLocalHint')}
+          checked={cfg.laptop_to_pc.mute_local_output}
+          onChange={(v) => update((c) => void (c.audio.laptop_to_pc.mute_local_output = v))}
+        />
         <SwitchRow title={t('audio.mute')} checked={cfg.laptop_to_pc.mute} onChange={(v) => update((c) => void (c.audio.laptop_to_pc.mute = v))} />
         <Row title={t('audio.level')}>
           <div className="meter-row">
