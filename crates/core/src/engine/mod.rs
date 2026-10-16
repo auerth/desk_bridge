@@ -79,6 +79,8 @@ pub(crate) enum Msg {
         ev: pb::InputEvent,
     },
     Capture(CaptureEvent),
+    /// Short after a relative motion on the target: has the cursor come to rest on the return edge?
+    EdgeRecheck,
     Clipboard(ClipboardEvent),
     Power(PowerEvent),
     ScreensChanged,
@@ -234,6 +236,8 @@ pub(crate) struct Engine {
     pub router: Router,
     pub receiver: Option<Receiver>,
     pub capture_running: bool,
+    /// A delayed return-edge check is already scheduled (see `Msg::EdgeRecheck`).
+    pub(crate) edge_recheck_pending: bool,
     pub(crate) clip: Option<clip::ClipRuntime>,
     pub(crate) audio: audio::AudioState,
     pub(crate) focus: focus::FocusRt,
@@ -380,6 +384,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         router,
         receiver: None,
         capture_running: false,
+        edge_recheck_pending: false,
         clip: None,
         audio: audio::AudioState::default(),
         focus: focus::FocusRt::default(),
@@ -543,6 +548,7 @@ impl Engine {
             Msg::PeerControl { session_id, msg } => self.on_peer_control(session_id, msg),
             Msg::PeerInput { session_id, ev } => self.on_peer_input(session_id, ev),
             Msg::Capture(ev) => self.on_capture(ev),
+            Msg::EdgeRecheck => self.on_edge_recheck(),
             Msg::Clipboard(ev) => self.on_clipboard(ev),
             Msg::Power(ev) => self.on_power(ev),
             Msg::ScreensChanged => self.on_screens_changed(),

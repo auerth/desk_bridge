@@ -23,6 +23,8 @@ pub struct Receiver {
 struct Active {
     /// Edge hit already reported (re-armed when the cursor moves away from the edge).
     edge_reported: bool,
+    /// Last relative motion and its timestamp, for the delayed edge check.
+    last_motion: Option<(i32, i32, u64)>,
 }
 
 impl Receiver {
@@ -86,6 +88,9 @@ impl Receiver {
             }
             Ev::Rel(r) => {
                 self.injector.mouse_rel(r.dx, r.dy);
+                if let Some(a) = self.active.as_mut() {
+                    a.last_motion = Some((r.dx, r.dy, ev.ts_us));
+                }
                 self.check_return_edge(r.dx, r.dy, ev.ts_us)
             }
             Ev::Abs(a) => {
@@ -158,6 +163,7 @@ impl Receiver {
         }
         self.active = Some(Active {
             edge_reported: false,
+            last_motion: None,
         });
     }
 
@@ -177,6 +183,16 @@ impl Receiver {
     fn pulse(&self, key: u16) {
         self.injector.key(key, true);
         self.injector.key(key, false);
+    }
+
+    /// Checks the return edge again once the injected motion has been applied. The cursor
+    /// position read right after `SendInput` still lags, so a cursor that stops exactly on the edge
+    /// would otherwise only switch back after the next (wiggle) event.
+    pub fn recheck_return_edge(&mut self) -> Vec<pb::InputEvent> {
+        let Some((dx, dy, ts)) = self.active.as_mut().and_then(|a| a.last_motion.take()) else {
+            return vec![];
+        };
+        self.check_return_edge(dx, dy, ts)
     }
 
     fn check_return_edge(&mut self, dx: i32, dy: i32, ts_us: u64) -> Vec<pb::InputEvent> {
@@ -354,6 +370,25 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn cursor_that_comes_to_rest_on_the_edge_returns_without_a_wiggle() {
+        let (mut r, _, scr) = setup();
+        enter_left(&mut r);
+        // The position read right after injecting still lags: not on the edge yet.
+        scr.set_cursor(Point { x: 20, y: 540 });
+        assert!(
+            r.on_event(&ev(Ev::Rel(pb::MouseRel { dx: -30, dy: 0 })))
+                .is_empty()
+        );
+        // The motion has been applied meanwhile; the user stopped. The delayed check reports it.
+        scr.set_cursor(Point { x: 0, y: 540 });
+        let out = r.recheck_return_edge();
+        assert_eq!(out.len(), 1);
+        assert!(matches!(out[0].ev, Some(Ev::EdgeHit(_))));
+        // and only once
+        assert!(r.recheck_return_edge().is_empty());
     }
 
     #[test]

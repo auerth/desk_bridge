@@ -123,6 +123,17 @@ impl Engine {
         self.dirty = true;
     }
 
+    pub(crate) fn on_edge_recheck(&mut self) {
+        self.edge_recheck_pending = false;
+        let Some(s) = &self.session else { return };
+        let link = s.link.clone();
+        if let Some(r) = self.receiver.as_mut() {
+            for reply in r.recheck_return_edge() {
+                link.send_input_event(reply);
+            }
+        }
+    }
+
     /// The user is on this device now: files copied on the other one may take over the clipboard.
     fn claim_clipboard_files(&self) {
         if let Some(c) = &self.clip {
@@ -181,8 +192,20 @@ impl Engine {
             Some(_) => {
                 let was_active = self.receiver.as_ref().is_some_and(Receiver::is_active);
                 if let Some(r) = self.receiver.as_mut() {
-                    for reply in r.on_event(&ev) {
+                    let replies = r.on_event(&ev);
+                    let moved = matches!(ev.ev, Some(Ev::Rel(_)));
+                    let no_reply = replies.is_empty();
+                    for reply in replies {
                         link.send_input_event(reply);
+                    }
+                    if moved && no_reply && !self.edge_recheck_pending {
+                        // The cursor position lags the injected motion: look again in a moment.
+                        self.edge_recheck_pending = true;
+                        let m = self.msg_tx.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+                            let _ = m.send(super::Msg::EdgeRecheck);
+                        });
                     }
                     let now_active = r.is_active();
                     if now_active != was_active {
