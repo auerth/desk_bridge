@@ -167,6 +167,23 @@ pub fn install(ctx: &Ctx, args: &InstallArgs) -> Result<i32> {
                         spec.inf.display(),
                         spec.hwid
                     ));
+                    if let Some(tc) = &spec.trust_cert {
+                        ctx.plan(&format!(
+                            "trust publisher certificate {} (SHA-1 {}) for driver {:?}",
+                            tc.file.display(),
+                            tc.sha1,
+                            spec.name
+                        ));
+                        if !ctx.dry_run {
+                            if let Some(true) = step(&mut failures, "publisher trust", || {
+                                crate::trust::add_publisher(&tc.file, &tc.sha1)
+                            }) {
+                                manifest
+                                    .trusted_certs
+                                    .push(crate::trust::normalize(&tc.sha1));
+                            }
+                        }
+                    }
                     let what = format!("driver {}", spec.name);
                     if let Some(out) = step(&mut failures, &what, || {
                         driver::copy_files(&spec, ctx.dry_run)?;
@@ -362,6 +379,18 @@ pub fn uninstall(ctx: &Ctx, args: &UninstallArgs) -> Result<i32> {
                 if let Some(parent) = f.parent() {
                     let _ = std::fs::remove_dir(parent); // only succeeds when empty
                 }
+            }
+        }
+    }
+
+    // publisher certificates we trusted
+    if let Some(m) = manifest.as_ref() {
+        for t in &m.trusted_certs {
+            ctx.plan(&format!("remove trusted publisher certificate {t}"));
+            if !ctx.dry_run {
+                step(&mut failures, "publisher trust", || {
+                    crate::trust::remove_publisher(t)
+                });
             }
         }
     }

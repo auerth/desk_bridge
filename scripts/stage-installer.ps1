@@ -115,7 +115,7 @@ if (Test-Path $driversRoot) {
         Copy-Item $pkg (Join-Path $dst 'package') -Recurse
         $cfg = Join-Path $dir.FullName 'config'
         if (Test-Path $cfg) { Copy-Item $cfg (Join-Path $dst 'config') -Recurse }
-        foreach ($doc in 'LICENSE', 'NOTICE.md') {
+        foreach ($doc in 'LICENSE', 'NOTICE.md', 'README.md') {
             $p = Join-Path $dir.FullName $doc
             if (Test-Path $p) { Copy-Item $p $dst }
         }
@@ -131,6 +131,9 @@ if (Test-Path $driversRoot) {
             foreach ($f in $m.files) { $files += [ordered]@{ from = "drivers/$($dir.Name)/$($f.from)"; to = [string]$f.to } }
         }
         $entry.files = $files
+        if ($m.PSObject.Properties.Name -contains 'trust_certificate') {
+            $entry.trust_certificate = [ordered]@{ file = "drivers/$($dir.Name)/$($m.trust_certificate.file)"; sha1 = [string]$m.trust_certificate.sha1 }
+        }
         $catalogue += $entry
         Write-Host "==> driver staged: $($m.name) ($($m.hwid))" -ForegroundColor Cyan
     }

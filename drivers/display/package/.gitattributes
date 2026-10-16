@@ -1,0 +1,3 @@
+# Signed driver package: every byte matters (the .cat holds hashes of the .inf and .dll).
+# The repo-wide "* text=auto eol=lf" would rewrite MttVDD.inf and break the catalog signature.
+* binary

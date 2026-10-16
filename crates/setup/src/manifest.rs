@@ -38,6 +38,9 @@ pub struct Manifest {
     /// The installer created the `SoftwareSASGeneration` policy value (and removes it again).
     #[serde(default)]
     pub sas_policy: bool,
+    /// Thumbprints (SHA-1) of publisher certificates this installer added to `TrustedPublisher`.
+    #[serde(default)]
+    pub trusted_certs: Vec<String>,
     #[serde(default)]
     pub drivers: Vec<DriverRecord>,
 }
@@ -57,6 +60,7 @@ impl Manifest {
             send_to_shortcut: None,
             service: None,
             sas_policy: false,
+            trusted_certs: Vec::new(),
             drivers: Vec::new(),
         }
     }

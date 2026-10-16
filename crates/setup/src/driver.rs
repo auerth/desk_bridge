@@ -28,6 +28,16 @@ pub struct DriverSpec {
     pub name: String,
     /// Config files to place before the device is created.
     pub files: Vec<FileCopy>,
+    /// Publisher certificate to trust before installing (third-party signed user-mode drivers).
+    pub trust_cert: Option<TrustCert>,
+}
+
+/// A pinned publisher certificate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustCert {
+    pub file: PathBuf,
+    /// SHA-1 thumbprint the file must have.
+    pub sha1: String,
 }
 
 /// A validated spec together with what the INF says.
@@ -106,6 +116,15 @@ struct CatalogueEntry {
     /// `to` is an absolute destination.
     #[serde(default)]
     files: Vec<CatalogueFile>,
+    #[serde(default)]
+    trust_certificate: Option<CatalogueCert>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CatalogueCert {
+    /// Relative to the install dir.
+    file: String,
+    sha1: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -183,11 +202,27 @@ pub fn parse_catalogue(json: &str, install_dir: &Path) -> Result<Vec<DriverSpec>
                 to: PathBuf::from(f.to),
             });
         }
+        let trust_cert = match e.trust_certificate {
+            Some(c) => {
+                if !is_inside(Path::new(&c.file)) {
+                    bail!(
+                        "driver catalogue entry {:?}: certificate path must be relative",
+                        e.name
+                    );
+                }
+                Some(TrustCert {
+                    file: install_dir.join(&c.file),
+                    sha1: c.sha1,
+                })
+            }
+            None => None,
+        };
         out.push(DriverSpec {
             inf: install_dir.join(rel),
             hwid: e.hwid,
             name: e.name,
             files,
+            trust_cert,
         });
     }
     Ok(out)

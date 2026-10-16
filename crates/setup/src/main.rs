@@ -29,6 +29,7 @@ mod service;
 mod shortcut;
 #[cfg(windows)]
 mod task;
+mod trust;
 
 #[cfg(windows)]
 fn main() -> std::process::ExitCode {
