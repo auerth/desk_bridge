@@ -100,6 +100,8 @@ pub struct Router {
     bump: Option<(Edge, Instant, bool)>,
     region: Option<AbsRegion>,
     region_inside: bool,
+    /// Last absolute cursor position seen (the cursor stays put while it is pushed against an edge).
+    last_pos: Option<Point>,
 }
 
 fn mod_mask_of(held: &BTreeSet<u16>) -> u8 {
@@ -123,6 +125,7 @@ impl Router {
             bump: None,
             region: None,
             region_inside: false,
+            last_pos: None,
         }
     }
 
@@ -226,12 +229,39 @@ impl Router {
             }
             _ => {}
         }
+        if let CaptureEvent::MouseMove { x, y } = ev {
+            self.last_pos = Some(Point { x, y });
+        }
         if self.region.is_some() {
             return self.on_capture_region(ev);
         }
         match self.state {
-            State::Local => self.on_capture_local(ev, now),
+            State::Local => {
+                // A cursor that is clamped at a screen edge produces no further absolute
+                // positions while the user keeps pushing, only raw deltas. Treat a push against
+                // the edge as "the cursor is still there" so switching never needs a wiggle.
+                let ev = match (ev, self.last_pos) {
+                    (CaptureEvent::MouseRel { dx, dy }, Some(p))
+                        if self.pushes_outward(p, dx, dy) =>
+                    {
+                        CaptureEvent::MouseMove { x: p.x, y: p.y }
+                    }
+                    _ => ev,
+                };
+                self.on_capture_local(ev, now)
+            }
             State::Remote { .. } => self.on_capture_remote(ev),
+        }
+    }
+
+    /// Is `p` on an outer screen edge and does the motion (dx, dy) push against it?
+    fn pushes_outward(&self, p: Point, dx: i32, dy: i32) -> bool {
+        match self.local_edge(p) {
+            Some((_, Edge::Right, ..)) => dx > 0,
+            Some((_, Edge::Left, ..)) => dx < 0,
+            Some((_, Edge::Bottom, ..)) => dy > 0,
+            Some((_, Edge::Top, ..)) => dy < 0,
+            _ => false,
         }
     }
 
@@ -582,6 +612,36 @@ mod tests {
         assert!(has_enter(&a), "{a:?}");
         assert!(a.contains(&Action::SetGrab(GrabMode::All)));
         assert!(matches!(r.state(), State::Remote { .. }));
+    }
+
+    #[test]
+    fn pushing_against_the_edge_switches_without_a_new_position() {
+        let mut r = router(RouterConfig::default());
+        let t = Instant::now();
+        // The cursor arrives at the right edge (a bit above the laptop's span is irrelevant here)
+        // and gets clamped: from now on only raw deltas arrive.
+        assert!(
+            r.on_capture(CaptureEvent::MouseMove { x: 2558, y: 720 }, t)
+                .is_empty()
+        );
+        // pushing sideways inside the screen does nothing
+        assert!(
+            r.on_capture(CaptureEvent::MouseRel { dx: 5, dy: 0 }, t)
+                .is_empty()
+        );
+        r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, t);
+        // already switched by the move itself in the default config; use a delayed config instead
+        let mut r = router(RouterConfig {
+            switch_delay: Duration::from_millis(50),
+            ..Default::default()
+        });
+        r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, t);
+        assert!(matches!(r.state(), State::Local));
+        let a = r.on_capture(
+            CaptureEvent::MouseRel { dx: 12, dy: 0 },
+            t + Duration::from_millis(80),
+        );
+        assert!(has_enter(&a), "{a:?}");
     }
 
     #[test]

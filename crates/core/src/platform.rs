@@ -3,14 +3,14 @@
 
 use deskbridge_display::mock::MockDisplayManager;
 use deskbridge_platform::audio::{
-    AudioCapture, AudioDevices, AudioPlayback, DeviceKind, VirtualAudio,
+    AudioCapture, AudioDevices, AudioPlayback, DeviceKind, LocalOutput, VirtualAudio,
 };
 use deskbridge_platform::clipboard::ClipboardBackend;
 use deskbridge_platform::display::DisplayManager;
 use deskbridge_platform::input::{InputCapture, InputInjector};
 use deskbridge_platform::mock::{
     MockAudioCapture, MockAudioDevices, MockAudioPlayback, MockCapture, MockClipboard,
-    MockInjector, MockScreens, MockVirtualAudio, audio_device, screen,
+    MockInjector, MockLocalOutput, MockScreens, MockVirtualAudio, audio_device, screen,
 };
 use deskbridge_platform::power::{PowerEvent, PowerManager};
 use deskbridge_platform::screen::ScreenProvider;
@@ -32,6 +32,7 @@ pub struct Platform {
     pub audio_capture: Arc<dyn AudioCapture>,
     pub audio_playback: Arc<dyn AudioPlayback>,
     pub virtual_audio: Arc<dyn VirtualAudio>,
+    pub local_output: Arc<dyn LocalOutput>,
     pub system: Arc<dyn SystemServices>,
     pub video: Arc<dyn VideoBackend>,
     pub display: Arc<dyn DisplayManager>,
@@ -65,6 +66,7 @@ pub struct MockHandles {
     pub audio_capture: Arc<MockAudioCapture>,
     pub audio_playback: Arc<MockAudioPlayback>,
     pub virtual_audio: Arc<MockVirtualAudio>,
+    pub local_output: Arc<MockLocalOutput>,
     pub video: Arc<MockVideoBackend>,
     pub display: Arc<MockDisplayManager>,
 }
@@ -87,6 +89,7 @@ impl Platform {
         let audio_capture = Arc::new(MockAudioCapture::default());
         let audio_playback = Arc::new(MockAudioPlayback::default());
         let virtual_audio = Arc::new(MockVirtualAudio::default());
+        let local_output = Arc::new(MockLocalOutput::default());
         let video = Arc::new(MockVideoBackend::new((64, 36)));
         let display = Arc::new(MockDisplayManager::new());
         let p = Self {
@@ -100,6 +103,7 @@ impl Platform {
             audio_capture: audio_capture.clone(),
             audio_playback: audio_playback.clone(),
             virtual_audio: virtual_audio.clone(),
+            local_output: local_output.clone(),
             system: Arc::new(NullSystemServices),
             video: video.clone(),
             display: display.clone(),
@@ -116,6 +120,7 @@ impl Platform {
                 audio_capture,
                 audio_playback,
                 virtual_audio,
+                local_output,
                 video,
                 display,
             },

@@ -33,7 +33,7 @@ mod wasapi;
 
 pub use cable::CableVirtualAudio;
 pub use capture::{CaptureHandle, WasapiCapture};
-pub use devices::{DeviceDetails, EndpointVolume, WasapiDevices, endpoint_volume};
+pub use devices::{DeviceDetails, EndpointVolume, WasapiDevices, WinLocalOutput, endpoint_volume, set_render_mute};
 pub use playback::{PlaybackHandle, PlaybackInfo, WasapiPlayback};
 pub use policy::{DefaultRole, policy_config_available, set_default_device};
 pub use sessions::{MicSession, mic_session_enumeration};

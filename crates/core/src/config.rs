@@ -212,6 +212,8 @@ pub struct LaptopAudio {
     pub opus_bitrate_kbps: u32,
     /// Jitter buffer start target in milliseconds (0 = automatic).
     pub buffer_ms: u32,
+    /// Mute this device's own speakers while its sound is forwarded to the other device.
+    pub mute_local_output: bool,
 }
 
 impl Default for LaptopAudio {
@@ -224,6 +226,7 @@ impl Default for LaptopAudio {
             codec: "auto".into(),
             opus_bitrate_kbps: 160,
             buffer_ms: 0,
+            mute_local_output: true,
         }
     }
 }

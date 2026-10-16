@@ -695,3 +695,28 @@ async fn focus_start_failure_on_the_laptop_leaves_the_pc_clean() {
     pc.h.stop();
     lp.h.stop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn laptop_speakers_are_muted_while_streaming_and_restored_afterwards() {
+    let (pc, lp) = setup().await;
+    wait_for("laptop captures loopback", || lp.m.audio_capture.active(true)).await;
+    wait_for("laptop speakers muted", || lp.m.local_output.is_muted("out1")).await;
+
+    // Headset gone → the stream pauses → the laptop gets its speakers back.
+    let mut cfg: deskbridge_core::config::Config =
+        serde_json::from_value(pc.h.request(UiRequest::GetConfig).await.unwrap()).unwrap();
+    cfg.audio.laptop_to_pc.enabled = false;
+    pc.h.request(UiRequest::SetConfig { config: Box::new(cfg) }).await.unwrap();
+    wait_for("laptop speakers restored", || !lp.m.local_output.is_muted("out1")).await;
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn laptop_speakers_are_restored_when_the_connection_drops() {
+    let (pc, lp) = setup().await;
+    wait_for("laptop speakers muted", || lp.m.local_output.is_muted("out1")).await;
+    pc.h.stop(); // cable pulled
+    wait_for("laptop speakers restored", || !lp.m.local_output.is_muted("out1")).await;
+    lp.h.stop();
+}

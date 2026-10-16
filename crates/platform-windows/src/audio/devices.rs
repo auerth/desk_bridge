@@ -157,6 +157,49 @@ pub fn endpoint_volume(kind: DeviceKind, device_id: Option<&str>) -> Result<Endp
     }
 }
 
+/// Mutes/unmutes a render endpoint (`None` = default render device). Returns the endpoint id and
+/// the previous mute state.
+pub fn set_render_mute(device_id: Option<&str>, mute: bool) -> Result<(String, bool)> {
+    let _com = ComGuard::init();
+    let en = enumerator().map_err(os_err)?;
+    let dev = open_device(&en, DeviceKind::Render, device_id, eConsole)?;
+    let id = device_id_of(&dev)?;
+    // SAFETY: activation returns an owned interface; GetMute/SetMute are plain calls.
+    unsafe {
+        let vol: IAudioEndpointVolume = dev
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| os_ctx("Activate(IAudioEndpointVolume)", e))?;
+        let prev = vol.GetMute().map_err(os_err)?.as_bool();
+        vol.SetMute(mute, std::ptr::null()).map_err(os_err)?;
+        Ok((id, prev))
+    }
+}
+
+fn device_id_of(dev: &IMMDevice) -> Result<String> {
+    device_id(dev).map_err(os_err)
+}
+
+/// [`LocalOutput`](deskbridge_platform::audio::LocalOutput) over `IAudioEndpointVolume`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct WinLocalOutput;
+
+impl WinLocalOutput {
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl deskbridge_platform::audio::LocalOutput for WinLocalOutput {
+    fn set_default_render_mute(&self, mute: bool) -> Result<(String, bool)> {
+        set_render_mute(None, mute)
+    }
+
+    fn set_render_mute(&self, device_id: &str, mute: bool) -> Result<()> {
+        set_render_mute(Some(device_id), mute).map(|_| ())
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Hot-plug notifications
 // ---------------------------------------------------------------------------------------------

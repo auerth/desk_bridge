@@ -81,6 +81,29 @@ pub trait AudioPlayback: Send + Sync {
     ) -> Result<Box<dyn StreamHandle>>;
 }
 
+/// Mutes the machine's *own* speakers while its sound is forwarded to the other device.
+pub trait LocalOutput: Send + Sync {
+    /// Mutes or unmutes the current default render endpoint. Returns its id and the mute state it
+    /// had before the call (so it can be restored exactly).
+    fn set_default_render_mute(&self, mute: bool) -> Result<(String, bool)>;
+    /// Sets the mute state of a specific render endpoint (used to restore).
+    fn set_render_mute(&self, device_id: &str, mute: bool) -> Result<()>;
+}
+
+/// No local control (platforms without an implementation).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NullLocalOutput;
+
+impl LocalOutput for NullLocalOutput {
+    fn set_default_render_mute(&self, _mute: bool) -> Result<(String, bool)> {
+        Err(crate::PlatformError::Unsupported("local output muting"))
+    }
+
+    fn set_render_mute(&self, _device_id: &str, _mute: bool) -> Result<()> {
+        Err(crate::PlatformError::Unsupported("local output muting"))
+    }
+}
+
 /// Virtual speaker + microphone of the bundled driver (M3b).
 pub trait VirtualAudio: Send + Sync {
     fn available(&self) -> bool;

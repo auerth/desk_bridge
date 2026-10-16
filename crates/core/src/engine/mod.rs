@@ -275,6 +275,18 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         Some(i) => i,
         None => Identity::load_or_create(&paths.identity_file(), platform.secrets.as_ref())?,
     });
+    // A crash while the local speakers were muted must not leave this device silent.
+    {
+        let f = paths.data_dir.join("speaker-mute.json");
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let (Some(id), Some(prev)) = (v["id"].as_str(), v["prev"].as_bool()) {
+                    let _ = platform.local_output.set_render_mute(id, prev);
+                }
+            }
+            let _ = std::fs::remove_file(&f);
+        }
+    }
     // A crashed focus session on this device must not leave the displays rearranged (plan 8.7).
     {
         let (tp, dm) = (paths.topology_file(), platform.display.clone());
@@ -505,6 +517,7 @@ impl Engine {
     fn on_shutdown(&mut self) {
         self.close_session("shutdown");
         self.focus_shutdown();
+        self.drop_speaker_source();
         self.platform.capture.stop();
         self.transport.close();
         if let Some(d) = &self.discovery {

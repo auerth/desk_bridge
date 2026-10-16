@@ -55,6 +55,8 @@ pub(crate) struct AudioState {
     last_packet_opus: Arc<AtomicBool>,
     // --- stream source side (laptop)
     speaker_tx: Option<SendPipe>,
+    /// Our own speakers were muted by us: (render endpoint id, mute state before we touched it).
+    muted_local: Option<(String, bool)>,
     route_speaker_wanted: bool,
     // --- microphone: sender on the headset device, sink on the stream source
     mic_tx: Option<SendPipe>,
@@ -139,7 +141,7 @@ impl Engine {
             s.link.set_datagram_sink(None);
         }
         self.audio_rx_slots = None;
-        self.audio.speaker_tx = None;
+        self.drop_speaker_source();
         self.audio.route_speaker_wanted = false;
         self.audio.playback = None;
         self.audio.speaker_rx = None;
@@ -303,6 +305,44 @@ impl Engine {
             peak,
             opus,
         });
+        self.mute_local_speakers();
+    }
+
+    /// Stops sending the laptop sound and gives the laptop its own speakers back.
+    pub(crate) fn drop_speaker_source(&mut self) {
+        self.audio.speaker_tx = None;
+        self.restore_local_speakers();
+    }
+
+    fn speaker_backup_file(&self) -> std::path::PathBuf {
+        self.paths.data_dir.join("speaker-mute.json")
+    }
+
+    /// While the sound is forwarded to the other device, the local speakers stay quiet. The
+    /// previous mute state is remembered (also on disk, so a crash cannot leave the laptop muted).
+    fn mute_local_speakers(&mut self) {
+        if !self.cfg.audio.laptop_to_pc.mute_local_output || self.audio.muted_local.is_some() {
+            return;
+        }
+        match self.platform.local_output.set_default_render_mute(true) {
+            Ok((id, prev)) => {
+                let _ = std::fs::write(
+                    self.speaker_backup_file(),
+                    serde_json::json!({ "id": id, "prev": prev }).to_string(),
+                );
+                self.audio.muted_local = Some((id, prev));
+            }
+            Err(e) => tracing::warn!("could not mute the local speakers: {e}"),
+        }
+    }
+
+    fn restore_local_speakers(&mut self) {
+        if let Some((id, prev)) = self.audio.muted_local.take() {
+            if let Err(e) = self.platform.local_output.set_render_mute(&id, prev) {
+                tracing::warn!("could not restore the local speakers: {e}");
+            }
+            let _ = std::fs::remove_file(self.speaker_backup_file());
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -483,7 +523,7 @@ impl Engine {
                     if r.enabled && self.cfg.audio.laptop_to_pc.enabled {
                         self.start_speaker_source();
                     } else {
-                        self.audio.speaker_tx = None;
+                        self.drop_speaker_source();
                     }
                     self.dirty = true;
                 }
@@ -610,7 +650,13 @@ impl Engine {
             self.sync_mic_sender();
         }
         if self.cfg.device.stream_source && self.audio.speaker_tx.is_some() && !c.enabled {
-            self.audio.speaker_tx = None;
+            self.drop_speaker_source();
+        } else if self.audio.speaker_tx.is_some() {
+            if c.mute_local_output {
+                self.mute_local_speakers();
+            } else {
+                self.restore_local_speakers();
+            }
         }
     }
 

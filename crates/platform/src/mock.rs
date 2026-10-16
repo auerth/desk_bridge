@@ -2,7 +2,7 @@
 
 use crate::audio::{
     AudioCapture, AudioDeviceInfo, AudioDevices, AudioFrame, AudioPlayback, CaptureSource,
-    DeviceEvent, DeviceKind, MicUsage, PullSource, StreamHandle, VirtualAudio,
+    DeviceEvent, DeviceKind, MicUsage, PullSource, StreamHandle, VirtualAudio, LocalOutput,
 };
 use crate::clipboard::{
     ClipFormatInfo, ClipboardBackend, ClipboardEvent, ClipboardProvider, FileOffer,
@@ -542,6 +542,32 @@ impl VirtualAudio for MockVirtualAudio {
 
     fn watch_mic_in_use(&self, tx: UnboundedSender<MicUsage>) -> Result<()> {
         self.watchers.lock().push(tx);
+        Ok(())
+    }
+}
+
+/// Local speaker muting stand-in: remembers the mute state per device.
+#[derive(Default)]
+pub struct MockLocalOutput {
+    pub muted: Mutex<std::collections::BTreeMap<String, bool>>,
+}
+
+impl MockLocalOutput {
+    #[must_use]
+    pub fn is_muted(&self, id: &str) -> bool {
+        self.muted.lock().get(id).copied().unwrap_or(false)
+    }
+}
+
+impl LocalOutput for MockLocalOutput {
+    fn set_default_render_mute(&self, mute: bool) -> Result<(String, bool)> {
+        let id = "out1".to_string();
+        let prev = self.muted.lock().insert(id.clone(), mute).unwrap_or(false);
+        Ok((id, prev))
+    }
+
+    fn set_render_mute(&self, device_id: &str, mute: bool) -> Result<()> {
+        self.muted.lock().insert(device_id.to_string(), mute);
         Ok(())
     }
 }
