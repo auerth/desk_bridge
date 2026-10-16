@@ -88,6 +88,8 @@ pub(crate) struct FocusRt {
     // viewer side
     streaming_since: Option<Instant>,
     hint_until: Option<Instant>,
+    /// Last logged "size encoder adapter" of the source pipeline.
+    source_info_key: Option<String>,
     plan: Option<ViewerPlan>,
     viewer: Option<Viewer>,
     // source side
@@ -550,6 +552,44 @@ impl Engine {
         });
     }
 
+    /// What the laptop pipeline does; the first report and any change of size or encoder are
+    /// logged at info, the rest at debug.
+    fn on_focus_source_info(&mut self, i: &pb::FocusSourceInfo) {
+        let key = format!(
+            "{}x{} {} {}",
+            i.capture_width, i.capture_height, i.encoder, i.adapter
+        );
+        let first = self.focus.source_info_key.as_deref() != Some(key.as_str());
+        if first {
+            tracing::info!(
+                capture = %format!("{}x{}", i.capture_width, i.capture_height),
+                stream = %format!("{}x{}", self.focus.width, self.focus.height),
+                encoder = %i.encoder,
+                adapter = %i.adapter,
+                "focus source pipeline"
+            );
+            self.focus.source_info_key = Some(key);
+        }
+        tracing::info!(
+            capture_fps = i.capture_fps,
+            encoded_fps = i.encoded_fps,
+            encode_ms = f64::from(i.encode_us) / 1000.0,
+            skipped = i.skipped,
+            "focus source rate"
+        );
+        if i.capture_width != 0
+            && (i.capture_width, i.capture_height) != (self.focus.width, self.focus.height)
+        {
+            self.warn_once(
+                "focus_capture_size",
+                &format!(
+                    "Der virtuelle Monitor des Laptops läuft mit {}x{} statt {}x{}; das Bild wird skaliert.",
+                    i.capture_width, i.capture_height, self.focus.width, self.focus.height
+                ),
+            );
+        }
+    }
+
     /// Viewer cursor updates from the source.
     pub(crate) fn on_focus_cursor(&mut self, state: CursorState) {
         if let Some(v) = &self.focus.viewer {
@@ -688,14 +728,22 @@ impl Engine {
         let feedback = Arc::new(Mutex::new(None));
         let capturer_slot = Arc::new(Mutex::new(Some(capturer)));
         let encoder_name = encoder.name();
+        let adapter = capturer_slot
+            .lock()
+            .as_ref()
+            .map(|c| c.adapter_name())
+            .unwrap_or_default();
         let task = tokio::spawn(run_source(
             link.clone(),
             rx,
             encoder,
             cfg.clone(),
-            stop.clone(),
-            force_key.clone(),
-            feedback.clone(),
+            SourceSignals {
+                stop: stop.clone(),
+                force_key: force_key.clone(),
+                feedback: feedback.clone(),
+            },
+            adapter,
         ));
         self.focus.source = Some(Source {
             stop,
@@ -784,6 +832,7 @@ impl Engine {
         self.focus.plan = None;
         self.focus.streaming_since = None;
         self.focus.hint_until = None;
+        self.focus.source_info_key = None;
         // source
         self.focus.source = None;
         self.end_display_async();
@@ -857,6 +906,7 @@ impl Engine {
                 self.on_focus_cursor(state);
             }
             M::BitrateHint(_) => {}
+            M::FocusSourceInfo(i) => self.on_focus_source_info(i),
             _ => return false,
         }
         true
@@ -1125,10 +1175,14 @@ async fn run_source(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<CaptureOutput>,
     mut encoder: Box<dyn VideoEncoder>,
     cfg: EncoderConfig,
-    stop: Arc<AtomicBool>,
-    force_key: Arc<AtomicBool>,
-    feedback: Arc<Mutex<Option<pb::StreamStats>>>,
+    signals: SourceSignals,
+    adapter: String,
 ) {
+    let SourceSignals {
+        stop,
+        force_key,
+        feedback,
+    } = signals;
     let epoch = Instant::now();
     let inflight = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT));
     let mut frame_id = 0u32;
@@ -1142,12 +1196,31 @@ async fn run_source(
     let mut last_abr = Instant::now();
     // Why no picture went out yet: reported to the viewer instead of a silent black screen.
     let (mut captured, mut sent_any, mut last_err) = (0u64, false, None::<String>);
+    // Diagnostics for the viewer (FocusSourceInfo every 2 s).
+    let mut info = SourceInfoAcc::default();
+    let mut info_at = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         tokio::select! {
             out = rx.recv() => {
-                let Some(out) = out else { break };
+                let Some(first) = out else { break };
+                // Encode only the newest picture of a backlog: when encoding is slower than the
+                // capture rate, every queued picture added latency (seconds after a while).
+                let mut batch = vec![first];
+                while let Ok(more) = rx.try_recv() {
+                    batch.push(more);
+                }
+                let newest = batch
+                    .iter()
+                    .rposition(|o| matches!(o, CaptureOutput::Frame(_)));
+                for (i, out) in batch.into_iter().enumerate() {
                 match out {
+                    CaptureOutput::Frame(_) if Some(i) != newest => {
+                        info.captured += 1;
+                        info.skipped += 1;
+                    }
                     CaptureOutput::Frame(frame) => {
+                        info.captured += 1;
+                        info.size = (frame.width, frame.height);
                         captured += 1;
                         if captured == 1 {
                             tracing::info!(
@@ -1176,6 +1249,8 @@ async fn run_source(
                         }
                         enc_us_sum += t0.elapsed().as_micros() as u64;
                         enc_n += 1;
+                        info.encoded += 1;
+                        info.encode_us += t0.elapsed().as_micros() as u64;
                         for p in packets {
                             // Capture timestamps are on the capture clock; the header carries ours.
                             let ts = crate::clock::now_us().saturating_sub(t0.elapsed().as_micros() as u64);
@@ -1217,6 +1292,7 @@ async fn run_source(
                         link.send_control(pb::control::Msg::CursorPos(pb::CursorPos { x: c.x, y: c.y, visible: c.visible, serial: c.shape_serial }));
                     }
                 }
+                }
             }
             _ = tick.tick() => {
                 let now_ms = epoch.elapsed().as_millis() as u64;
@@ -1247,6 +1323,11 @@ async fn run_source(
                 if idr.poll(now_ms) {
                     force_key.store(true, Ordering::SeqCst);
                 }
+                if sent_any && info_at.elapsed() >= Duration::from_secs(2) {
+                    let msg = info.take(info_at.elapsed(), encoder.describe(), &adapter);
+                    info_at = Instant::now();
+                    link.send_control(pb::control::Msg::FocusSourceInfo(msg));
+                }
                 if last_abr.elapsed() >= Duration::from_millis(500) {
                     let secs = last_abr.elapsed().as_secs_f32().max(0.001);
                     last_abr = Instant::now();
@@ -1266,6 +1347,43 @@ async fn run_source(
                 }
             }
         }
+    }
+}
+
+/// Shared flags between the actor and the source task.
+struct SourceSignals {
+    stop: Arc<AtomicBool>,
+    force_key: Arc<AtomicBool>,
+    feedback: Arc<Mutex<Option<pb::StreamStats>>>,
+}
+
+/// Counters behind `FocusSourceInfo`.
+#[derive(Default)]
+struct SourceInfoAcc {
+    size: (u32, u32),
+    captured: u64,
+    encoded: u64,
+    encode_us: u64,
+    skipped: u64,
+}
+
+impl SourceInfoAcc {
+    fn take(&mut self, over: Duration, encoder: String, adapter: &str) -> pb::FocusSourceInfo {
+        let secs = over.as_secs_f64().max(0.001);
+        let msg = pb::FocusSourceInfo {
+            capture_width: self.size.0,
+            capture_height: self.size.1,
+            encoder,
+            adapter: adapter.to_string(),
+            capture_fps: (self.captured as f64 / secs).round() as u32,
+            encoded_fps: (self.encoded as f64 / secs).round() as u32,
+            encode_us: (self.encode_us / self.encoded.max(1)) as u32,
+            skipped: self.skipped as u32,
+        };
+        let size = self.size;
+        *self = Self::default();
+        self.size = size;
+        msg
     }
 }
 

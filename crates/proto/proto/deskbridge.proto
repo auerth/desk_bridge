@@ -163,6 +163,18 @@ message FocusStart {
 message FocusReady { uint32 width = 1; uint32 height = 2; Codec codec = 3; uint32 fps = 4; uint32 screen_id = 5; string encoder = 6; bool yuv444 = 7; }
 message FocusFailed { string reason = 1; }
 message FocusStop {}
+// Source -> viewer: what the source pipeline really does (logged on the PC; the laptop log is
+// usually out of reach).
+message FocusSourceInfo {
+  uint32 capture_width = 1;
+  uint32 capture_height = 2;
+  string encoder = 3;
+  string adapter = 4;
+  uint32 capture_fps = 5;
+  uint32 encoded_fps = 6;
+  uint32 encode_us = 7;
+  uint32 skipped = 8;
+}
 // Target asks the viewer to start/stop focus mode (lid closed/opened).
 message FocusRequest { bool start = 1; }
 message KeyframeRequest {}
@@ -288,6 +300,7 @@ message Control {
     FocusFailed focus_failed = 12;
     FocusStop focus_stop = 13;
     FocusRequest focus_request = 19;
+    FocusSourceInfo focus_source_info = 23;
     KeyframeRequest keyframe_request = 14;
     BitrateHint bitrate_hint = 15;
     CursorShape cursor_shape = 16;

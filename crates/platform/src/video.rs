@@ -82,6 +82,10 @@ pub trait VideoEncoder: Send {
     fn encode(&mut self, frame: &Frame, force_key: bool) -> Result<Vec<EncodedPacket>>;
     fn set_bitrate(&mut self, kbps: u32) -> Result<()>;
     fn name(&self) -> String;
+    /// Encoder plus the path the pictures take (zero-copy or read-back), for diagnostics.
+    fn describe(&self) -> String {
+        self.name()
+    }
 }
 
 pub trait VideoDecoder: Send {

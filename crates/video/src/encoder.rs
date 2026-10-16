@@ -509,6 +509,10 @@ impl VideoEncoder for FfmpegEncoder {
             self.last_name.clone()
         }
     }
+
+    fn describe(&self) -> String {
+        self.path_description()
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

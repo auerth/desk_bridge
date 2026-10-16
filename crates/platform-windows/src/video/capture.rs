@@ -31,6 +31,7 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_OUTDUPL_POINTER_SHAPE_INFO, IDXGIAdapter1, IDXGIOutput, IDXGIOutput1,
     IDXGIOutputDuplication, IDXGIResource,
 };
+use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::System::Threading::{
     GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
 };
@@ -488,28 +489,28 @@ fn capture_thread(
     let mut pending: Option<Pending> = None;
     let mut cursor = CursorTracker::default();
     let mut last_error = Instant::now() - Duration::from_secs(10);
+    // A still desktop produces no "new picture" events at all, so a focus session started in
+    // front of an idle laptop never got its first frame. Until the first picture: take whatever
+    // the duplication hands out and ask Windows to repaint now and then.
+    let mut have_picture = false;
+    let mut last_nudge = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
-        // Wait for the next change, but not past the moment a deferred frame becomes due.
-        let wait_ms = match &pending {
-            Some(_) => {
-                let now = now_us();
-                (next_emit_us.saturating_sub(now) / 1000 + 1).min(100) as u32
-            }
-            None => 100,
-        };
-
+        // Poll instead of waiting inside AcquireNextFrame: the encoder works on the same
+        // (multithread-protected) device, and a blocking wait held its lock for up to the whole
+        // timeout. Every encode then queued behind it: 50-200 ms per frame at 5120x1440.
         let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
         let mut res: Option<IDXGIResource> = None;
         // SAFETY: valid out pointers.
-        let r = unsafe { session.dup.AcquireNextFrame(wait_ms, &mut info, &mut res) };
+        let r = unsafe { session.dup.AcquireNextFrame(0, &mut info, &mut res) };
         match r {
             Ok(()) => {
-                let new_picture = info.LastPresentTime != 0;
+                let new_picture = info.LastPresentTime != 0 || (!have_picture && res.is_some());
                 let cursor_out = cursor.output(&session, &info);
                 if new_picture {
                     match copy_frame(&session, res.as_ref()) {
                         Ok(Some(slot)) => {
+                            have_picture = true;
                             let ts = qpc_to_us(info.LastPresentTime);
                             // A newer picture replaces an older deferred one.
                             pending = Some(Pending {
@@ -532,7 +533,14 @@ fn capture_thread(
                     return;
                 }
             }
-            Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {}
+            Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
+                if !have_picture && last_nudge.elapsed() > Duration::from_millis(250) {
+                    last_nudge = Instant::now();
+                    // SAFETY: NULL window = invalidate and repaint every window; no pointers.
+                    let _ = unsafe { InvalidateRect(None, None, true) };
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
             Err(e) => {
                 let access_lost = e.code() == DXGI_ERROR_ACCESS_LOST;
                 if !access_lost || last_error.elapsed() > Duration::from_secs(5) {
@@ -550,6 +558,7 @@ fn capture_thread(
                         Ok(s) => {
                             session = s;
                             cursor = CursorTracker::default();
+                            have_picture = false;
                             break;
                         }
                         Err(e) => tracing::debug!("capture re-open failed: {e}"),
