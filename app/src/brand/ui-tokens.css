@@ -1,0 +1,155 @@
+/* =============================================================================================
+   Desk Bridge UI tokens (plan 9.1 / 9.2)
+   - Brand colours and gradients are taken from softwelop/brand-tokens.css.
+   - The Gilmer font is deliberately NOT used or loaded; Montserrat (OFL) is the only typeface.
+   - Dark mode is derived (the brand guide does not define one).
+   ============================================================================================= */
+
+@font-face {
+  font-family: 'Montserrat';
+  src: url('./fonts/Montserrat-VF.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* --- brand palette ------------------------------------------------------------------------ */
+  --sw-bright-code: #a3c7eb;
+  --sw-core-logic: #194093;
+  --sw-deep-trust: #21264e;
+  --sw-soft-spark: #f7ae67;
+  --sw-signal-orange: #f18557;
+  --sw-powerline-red: #e36150;
+  --sw-cream: #f6e9df;
+  --sw-white: #ffffff;
+
+  --sw-gradient-deep: linear-gradient(180deg, #21264e 0%, #194093 100%);
+  --sw-gradient-sunset: linear-gradient(180deg, #f18557 0%, #f7ae67 45%, #f6e9df 72%, #a3c7eb 100%);
+  --sw-gradient-coral: linear-gradient(180deg, #e36150 0%, #f7ae67 50%, #f6e9df 100%);
+
+  /* --- typography --------------------------------------------------------------------------- */
+  --font: 'Montserrat', 'Segoe UI Variable Text', 'Segoe UI', Arial, sans-serif;
+  --fs-display: 40px;
+  --fs-h1: 24px;
+  --fs-h2: 18px;
+  --fs-h3: 16px;
+  --fs-body: 15px;
+  --fs-small: 14px;
+  --fs-label: 13px;
+  --fs-caption: 12px;
+  --lh-body: 1.5;
+
+  /* --- radii, spacing, motion ----------------------------------------------------------------- */
+  --r-card: 12px;
+  --r-btn: 8px;
+  --r-pill: 999px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --t-fast: 150ms;
+  --t-med: 200ms;
+  --t-slow: 250ms;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* --- light theme (default) ------------------------------------------------------------------ */
+  color-scheme: light;
+  --c-bg: #ffffff;
+  --c-bg-solid: #f7f2ed;
+  --c-sidebar: rgba(246, 233, 223, 0.55);
+  --c-surface: #ffffff;
+  --c-surface-2: #fbf6f1;
+  --c-surface-3: #f3e8dd;
+  --c-overlay: rgba(33, 38, 78, 0.45);
+  --c-text: #21264e;
+  --c-text-muted: #565b82; /* 6.3:1 on white */
+  --c-text-faint: #6d7196; /* 4.9:1 on white */
+  --c-border: rgba(33, 38, 78, 0.13);
+  --c-border-strong: rgba(33, 38, 78, 0.28);
+  --c-primary: #194093;
+  --c-primary-hover: #153580;
+  --c-on-primary: #ffffff;
+  --c-primary-soft: rgba(25, 64, 147, 0.09);
+  --c-focus: #194093;
+  --c-accent: #f18557;
+  --c-accent-hover: #ee7740;
+  --c-on-accent: #21264e;
+  --c-accent-ink: #a8430c; /* readable orange text */
+  --c-accent-soft: rgba(241, 133, 87, 0.16);
+  --c-warn-soft: rgba(247, 174, 103, 0.28);
+  --c-warn-ink: #7a4306;
+  --c-danger: #e36150;
+  --c-danger-ink: #b0372a;
+  --c-danger-soft: rgba(227, 97, 80, 0.13);
+  --c-good: #194093;
+  --c-meter: #194093;
+  --c-meter-track: rgba(33, 38, 78, 0.1);
+  --c-titlebar-hover: rgba(33, 38, 78, 0.08);
+  --shadow-card: 0 4px 24px rgba(33, 38, 78, 0.08);
+  --shadow-pop: 0 12px 40px rgba(33, 38, 78, 0.18);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --c-bg: #161a38;
+  --c-bg-solid: #161a38;
+  --c-sidebar: rgba(22, 26, 56, 0.6);
+  --c-surface: #21264e;
+  --c-surface-2: #2a3060;
+  --c-surface-3: #333a70;
+  --c-overlay: rgba(8, 10, 28, 0.62);
+  --c-text: #f6e9df;
+  --c-text-muted: #c3c6e0; /* 8:1 on #21264e */
+  --c-text-faint: #a5a9cc; /* 5.6:1 on #21264e */
+  --c-border: rgba(246, 233, 223, 0.14);
+  --c-border-strong: rgba(246, 233, 223, 0.32);
+  --c-primary: #a3c7eb;
+  --c-primary-hover: #b8d5f1;
+  --c-on-primary: #161a38;
+  --c-primary-soft: rgba(163, 199, 235, 0.14);
+  --c-focus: #a3c7eb;
+  --c-accent: #f18557;
+  --c-accent-hover: #f39469;
+  --c-on-accent: #161a38;
+  --c-accent-ink: #f7ae67;
+  --c-accent-soft: rgba(241, 133, 87, 0.2);
+  --c-warn-soft: rgba(247, 174, 103, 0.18);
+  --c-warn-ink: #f7ae67;
+  --c-danger: #e36150;
+  --c-danger-ink: #ff8f80;
+  --c-danger-soft: rgba(227, 97, 80, 0.2);
+  --c-good: #a3c7eb;
+  --c-meter: #a3c7eb;
+  --c-meter-track: rgba(246, 233, 223, 0.12);
+  --c-titlebar-hover: rgba(246, 233, 223, 0.1);
+  /* soft shadows only in light mode */
+  --shadow-card: none;
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+/* Mica: let the system backdrop shine through the large areas, keep cards readable. */
+:root[data-mica='1'] {
+  --c-bg: transparent;
+}
+:root[data-mica='1'][data-theme='light'] {
+  --c-sidebar: rgba(246, 233, 223, 0.35);
+  --c-surface: rgba(255, 255, 255, 0.78);
+  --c-surface-2: rgba(255, 255, 255, 0.5);
+}
+:root[data-mica='1'][data-theme='dark'] {
+  --c-sidebar: rgba(22, 26, 56, 0.35);
+  --c-surface: rgba(42, 48, 96, 0.55);
+  --c-surface-2: rgba(42, 48, 96, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0.01ms;
+    --t-med: 0.01ms;
+    --t-slow: 0.01ms;
+  }
+}

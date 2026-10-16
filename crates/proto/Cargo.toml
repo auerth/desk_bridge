@@ -1,0 +1,18 @@
+[package]
+name = "deskbridge-proto"
+description = "Desk Bridge wire protocol: protobuf messages, framing and media headers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+prost.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+
+[build-dependencies]
+prost-build.workspace = true
+protoc-bin-vendored.workspace = true

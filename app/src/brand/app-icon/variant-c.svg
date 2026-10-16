@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="deep" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#21264E"/>
+      <stop offset="1" stop-color="#194093"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#deep)"/>
+  <!-- Variant C: wide (32:9) monitor with the laptop in front, arc sweeping from monitor to laptop -->
+  <g fill="none" stroke="#F6E9DF" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="56" y="124" width="400" height="124" rx="16"/>
+    <path d="M256 248v28M212 278h88"/>
+    <rect x="170" y="318" width="172" height="104" rx="14" fill="#21264E"/>
+    <path d="M146 446h220"/>
+  </g>
+  <g fill="none" stroke="#F18557" stroke-width="20" stroke-linecap="round">
+    <path d="M404 248C440 300 420 390 342 372"/>
+  </g>
+  <circle cx="404" cy="248" r="16" fill="#F18557"/>
+  <circle cx="342" cy="372" r="16" fill="#F18557"/>
+</svg>

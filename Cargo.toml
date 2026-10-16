@@ -1,0 +1,82 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/proto",
+    "crates/net",
+    "crates/platform",
+    "crates/platform-windows",
+    "crates/input",
+    "crates/audio",
+    "crates/clipboard",
+    "crates/files",
+    "crates/video",
+    "crates/display",
+    "crates/core",
+    "crates/agent",
+    "crates/service",
+    "crates/setup",
+    "app/src-tauri",
+    "tools/latency-probe",
+    "tools/fake-peer",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["softwelop"]
+repository = "https://github.com/softwelop/desk-bridge"
+publish = false
+
+[workspace.dependencies]
+# internal crates
+deskbridge-proto = { path = "crates/proto" }
+deskbridge-net = { path = "crates/net" }
+deskbridge-platform = { path = "crates/platform" }
+deskbridge-platform-windows = { path = "crates/platform-windows" }
+deskbridge-input = { path = "crates/input" }
+deskbridge-audio = { path = "crates/audio" }
+deskbridge-clipboard = { path = "crates/clipboard" }
+deskbridge-files = { path = "crates/files" }
+deskbridge-video = { path = "crates/video" }
+deskbridge-display = { path = "crates/display" }
+deskbridge-core = { path = "crates/core" }
+
+# external
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+directories = "5"
+bytes = "1"
+prost = "0.13"
+prost-build = "0.13"
+protoc-bin-vendored = "3"
+quinn = { version = "0.11", default-features = false, features = ["rustls-ring", "runtime-tokio", "log"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = "0.13"
+sha2 = "0.10"
+spake2 = "0.4"
+hkdf = "0.12"
+hmac = "0.12"
+rand = "0.8"
+uuid = { version = "1", features = ["v7", "serde"] }
+mdns-sd = "0.11"
+blake3 = "1"
+rubato = "0.16"
+windows = "0.58"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+strip = "debuginfo"
+
+[profile.dev.package."*"]
+opt-level = 1

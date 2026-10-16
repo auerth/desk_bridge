@@ -1,0 +1,16 @@
+[package]
+name = "deskbridge-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+deskbridge-proto.workspace = true
+deskbridge-platform.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+parking_lot = "0.12"
+audiopus_sys = "0.2"

@@ -1,0 +1,301 @@
+syntax = "proto3";
+package deskbridge.v1;
+
+// ---------------------------------------------------------------------------
+// Basics
+// ---------------------------------------------------------------------------
+
+enum Edge {
+  EDGE_UNSPECIFIED = 0;
+  EDGE_LEFT = 1;
+  EDGE_RIGHT = 2;
+  EDGE_TOP = 3;
+  EDGE_BOTTOM = 4;
+}
+
+enum Codec {
+  CODEC_UNSPECIFIED = 0;
+  CODEC_H264 = 1;
+  CODEC_HEVC = 2;
+  CODEC_AV1 = 3;
+}
+
+enum Stream {
+  STREAM_UNSPECIFIED = 0;
+  STREAM_LAPTOP_TO_PC = 1;  // audio: target device -> device with the headset
+  STREAM_MIC_TO_LAPTOP = 2; // audio: headset microphone -> target device
+}
+
+message Capability {
+  string name = 1;  // e.g. "input", "audio.pcm", "audio.opus", "clipboard", "files", "focus"
+  uint32 version = 2;
+}
+
+message Screen {
+  uint32 id = 1;
+  int32 x = 2;
+  int32 y = 3;
+  uint32 w = 4;
+  uint32 h = 5;
+  uint32 dpi = 6;
+  uint32 refresh_mhz = 7;
+  bool primary = 8;
+  string name = 9;
+}
+
+message VideoCaps {
+  repeated Codec encode = 1;
+  repeated Codec decode = 2;
+  bool encode_yuv444 = 3;
+  bool decode_yuv444 = 4;
+  uint32 max_width = 5;
+  uint32 max_height = 6;
+  uint32 max_fps = 7;
+  string encoder_name = 8;
+}
+
+message Hello {
+  string device_id = 1;
+  string name = 2;
+  string os = 3;
+  string app_version = 4;
+  uint32 proto_version = 5;
+  repeated Capability caps = 6;
+  repeated Screen screens = 7;
+  VideoCaps video = 8;
+}
+
+message Placement {
+  string device_id = 1;
+  uint32 screen_id = 2;
+  int32 x = 3;  // position in the shared virtual layout (physical px of that device's screen units)
+  int32 y = 4;
+}
+
+message LayoutUpdate {
+  repeated Placement placements = 1;
+  uint64 revision = 2;
+}
+
+message ScreensUpdate { repeated Screen screens = 1; }
+
+message Ping { uint64 t0_us = 1; }
+message Pong { uint64 t0_us = 1; uint64 t1_us = 2; }
+
+message ErrorMsg {
+  uint32 code = 1;
+  string message = 2;
+}
+
+message Goodbye { string reason = 1; }
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+
+message Key {
+  uint32 hid = 1;      // USB HID usage (page 0x07), internal representation (see plan 17)
+  bool down = 2;
+}
+
+message MouseRel { int32 dx = 1; int32 dy = 2; }
+message MouseAbs { float x = 1; float y = 2; uint32 screen_id = 3; } // normalized 0..1 on screen
+message MouseButton { uint32 button = 1; bool down = 2; } // 1=left 2=right 3=middle 4=x1 5=x2
+message Wheel { int32 dx = 1; int32 dy = 2; }             // 120 = one notch
+
+message ToggleState { bool caps = 1; bool num = 2; bool scroll = 3; }
+
+message Enter {
+  uint32 screen_id = 1;
+  float rel_pos = 2;   // 0..1 position along the shared edge segment
+  Edge edge = 3;       // edge of the target screen the cursor enters through
+  ToggleState toggles = 4;
+}
+message Leave {}
+message EdgeHit {
+  uint32 screen_id = 1;
+  Edge edge = 2;
+  float rel_pos = 3;
+}
+
+message InputEvent {
+  uint64 ts_us = 1;
+  oneof ev {
+    Key key = 2;
+    MouseRel rel = 3;
+    MouseAbs abs = 4;
+    MouseButton btn = 5;
+    Wheel wheel = 6;
+    Enter enter = 7;
+    Leave leave = 8;
+    EdgeHit edge_hit = 9;
+    ToggleState toggles = 10;
+    ReleaseAll release_all = 11;
+  }
+}
+message ReleaseAll {}
+
+// ---------------------------------------------------------------------------
+// Focus mode (screen streaming)
+// ---------------------------------------------------------------------------
+
+enum FocusLayout {
+  FOCUS_LAYOUT_UNSPECIFIED = 0;
+  FOCUS_LAYOUT_FULL = 1;
+  FOCUS_LAYOUT_SPLIT_LEFT = 2;
+  FOCUS_LAYOUT_SPLIT_RIGHT = 3;
+  FOCUS_LAYOUT_WINDOW = 4;
+}
+
+message FocusStart {
+  uint32 width = 1;
+  uint32 height = 2;
+  uint32 fps = 3;
+  Codec codec = 4;
+  uint32 bitrate_kbps = 5;
+  bool yuv444 = 6;
+  FocusLayout layout = 7;
+  bool disable_internal_display = 8;
+}
+message FocusReady { uint32 width = 1; uint32 height = 2; Codec codec = 3; uint32 fps = 4; }
+message FocusFailed { string reason = 1; }
+message FocusStop {}
+message KeyframeRequest {}
+message BitrateHint { uint32 bitrate_kbps = 1; uint32 fps = 2; }
+message CursorShape {
+  uint32 serial = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  int32 hot_x = 4;
+  int32 hot_y = 5;
+  bytes rgba = 6; // premultiplied-free RGBA8
+}
+message CursorPos { float x = 1; float y = 2; bool visible = 3; uint32 serial = 4; }
+message StreamStats {
+  uint32 fps = 1;
+  uint32 bitrate_kbps = 2;
+  float loss_pct = 3;
+  uint32 encode_us = 4;
+  uint32 network_us = 5;
+  uint32 decode_us = 6;
+  uint32 total_us = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Audio control
+// ---------------------------------------------------------------------------
+
+message AudioRoute { Stream stream = 1; bool enabled = 2; }
+message MicInUse { bool in_use = 1; string process = 2; }
+message AudioCodecChoice { Stream stream = 1; bool opus = 2; uint32 bitrate_kbps = 3; }
+
+// ---------------------------------------------------------------------------
+// Clipboard and files
+// ---------------------------------------------------------------------------
+
+message ClipFormat {
+  string mime = 1;  // text/plain, text/html, text/rtf, image/png, text/uri-list
+  uint64 size = 2;  // 0 = unknown
+}
+
+message FileEntry {
+  string rel_path = 1;   // with '/' separators, relative to the transfer root
+  uint64 size = 2;
+  int64 mtime_unix_ms = 3;
+  bool is_dir = 4;
+}
+
+message ClipboardOffer {
+  uint64 id = 1;
+  repeated ClipFormat formats = 2;
+  repeated FileEntry files = 3;
+  bytes inline_text = 4;      // eager text < 1 MiB (UTF-8)
+  bool sensitive = 5;         // never sent, only for internal use
+}
+message ClipboardRequest { uint64 id = 1; string mime = 2; }
+message ClipboardDataHeader { uint64 id = 1; string mime = 2; uint64 size = 3; bool found = 4; }
+message ClipboardClear { uint64 id = 1; }
+
+message FileRequest {
+  uint64 transfer_id = 1;
+  uint32 index = 2;
+  uint64 offset = 3;  // resume
+}
+message FileHeader {
+  uint64 transfer_id = 1;
+  uint32 index = 2;
+  FileEntry entry = 3;
+  uint64 offset = 4;
+}
+message FileTrailer {
+  bytes blake3 = 1;
+  bool ok = 2;
+}
+message SendFiles {
+  uint64 transfer_id = 1;
+  repeated FileEntry files = 2;
+  string target_hint = 3;
+}
+message TransferProgress {
+  uint64 transfer_id = 1;
+  uint64 done = 2;
+  uint64 total = 3;
+  bool finished = 4;
+  bool failed = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Pairing (runs on its own ALPN before the peers know each other)
+// ---------------------------------------------------------------------------
+
+message PairSpake { bytes msg = 1; }
+message PairConfirm {
+  string device_id = 1;
+  string name = 2;
+  bytes cert_fingerprint = 3;
+  bytes mac = 4;
+}
+message PairResult { bool ok = 1; string reason = 2; }
+
+// ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+
+message UpdateOffer { string version = 1; uint64 size = 2; bytes sha256 = 3; }
+message UpdateAnswer { bool accept = 1; }
+
+// ---------------------------------------------------------------------------
+// Envelope for the control stream
+// ---------------------------------------------------------------------------
+
+message Control {
+  oneof msg {
+    Hello hello = 1;
+    Ping ping = 2;
+    Pong pong = 3;
+    LayoutUpdate layout = 4;
+    ErrorMsg error = 5;
+    Goodbye goodbye = 6;
+    ScreensUpdate screens_update = 7;
+    FocusStart focus_start = 10;
+    FocusReady focus_ready = 11;
+    FocusFailed focus_failed = 12;
+    FocusStop focus_stop = 13;
+    KeyframeRequest keyframe_request = 14;
+    BitrateHint bitrate_hint = 15;
+    CursorShape cursor_shape = 16;
+    CursorPos cursor_pos = 17;
+    StreamStats stream_stats = 18;
+    AudioRoute audio_route = 20;
+    MicInUse mic_in_use = 21;
+    AudioCodecChoice audio_codec = 22;
+    ClipboardOffer clipboard_offer = 30;
+    ClipboardRequest clipboard_request = 31;
+    ClipboardClear clipboard_clear = 32;
+    SendFiles send_files = 33;
+    FileRequest file_request = 34;
+    TransferProgress transfer_progress = 35;
+    UpdateOffer update_offer = 40;
+    UpdateAnswer update_answer = 41;
+  }
+}

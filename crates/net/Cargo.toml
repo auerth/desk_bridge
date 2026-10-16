@@ -1,0 +1,35 @@
+[package]
+name = "deskbridge-net"
+description = "Desk Bridge networking: identity, pairing (SPAKE2), mTLS over QUIC, mDNS discovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+deskbridge-proto.workspace = true
+deskbridge-platform.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+sha2.workspace = true
+spake2.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+rand.workspace = true
+uuid.workspace = true
+mdns-sd.workspace = true
+parking_lot = "0.12"
+
+[dev-dependencies]
+tempfile = "3"

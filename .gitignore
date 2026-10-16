@@ -1,1 +1,11 @@
-/.github
+/target
+**/target
+node_modules
+dist
+app/src-tauri/gen
+*.log
+.DS_Store
+/vendor/ffmpeg
+/drivers/*/package
+*.pdb
+.env
