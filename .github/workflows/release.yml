@@ -117,7 +117,7 @@ jobs:
           Get-Content release/latest.json
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
           name: Desk Bridge ${{ steps.ver.outputs.version }}
