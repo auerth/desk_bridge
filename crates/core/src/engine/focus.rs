@@ -395,6 +395,8 @@ impl Engine {
                 } => pb::FocusLayout::SplitRight as i32,
             },
             disable_internal_display: self.cfg.focus.disable_internal_display,
+            // 1:1 pixels on the PC monitor: same scale as the PC, same size of text and windows.
+            scale_percent: (mon.dpi.max(48) * 100 + 48) / 96,
         }));
         self.focus.phase = Phase::Preparing;
         self.focus.mode = mode_name.to_string();
@@ -642,6 +644,7 @@ impl Engine {
         let opts = FocusOptions {
             disable_internal: fs.disable_internal_display,
             render_adapter_hint: None,
+            scale_percent: (fs.scale_percent > 0).then_some(fs.scale_percent),
         };
         if self.cfg.focus.lid_do_nothing {
             let _ = self.platform.power.set_lid_action_do_nothing(true);

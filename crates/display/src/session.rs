@@ -39,6 +39,9 @@ pub struct FocusOptions {
     pub disable_internal: bool,
     /// Preferred render GPU (DXGI adapter name, substring ok).
     pub render_adapter_hint: Option<String>,
+    /// Windows display scale for the virtual monitor (percent); `None` keeps what Windows picks
+    /// (usually the laptop's 150-200 %, which makes everything huge on a 5120x1440 picture).
+    pub scale_percent: Option<u32>,
 }
 
 /// Timeouts per step plus the retry policy for rollback steps.
@@ -443,6 +446,13 @@ impl FocusDisplaySession {
             timed(&self.dm, "use-as-only-display", t.switch, move |d| {
                 d.use_as_only_display(id, internal)
             })?;
+            if let Some(p) = opts.scale_percent {
+                // Cosmetic: a failure must not cost the session.
+                match self.dm.set_scale(id, p) {
+                    Ok(now) => tracing::info!(wanted = p, now, "virtual display scale set"),
+                    Err(e) => tracing::warn!(error = %e, "could not set the virtual display scale"),
+                }
+            }
             Ok(id)
         };
         match steps() {
@@ -676,6 +686,7 @@ mod tests {
         FocusOptions {
             disable_internal,
             render_adapter_hint: Some("NVIDIA".into()),
+            scale_percent: None,
         }
     }
 

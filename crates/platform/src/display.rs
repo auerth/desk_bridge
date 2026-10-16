@@ -27,4 +27,9 @@ pub trait DisplayManager: Send + Sync {
     fn use_as_only_display(&self, screen_id: u32, disable_internal: bool) -> Result<()>;
     /// Modes the virtual driver should expose (written to the driver configuration).
     fn configure_modes(&self, modes: &[Mode]) -> Result<()>;
+    /// Sets the Windows display scale of `screen_id` to the step closest to `percent`.
+    /// Returns the scale now in effect.
+    fn set_scale(&self, _screen_id: u32, percent: u32) -> Result<u32> {
+        Ok(percent)
+    }
 }

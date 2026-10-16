@@ -165,6 +165,7 @@ mod win {
                 let opts = FocusOptions {
                     disable_internal: !has(args, "--keep-internal"),
                     render_adapter_hint: arg_value(args, "--adapter"),
+                    scale_percent: None,
                 };
                 match session.begin(mode, &opts) {
                     Ok(id) => {

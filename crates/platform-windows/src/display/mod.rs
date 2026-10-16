@@ -736,6 +736,14 @@ impl DisplayManager for WinDisplayManager {
         Ok(())
     }
 
+    fn set_scale(&self, screen_id: u32, percent: u32) -> Result<u32> {
+        let _g = self.op.lock();
+        let topo = ccd::query_active_saved()?;
+        let idx = self.locate_screen(screen_id, &topo)?;
+        let src = &topo.paths[idx].source;
+        ccd::set_source_scale(ccd::luid_from(src.adapter), src.id, percent)
+    }
+
     fn configure_modes(&self, modes: &[Mode]) -> Result<()> {
         let _g = self.op.lock();
         let clean = vdd::clean_modes(modes);

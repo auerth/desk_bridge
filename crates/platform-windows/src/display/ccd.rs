@@ -27,12 +27,12 @@ use windows::Win32::Devices::Display::{
     DISPLAYCONFIG_SCANLINE_ORDERING, DISPLAYCONFIG_SOURCE_DEVICE_NAME, DISPLAYCONFIG_SOURCE_MODE,
     DISPLAYCONFIG_TARGET_DEVICE_NAME, DISPLAYCONFIG_TARGET_MODE,
     DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY, DISPLAYCONFIG_VIDEO_SIGNAL_INFO,
-    DISPLAYCONFIG_VIDEO_SIGNAL_INFO_0, DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes,
-    QDC_ALL_PATHS, QDC_ONLY_ACTIVE_PATHS, QDC_VIRTUAL_MODE_AWARE, QUERY_DISPLAY_CONFIG_FLAGS,
-    QueryDisplayConfig, SDC_ALLOW_CHANGES, SDC_APPLY, SDC_NO_OPTIMIZATION, SDC_SAVE_TO_DATABASE,
-    SDC_TOPOLOGY_EXTEND, SDC_TOPOLOGY_INTERNAL, SDC_USE_DATABASE_CURRENT,
-    SDC_USE_SUPPLIED_DISPLAY_CONFIG, SDC_VALIDATE, SDC_VIRTUAL_MODE_AWARE,
-    SET_DISPLAY_CONFIG_FLAGS, SetDisplayConfig,
+    DISPLAYCONFIG_VIDEO_SIGNAL_INFO_0, DisplayConfigGetDeviceInfo, DisplayConfigSetDeviceInfo,
+    GetDisplayConfigBufferSizes, QDC_ALL_PATHS, QDC_ONLY_ACTIVE_PATHS, QDC_VIRTUAL_MODE_AWARE,
+    QUERY_DISPLAY_CONFIG_FLAGS, QueryDisplayConfig, SDC_ALLOW_CHANGES, SDC_APPLY,
+    SDC_NO_OPTIMIZATION, SDC_SAVE_TO_DATABASE, SDC_TOPOLOGY_EXTEND, SDC_TOPOLOGY_INTERNAL,
+    SDC_USE_DATABASE_CURRENT, SDC_USE_SUPPLIED_DISPLAY_CONFIG, SDC_VALIDATE,
+    SDC_VIRTUAL_MODE_AWARE, SET_DISPLAY_CONFIG_FLAGS, SetDisplayConfig,
 };
 use windows::Win32::Foundation::{
     BOOL, ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_PARAMETER, ERROR_SUCCESS, LUID, POINTL, RECTL,
@@ -665,6 +665,93 @@ pub(super) fn restore(saved: Option<&SavedTopology>) -> Result<&'static str> {
     ))
 }
 
+/// Windows display scale steps; index 0 (100 %) is the smallest any monitor offers.
+const SCALE_STEPS: [u32; 12] = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500];
+
+/// `DISPLAYCONFIG_DEVICE_INFO_GET_DPI_SCALE` (undocumented, used by the Settings app).
+#[repr(C)]
+struct DpiScaleGet {
+    header: DISPLAYCONFIG_DEVICE_INFO_HEADER,
+    /// Steps relative to the recommended scale.
+    min_rel: i32,
+    cur_rel: i32,
+    max_rel: i32,
+}
+
+/// `DISPLAYCONFIG_DEVICE_INFO_SET_DPI_SCALE` (undocumented).
+#[repr(C)]
+struct DpiScaleSet {
+    header: DISPLAYCONFIG_DEVICE_INFO_HEADER,
+    rel: i32,
+}
+
+/// Sets the display scale of a path source to the step nearest `percent`; returns the scale in
+/// effect afterwards. The values are relative to the scale Windows recommends for the monitor,
+/// whose step index is `-min_rel` (the minimum is always 100 %).
+pub(super) fn set_source_scale(adapter: LUID, source_id: u32, percent: u32) -> Result<u32> {
+    let get = read_source_scale(adapter, source_id)?;
+    let recommended = -get.min_rel;
+    let last = (recommended + get.max_rel).clamp(0, SCALE_STEPS.len() as i32 - 1);
+    let target = SCALE_STEPS
+        .iter()
+        .enumerate()
+        .take(last as usize + 1)
+        .min_by_key(|(_, s)| s.abs_diff(percent))
+        .map_or(0, |(i, _)| i as i32);
+    let rel = target - recommended;
+    if rel != get.cur_rel {
+        let set = DpiScaleSet {
+            header: device_header(
+                DISPLAYCONFIG_DEVICE_INFO_TYPE(-4),
+                size_of::<DpiScaleSet>(),
+                adapter,
+                source_id,
+            ),
+            rel,
+        };
+        // SAFETY: the header announces the size of the struct that follows it.
+        let rc = unsafe { DisplayConfigSetDeviceInfo(&set.header) };
+        if rc != 0 {
+            return Err(os_err(
+                i64::from(rc),
+                "DisplayConfigSetDeviceInfo(DPI scale)",
+            ));
+        }
+    }
+    Ok(SCALE_STEPS[target as usize])
+}
+
+/// Current display scale of a path source in percent (read-only).
+#[cfg(test)]
+pub(super) fn source_scale(adapter: LUID, source_id: u32) -> Result<u32> {
+    let g = read_source_scale(adapter, source_id)?;
+    let idx = (-g.min_rel + g.cur_rel).clamp(0, SCALE_STEPS.len() as i32 - 1);
+    Ok(SCALE_STEPS[idx as usize])
+}
+
+fn read_source_scale(adapter: LUID, source_id: u32) -> Result<DpiScaleGet> {
+    let mut get = DpiScaleGet {
+        header: device_header(
+            DISPLAYCONFIG_DEVICE_INFO_TYPE(-3),
+            size_of::<DpiScaleGet>(),
+            adapter,
+            source_id,
+        ),
+        min_rel: 0,
+        cur_rel: 0,
+        max_rel: 0,
+    };
+    // SAFETY: the header announces the size of the struct that follows it.
+    let rc = unsafe { DisplayConfigGetDeviceInfo(&mut get.header) };
+    if rc != 0 {
+        return Err(os_err(
+            i64::from(rc),
+            "DisplayConfigGetDeviceInfo(DPI scale)",
+        ));
+    }
+    Ok(get)
+}
+
 /// `DISPLAYCONFIG_PATH_ACTIVE`.
 const PATH_ACTIVE: u32 = 0x1;
 /// `DISPLAYCONFIG_PATH_MODE_IDX_INVALID` (legacy, not virtual-mode-aware layout).
@@ -733,4 +820,26 @@ pub(super) fn extend_all() -> Result<()> {
     // verified with SDC_VALIDATE in tests/ccd_flags.rs).
     set_topology(SDC_TOPOLOGY_EXTEND)
         .map_err(|rc| os_err(i64::from(rc), "SetDisplayConfig(TOPOLOGY_EXTEND)"))
+}
+
+#[cfg(test)]
+mod scale_tests {
+    use deskbridge_platform::screen::ScreenProvider;
+
+    /// Read-only: the scale read through the undocumented call matches the primary monitor's
+    /// effective DPI (checks the struct layout against the real OS).
+    #[test]
+    fn primary_scale_matches_its_dpi() {
+        let topo = super::query_active_saved().expect("display config");
+        let primary = topo.primary_path().expect("a primary display");
+        let src = &topo.paths[primary].source;
+        let pct = super::source_scale(super::luid_from(src.adapter), src.id).expect("dpi scale");
+        let screens = crate::screen::WinScreenProvider::new().screens();
+        let dpi = screens
+            .iter()
+            .find(|s| s.primary)
+            .expect("primary screen")
+            .dpi;
+        assert_eq!(pct, (dpi * 100 + 48) / 96, "scale {pct} % vs dpi {dpi}");
+    }
 }

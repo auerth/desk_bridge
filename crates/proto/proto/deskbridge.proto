@@ -159,6 +159,9 @@ message FocusStart {
   bool yuv444 = 6;
   FocusLayout layout = 7;
   bool disable_internal_display = 8;
+  // Windows display scale of the PC monitor in percent; the source gives its virtual monitor
+  // the same so the picture is not oversized (0 = leave it alone).
+  uint32 scale_percent = 9;
 }
 message FocusReady { uint32 width = 1; uint32 height = 2; Codec codec = 3; uint32 fps = 4; uint32 screen_id = 5; string encoder = 6; bool yuv444 = 7; }
 message FocusFailed { string reason = 1; }
