@@ -78,6 +78,8 @@ export interface DeviceDto {
   headset_sink: boolean;
   stream_source: boolean;
   onboarding_done: boolean;
+  /** `ip:port` endpoints the other device can use to reach this one. */
+  addresses: string[];
 }
 
 export type ConnState =
@@ -276,6 +278,10 @@ export interface GeneralConfig {
 export interface NetworkConfig {
   port: number;
   manual_hosts: string[];
+  /** Local address to listen on; empty = all interfaces. */
+  bind_address: string;
+  /** Addresses announced to the other device; empty = all interfaces. */
+  advertise_addresses: string[];
 }
 
 export interface InputConfig {
@@ -401,7 +407,7 @@ export function defaultConfig(): Config {
     schema_version: 1,
     device: { name: '', input_source: true, headset_sink: true, stream_source: false, onboarding_done: false },
     general: { autostart: true, language: 'auto', theme: 'system', log_level: 'info', paused: false },
-    network: { port: 47820, manual_hosts: [] },
+    network: { port: 47820, manual_hosts: [], bind_address: '', advertise_addresses: [] },
     input: {
       enabled: true,
       switch_delay_ms: 0,

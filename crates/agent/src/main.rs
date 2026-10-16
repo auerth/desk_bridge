@@ -102,7 +102,13 @@ fn run_agent() -> i32 {
         }
     };
     rt.block_on(async move {
-        let bind = std::net::SocketAddr::from(([0, 0, 0, 0], config.network.port));
+        let bind_ip: std::net::IpAddr = config
+            .network
+            .bind_address
+            .trim()
+            .parse()
+            .unwrap_or(std::net::IpAddr::from([0, 0, 0, 0]));
+        let bind = std::net::SocketAddr::new(bind_ip, config.network.port);
         let handle = match engine::start(engine::EngineParams {
             paths,
             config,

@@ -34,6 +34,7 @@ toml.workspace = true
 directories.workspace = true
 uuid.workspace = true
 parking_lot = "0.12"
+if-addrs = "0.13"
 crc32fast = "1"
 sha2.workspace = true
 

@@ -322,6 +322,7 @@ export function TextInput({
   id,
   disabled,
   onEnter,
+  onBlur,
   width,
   inputMode,
   maxLength,
@@ -335,6 +336,7 @@ export function TextInput({
   id?: string;
   disabled?: boolean;
   onEnter?: () => void;
+  onBlur?: () => void;
   width?: number | string;
   inputMode?: 'text' | 'numeric';
   maxLength?: number;
@@ -354,6 +356,7 @@ export function TextInput({
       maxLength={maxLength}
       autoFocus={autoFocus}
       spellCheck={false}
+      onBlur={onBlur}
       style={width ? { width } : undefined}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => {

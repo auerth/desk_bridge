@@ -230,6 +230,8 @@ pub struct DeviceDto {
     pub headset_sink: bool,
     pub stream_source: bool,
     pub onboarding_done: bool,
+    /// `ip:port` endpoints other devices can use to reach this one (shown while pairing).
+    pub addresses: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

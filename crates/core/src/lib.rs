@@ -11,6 +11,7 @@ pub mod engine;
 pub mod ipc;
 pub mod ipc_server;
 pub mod logging;
+pub mod netaddr;
 pub mod paths;
 pub mod platform;
 pub mod procstats;

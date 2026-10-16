@@ -102,6 +102,7 @@ function seedState(): AppState {
       headset_sink: !isLaptop,
       stream_source: isLaptop,
       onboarding_done: !onboarding,
+      addresses: isLaptop ? ['192.168.178.42:47820'] : ['192.168.178.20:47820', '172.28.80.1:47820'],
     },
     connection: {
       state: connected ? 'connected' : onboarding ? 'idle' : 'reconnecting',

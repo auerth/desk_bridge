@@ -102,14 +102,21 @@ export const useStore = create<UiStore>((set, get) => ({
           backend.request<AppState>({ type: 'get_state' }),
           backend.request<Config>({ type: 'get_config' }),
         ]);
-        set({ state, config, lang: resolveLang(config.general.language), loaded: true });
+        // A successful request proves the pipe is up, even if the one-shot `agent://connection`
+        // event fired before this window had subscribed.
+        set({ state, config, lang: resolveLang(config.general.language), loaded: true, conn: { connected: true } });
       } catch {
         set({ loaded: true });
       }
     };
 
     unsubs.push(
-      backend.onState((state) => set({ state })),
+      backend.onState((state) => {
+        // State pushes only exist while the pipe is connected: heal a missed connection event.
+        const wasOffline = !get().conn.connected;
+        set({ state, conn: { connected: true } });
+        if (wasOffline && !get().config) void loadAll();
+      }),
       backend.onEvent((e: UiEvent) => {
         const lang = get().lang;
         switch (e.kind) {

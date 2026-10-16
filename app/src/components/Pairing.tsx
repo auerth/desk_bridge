@@ -148,6 +148,7 @@ export function PairingPanel({
   const donePaired = useRef(false);
 
   const pairing = state?.pairing ?? null;
+  const addresses = state?.device.addresses ?? [];
   const discovered = useMemo(() => state?.discovered ?? [], [state?.discovered]);
 
   // "Show code" side: ask the agent for a code while this panel is visible.
@@ -207,6 +208,11 @@ export function PairingPanel({
           <p className="pairing__wait" role="status">
             <Loader2 className="spin" size={14} aria-hidden /> {t('pair.waiting')}
           </p>
+          {addresses.length > 0 && (
+            <p className="pairing__addresses">
+              {t('pair.myAddress')}: <strong>{addresses.join('  ·  ')}</strong>
+            </p>
+          )}
           <Button
             variant="ghost"
             size="sm"

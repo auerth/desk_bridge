@@ -173,6 +173,12 @@ impl Engine {
                 headset_sink: d.headset_sink,
                 stream_source: d.stream_source,
                 onboarding_done: d.onboarding_done,
+                addresses: crate::netaddr::local_endpoints(
+                    self.transport
+                        .local_addr()
+                        .map_or(self.cfg.network.port, |a| a.port()),
+                    &crate::netaddr::parse_ips(&self.cfg.network.advertise_addresses),
+                ),
             },
             connection,
             peers,

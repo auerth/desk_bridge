@@ -82,7 +82,7 @@ impl Engine {
         let mut out: Vec<Candidate> = Vec::new();
         let port_default = self.cfg.network.port;
         if let Some(e) = self.discovered.get(&peer.id) {
-            for a in e.d.socket_addrs() {
+            for a in crate::netaddr::rank(&e.d.socket_addrs(), &crate::netaddr::local_v4()) {
                 out.push(Candidate::Addr(a));
             }
         }

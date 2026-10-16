@@ -65,7 +65,14 @@ impl Discovery {
     }
 
     /// Announces this device. Call again after a name or port change.
-    pub fn announce(&mut self, name: &str, port: u16, app_version: &str) -> Result<()> {
+    /// `addrs` empty = advertise every interface; otherwise only these addresses.
+    pub fn announce(
+        &mut self,
+        name: &str,
+        port: u16,
+        app_version: &str,
+        addrs: &[IpAddr],
+    ) -> Result<()> {
         if let Some(old) = self.fullname.take() {
             let _ = self.daemon.unregister(&old);
         }
@@ -81,9 +88,14 @@ impl Discovery {
             ("ver".to_string(), app_version.to_string()),
             ("proto".to_string(), PROTO_VERSION.to_string()),
         ]);
-        let info = ServiceInfo::new(MDNS_SERVICE, &instance, &host, "", port, props)
-            .map_err(|e| NetError::Discovery(e.to_string()))?
-            .enable_addr_auto();
+        let info = if addrs.is_empty() {
+            ServiceInfo::new(MDNS_SERVICE, &instance, &host, "", port, props)
+                .map_err(|e| NetError::Discovery(e.to_string()))?
+                .enable_addr_auto()
+        } else {
+            ServiceInfo::new(MDNS_SERVICE, &instance, &host, addrs, port, props)
+                .map_err(|e| NetError::Discovery(e.to_string()))?
+        };
         self.fullname = Some(info.get_fullname().to_string());
         self.daemon
             .register(info)

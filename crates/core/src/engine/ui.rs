@@ -144,7 +144,12 @@ impl Engine {
         self.refresh_hello();
         if let Some(d) = self.discovery.as_mut() {
             let port = self.transport.local_addr().map_or(0, |a| a.port());
-            let _ = d.announce(&self.cfg.device.name, port, crate::brand::VERSION);
+            let _ = d.announce(
+                &self.cfg.device.name,
+                port,
+                crate::brand::VERSION,
+                &crate::netaddr::parse_ips(&self.cfg.network.advertise_addresses),
+            );
         }
     }
 

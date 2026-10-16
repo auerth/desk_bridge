@@ -99,6 +99,11 @@ pub struct NetworkConfig {
     pub port: u16,
     /// Manually configured peers (IP or host name), used when mDNS is blocked.
     pub manual_hosts: Vec<String>,
+    /// Local address to listen on; empty = all interfaces (`0.0.0.0`).
+    pub bind_address: String,
+    /// Addresses announced via mDNS and shown to the other device; empty = all interfaces.
+    /// Set this if the PC has virtual adapters (Hyper-V, WSL, VPN) that peers cannot reach.
+    pub advertise_addresses: Vec<String>,
 }
 
 impl Default for NetworkConfig {
@@ -106,6 +111,8 @@ impl Default for NetworkConfig {
         Self {
             port: deskbridge_proto::DEFAULT_PORT,
             manual_hosts: Vec::new(),
+            bind_address: String::new(),
+            advertise_addresses: Vec::new(),
         }
     }
 }

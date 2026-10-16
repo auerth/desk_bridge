@@ -1010,6 +1010,7 @@ dependencies = [
  "deskbridge-proto",
  "deskbridge-video",
  "directories",
+ "if-addrs",
  "parking_lot",
  "prost",
  "quinn",

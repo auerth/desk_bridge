@@ -15,6 +15,22 @@ type UpdateStatus =
   | { kind: 'installing' }
   | { kind: 'error'; text: string };
 
+/** Comma separated list of IP addresses stored as a string array / single string. */
+function AddressListField({ label, value, placeholder, onCommit }: { label: string; value: string; placeholder: string; onCommit: (v: string) => void }) {
+  const [text, setText] = useState(value);
+  return (
+    <TextInput
+      value={text}
+      onChange={setText}
+      onBlur={() => text !== value && onCommit(text.trim())}
+      onEnter={() => onCommit(text.trim())}
+      placeholder={placeholder}
+      ariaLabel={label}
+      width={300}
+    />
+  );
+}
+
 function PortField() {
   const t = useT();
   const port = useStore((s) => s.config?.network.port ?? 47820);
@@ -195,6 +211,24 @@ export function Settings() {
       <Card title={t('settings.network')}>
         <Row title={t('settings.port')} description={t('settings.portHint')}>
           <PortField />
+        </Row>
+        <Row title={t('settings.bindAddress')} description={t('settings.bindAddressHint')}>
+          <AddressListField
+            label={t('settings.bindAddress')}
+            value={config.network.bind_address}
+            placeholder={t('settings.automatic')}
+            onCommit={(v) => update((c) => void (c.network.bind_address = v))}
+          />
+        </Row>
+        <Row title={t('settings.advertise')} description={t('settings.advertiseHint')}>
+          <AddressListField
+            label={t('settings.advertise')}
+            value={config.network.advertise_addresses.join(', ')}
+            placeholder={t('settings.automatic')}
+            onCommit={(v) =>
+              update((c) => void (c.network.advertise_addresses = v.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean)))
+            }
+          />
         </Row>
         <Row title={t('settings.manualHosts')} description={t('settings.manualHostsHint')} stack>
           <div className="host-list">

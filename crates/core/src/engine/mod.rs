@@ -307,6 +307,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
                     &config.device.name,
                     local_addr.port(),
                     crate::brand::VERSION,
+                    &crate::netaddr::parse_ips(&config.network.advertise_addresses),
                 ) {
                     tracing::warn!("mDNS announce failed: {e}");
                 }
@@ -714,6 +715,7 @@ impl Engine {
                         &self.cfg.device.name,
                         self.transport.local_addr().map_or(0, |a| a.port()),
                         crate::brand::VERSION,
+                        &crate::netaddr::parse_ips(&self.cfg.network.advertise_addresses),
                     );
                 }
             }
