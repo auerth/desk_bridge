@@ -11,7 +11,8 @@ use deskbridge_audio::{
     AudioReceiver, AudioSender, CodecPolicy, OpusApp, ReceiverConfig, SenderConfig,
 };
 use deskbridge_platform::audio::{
-    AudioDeviceInfo, CaptureSource, DeviceEvent, DeviceKind, PullSource, StreamHandle,
+    AudioDeviceInfo, CaptureSource, DeviceEvent, DeviceKind, MicDefaults, PullSource, StreamHandle,
+    VirtualAudio,
 };
 use deskbridge_proto::media::{AudioPacket, STREAM_AUDIO_MIC, STREAM_AUDIO_SPEAKER};
 use deskbridge_proto::pb;
@@ -64,7 +65,15 @@ pub(crate) struct AudioState {
     mic_missing: bool,
     mic_rx: Option<Arc<AudioReceiver>>,
     mic_writer_stop: Option<Arc<AtomicBool>>,
+    /// Virtual microphone stream clocked by the device (preferred over the writer thread).
+    mic_playback: Option<Box<dyn StreamHandle>>,
     mic_watch_started: bool,
+    /// Laptop: the headset side asks for the virtual mic to be the default recording device.
+    mic_route_wanted: bool,
+    /// Laptop: the defaults the virtual mic replaced (restored when the route ends).
+    mic_default_prev: Option<MicDefaults>,
+    /// PC: last `MicToLaptop` route sent to the laptop.
+    mic_route_sent: Option<bool>,
     tone: Option<Box<dyn StreamHandle>>,
 }
 
@@ -150,7 +159,11 @@ impl Engine {
         if let Some(stop) = self.audio.mic_writer_stop.take() {
             stop.store(true, Ordering::SeqCst);
         }
+        self.audio.mic_playback = None;
         self.audio.mic_rx = None;
+        self.audio.mic_route_sent = None;
+        self.audio.mic_route_wanted = false;
+        self.sync_mic_default();
         self.audio.tone = None;
     }
 
@@ -374,33 +387,15 @@ impl Engine {
             slots.write().1 = Some(rx.clone());
         }
         self.audio.mic_rx = Some(rx.clone());
-        // writer thread: 10 ms blocks into the virtual microphone
-        let stop = Arc::new(AtomicBool::new(false));
-        self.audio.mic_writer_stop = Some(stop.clone());
+        // Preferred: the virtual microphone's own render stream pulls from the jitter buffer.
         let src: Arc<dyn PullSource> = rx.source();
-        let va_w = va.clone();
-        std::thread::Builder::new()
-            .name("virtual-mic-writer".into())
-            .spawn(move || {
-                let mut stereo = vec![0.0f32; 480 * 2];
-                let mut mono = vec![0.0f32; 480];
-                let mut next = std::time::Instant::now();
-                while !stop.load(Ordering::SeqCst) {
-                    src.fill(&mut stereo);
-                    for (i, m) in mono.iter_mut().enumerate() {
-                        *m = 0.5 * (stereo[i * 2] + stereo[i * 2 + 1]);
-                    }
-                    va_w.write_mic(&mono);
-                    next += Duration::from_millis(10);
-                    let now = std::time::Instant::now();
-                    if next > now {
-                        std::thread::sleep(next - now);
-                    } else {
-                        next = now;
-                    }
-                }
-            })
-            .ok();
+        match va.start_mic_playback(src.clone()) {
+            Ok(h) => self.audio.mic_playback = Some(h),
+            Err(e) => {
+                tracing::debug!("device-clocked virtual mic not available ({e}); writer thread");
+                self.spawn_mic_writer(va.clone(), src);
+            }
+        }
         // tell the headset side whenever an app opens/closes the virtual microphone
         if !self.audio.mic_watch_started {
             self.audio.mic_watch_started = true;
@@ -422,6 +417,72 @@ impl Engine {
                     in_use: va.mic_in_use(),
                     process: String::new(),
                 }));
+        }
+    }
+
+    /// Fallback without a device-clocked stream: 10 ms blocks into the virtual microphone. A late
+    /// wake-up (timer granularity) is caught up immediately instead of dropping blocks.
+    fn spawn_mic_writer(&mut self, va: Arc<dyn VirtualAudio>, src: Arc<dyn PullSource>) {
+        let stop = Arc::new(AtomicBool::new(false));
+        self.audio.mic_writer_stop = Some(stop.clone());
+        std::thread::Builder::new()
+            .name("virtual-mic-writer".into())
+            .spawn(move || {
+                let mut stereo = vec![0.0f32; 480 * 2];
+                let mut mono = vec![0.0f32; 480];
+                let mut next = std::time::Instant::now();
+                while !stop.load(Ordering::SeqCst) {
+                    src.fill(&mut stereo);
+                    for (i, m) in mono.iter_mut().enumerate() {
+                        *m = 0.5 * (stereo[i * 2] + stereo[i * 2 + 1]);
+                    }
+                    va.write_mic(&mono);
+                    next += Duration::from_millis(10);
+                    let now = std::time::Instant::now();
+                    if next > now {
+                        std::thread::sleep(next - now);
+                    } else if now - next > Duration::from_millis(100) {
+                        next = now;
+                    }
+                }
+            })
+            .ok();
+    }
+
+    fn mic_default_backup_file(&self) -> std::path::PathBuf {
+        self.paths.data_dir.join("mic-default.json")
+    }
+
+    /// Laptop: while the headset microphone is switched on (and "set as default" is chosen on the
+    /// headset side), the virtual microphone is the default recording device, so Teams & co.
+    /// follow it without manual switching. Otherwise (mic off, disconnected, agent stopped) the
+    /// previous defaults come back. The previous defaults are also kept on disk, so a crash cannot
+    /// leave the laptop on the virtual microphone.
+    pub(crate) fn sync_mic_default(&mut self) {
+        let want = self.session.is_some()
+            && self.cfg.device.stream_source
+            && self.audio.mic_route_wanted
+            && self.platform.virtual_audio.available();
+        if want && self.audio.mic_default_prev.is_none() {
+            match self.platform.virtual_audio.claim_default_mic() {
+                Ok(prev) => {
+                    let _ = std::fs::write(
+                        self.mic_default_backup_file(),
+                        serde_json::json!({
+                            "console": prev.console,
+                            "communications": prev.communications,
+                        })
+                        .to_string(),
+                    );
+                    self.audio.mic_default_prev = Some(prev);
+                }
+                Err(e) => tracing::warn!("could not make the virtual mic the default: {e}"),
+            }
+        } else if !want && let Some(prev) = self.audio.mic_default_prev.take() {
+            if let Err(e) = self.platform.virtual_audio.release_default_mic(&prev) {
+                tracing::warn!("could not restore the default microphone: {e}");
+            }
+            let _ = std::fs::remove_file(self.mic_default_backup_file());
         }
     }
 
@@ -452,6 +513,12 @@ impl Engine {
             self.start_mic_sender(&cfg.input_device);
         } else if !should && self.audio.mic_tx.is_some() {
             self.audio.mic_tx = None;
+        }
+        // The laptop makes its virtual mic the default only while the headset mic is switched on.
+        let route = supported && cfg.enabled && cfg.set_as_default && !self.audio.mic_missing;
+        if self.audio.mic_route_sent != Some(route) {
+            self.audio.mic_route_sent = Some(route);
+            self.send_route(pb::Stream::MicToLaptop, route);
         }
         self.dirty = true;
     }
@@ -532,6 +599,10 @@ impl Engine {
                         self.drop_speaker_source();
                     }
                     self.dirty = true;
+                }
+                if r.stream == pb::Stream::MicToLaptop as i32 && self.cfg.device.stream_source {
+                    self.audio.mic_route_wanted = r.enabled;
+                    self.sync_mic_default();
                 }
                 true
             }

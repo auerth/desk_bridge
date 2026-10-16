@@ -2,7 +2,8 @@
 
 use crate::audio::{
     AudioCapture, AudioDeviceInfo, AudioDevices, AudioFrame, AudioPlayback, CaptureSource,
-    DeviceEvent, DeviceKind, LocalOutput, MicUsage, PullSource, StreamHandle, VirtualAudio,
+    DeviceEvent, DeviceKind, LocalOutput, MicDefaults, MicUsage, PullSource, StreamHandle,
+    VirtualAudio,
 };
 use crate::clipboard::{
     ClipFormatInfo, ClipboardBackend, ClipboardEvent, ClipboardProvider, FileOffer,
@@ -512,6 +513,8 @@ impl AudioPlayback for MockAudioPlayback {
 pub struct MockVirtualAudio {
     pub available: std::sync::atomic::AtomicBool,
     pub mic_written: Mutex<Vec<f32>>,
+    /// The virtual microphone is the system default recording device.
+    pub default_claimed: std::sync::atomic::AtomicBool,
     in_use: std::sync::atomic::AtomicBool,
     watchers: Mutex<Vec<UnboundedSender<MicUsage>>>,
 }
@@ -557,6 +560,21 @@ impl VirtualAudio for MockVirtualAudio {
 
     fn watch_mic_in_use(&self, tx: UnboundedSender<MicUsage>) -> Result<()> {
         self.watchers.lock().push(tx);
+        Ok(())
+    }
+
+    fn claim_default_mic(&self) -> Result<MicDefaults> {
+        self.default_claimed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(MicDefaults {
+            console: Some("mic1".into()),
+            communications: Some("mic1".into()),
+        })
+    }
+
+    fn release_default_mic(&self, _prev: &MicDefaults) -> Result<()> {
+        self.default_claimed
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 }

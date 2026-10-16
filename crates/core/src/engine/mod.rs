@@ -315,6 +315,20 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
             let _ = std::fs::remove_file(&f);
         }
     }
+    // Same for the default microphone switched to the virtual cable.
+    {
+        let f = paths.data_dir.join("mic-default.json");
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                let prev = deskbridge_platform::audio::MicDefaults {
+                    console: v["console"].as_str().map(str::to_string),
+                    communications: v["communications"].as_str().map(str::to_string),
+                };
+                let _ = platform.virtual_audio.release_default_mic(&prev);
+            }
+            let _ = std::fs::remove_file(&f);
+        }
+    }
     // A crashed focus session on this device must not leave the displays rearranged (plan 8.7).
     {
         let (tp, dm) = (paths.topology_file(), platform.display.clone());

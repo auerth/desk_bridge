@@ -115,8 +115,39 @@ pub trait VirtualAudio: Send + Sync {
     ) -> Result<Box<dyn StreamHandle>>;
     /// Writes audio into "Desk Bridge Mikrofon".
     fn write_mic(&self, frames: &[f32]);
+    /// Plays `source` (interleaved stereo, normally the jitter buffer) into the virtual
+    /// microphone, clocked by the device itself. `Unsupported` → the caller feeds
+    /// [`write_mic`](Self::write_mic) in 10 ms blocks instead.
+    fn start_mic_playback(&self, _source: Arc<dyn PullSource>) -> Result<Box<dyn StreamHandle>> {
+        Err(crate::PlatformError::Unsupported(
+            "device-clocked virtual microphone",
+        ))
+    }
     fn mic_in_use(&self) -> bool;
     fn watch_mic_in_use(&self, tx: UnboundedSender<MicUsage>) -> Result<()>;
+    /// Makes the virtual microphone the system default recording device (all roles). Returns the
+    /// defaults it replaced.
+    fn claim_default_mic(&self) -> Result<MicDefaults> {
+        Err(crate::PlatformError::Unsupported(
+            "default microphone switching",
+        ))
+    }
+    /// Gives every role its previous default back, unless the user picked another device in the
+    /// meantime (only roles still pointing at the virtual microphone are changed).
+    fn release_default_mic(&self, _prev: &MicDefaults) -> Result<()> {
+        Err(crate::PlatformError::Unsupported(
+            "default microphone switching",
+        ))
+    }
+}
+
+/// Default recording devices before the virtual microphone took over.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MicDefaults {
+    /// "Default device" (`eConsole`).
+    pub console: Option<String>,
+    /// "Default communication device" (Teams & co.).
+    pub communications: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

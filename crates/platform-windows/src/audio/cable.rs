@@ -5,10 +5,19 @@
 //! Nothing here is installed by Desk Bridge: the backend simply reports `available() == false`
 //! until the driver exists, so F3 stays honestly "not available" without it. "Microphone in use"
 //! is derived from active recording sessions on the capture endpoint.
+//!
+//! The microphone stream is played into "CABLE Input" straight from the jitter buffer, so the
+//! cable's own clock paces it (a timer-driven writer thread loses blocks to the 15.6 ms timer
+//! granularity, which is heard as crackling). While the headset microphone is switched on,
+//! "CABLE Output" can be made the default recording device; the previous defaults are restored
+//! afterwards.
 
-use super::{WasapiDevices, WasapiPlayback, mic_session_enumeration};
+use super::{
+    DefaultRole, WasapiDevices, WasapiPlayback, mic_session_enumeration, set_default_device,
+};
 use deskbridge_platform::audio::{
-    AudioDevices, AudioFrame, DeviceKind, MicUsage, PullSource, StreamHandle, VirtualAudio,
+    AudioDeviceInfo, AudioDevices, AudioFrame, DeviceKind, MicDefaults, MicUsage, PullSource,
+    StreamHandle, VirtualAudio,
 };
 use deskbridge_platform::{PlatformError, Result, UnboundedSender};
 use parking_lot::Mutex;
@@ -74,6 +83,16 @@ impl CableVirtualAudio {
             .map(|d| d.id)
     }
 
+    fn capture_endpoints() -> Result<(Vec<AudioDeviceInfo>, AudioDeviceInfo)> {
+        let list = WasapiDevices::new().list(DeviceKind::Capture)?;
+        let cable = list
+            .iter()
+            .find(|d| d.name.contains(CAPTURE_NAME))
+            .cloned()
+            .ok_or_else(|| PlatformError::DeviceNotFound(CAPTURE_NAME.into()))?;
+        Ok((list, cable))
+    }
+
     fn active_processes() -> Vec<String> {
         let Some(id) = Self::find(DeviceKind::Capture, CAPTURE_NAME) else {
             return vec![];
@@ -125,8 +144,61 @@ impl VirtualAudio for CableVirtualAudio {
         }
     }
 
+    fn start_mic_playback(&self, source: Arc<dyn PullSource>) -> Result<Box<dyn StreamHandle>> {
+        let id = Self::find(DeviceKind::Render, RENDER_NAME)
+            .ok_or_else(|| PlatformError::DeviceNotFound(RENDER_NAME.into()))?;
+        let h = WasapiPlayback::new().start_concrete(Some(&id), source)?;
+        Ok(Box::new(h))
+    }
+
     fn mic_in_use(&self) -> bool {
         !Self::active_processes().is_empty()
+    }
+
+    fn claim_default_mic(&self) -> Result<MicDefaults> {
+        let (list, cable) = Self::capture_endpoints()?;
+        let other = |pred: fn(&AudioDeviceInfo) -> bool| {
+            list.iter()
+                .find(|d| pred(d) && d.id != cable.id)
+                .map(|d| d.id.clone())
+        };
+        let prev = MicDefaults {
+            console: other(|d| d.is_default),
+            communications: other(|d| d.is_default_communications),
+        };
+        set_default_device(&cable.id, DefaultRole::All)?;
+        tracing::info!(
+            ?prev,
+            "virtual microphone is now the default recording device"
+        );
+        Ok(prev)
+    }
+
+    fn release_default_mic(&self, prev: &MicDefaults) -> Result<()> {
+        // Without the cable Windows has already picked another default.
+        let Ok((list, cable)) = Self::capture_endpoints() else {
+            return Ok(());
+        };
+        let fallback = list.iter().find(|d| !d.is_virtual).map(|d| d.id.clone());
+        let pick = |p: &Option<String>| {
+            p.as_ref()
+                .filter(|id| list.iter().any(|d| &d.id == *id))
+                .cloned()
+                .or_else(|| fallback.clone())
+        };
+        if cable.is_default
+            && let Some(id) = pick(&prev.console)
+        {
+            set_default_device(&id, DefaultRole::Console)?;
+            set_default_device(&id, DefaultRole::Multimedia)?;
+        }
+        if cable.is_default_communications
+            && let Some(id) = pick(&prev.communications)
+        {
+            set_default_device(&id, DefaultRole::Communications)?;
+        }
+        tracing::info!(?prev, "previous default recording devices restored");
+        Ok(())
     }
 
     fn watch_mic_in_use(&self, tx: UnboundedSender<MicUsage>) -> Result<()> {

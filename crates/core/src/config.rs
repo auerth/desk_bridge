@@ -254,7 +254,7 @@ impl Default for MicAudio {
             input_device: String::new(),
             only_when_used: true,
             mute: false,
-            set_as_default: false,
+            set_as_default: true,
         }
     }
 }

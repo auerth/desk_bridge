@@ -443,7 +443,7 @@ export function defaultConfig(): Config {
         buffer_ms: 0,
         mute_local_output: true,
       },
-      mic_to_laptop: { enabled: true, input_device: '', only_when_used: true, mute: false, set_as_default: false },
+      mic_to_laptop: { enabled: true, input_device: '', only_when_used: true, mute: false, set_as_default: true },
     },
     focus: {
       mode: 'full',

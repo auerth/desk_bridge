@@ -212,7 +212,7 @@ export const de = {
   'audio.micOnlyWhenUsed': 'Nur senden, wenn eine App es nutzt',
   'audio.micOnlyWhenUsedHint': 'Das Mikro wird erst übertragen, wenn eine Laptop-App das virtuelle Mikrofon öffnet – und du siehst es im Tray.',
   'audio.micSetDefault': 'Als Standardgerät setzen',
-  'audio.micSetDefaultHint': '„Desk Bridge Mikrofon“ und „Lautsprecher“ werden Standard auf dem Laptop (nur mit deiner Zustimmung).',
+  'audio.micSetDefaultHint': 'Solange verbunden und das Mikro an ist, wird das virtuelle Mikrofon („CABLE Output“) Standard-Mikrofon auf dem Laptop. Danach kommt das vorherige Mikro zurück.',
   'audio.micHotkey': 'Stumm per Tastenkürzel: {keys}',
   'audio.micInUse': 'Genutzt von {app}',
 

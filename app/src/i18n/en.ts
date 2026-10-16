@@ -212,7 +212,7 @@ export const en: Record<MessageKey, string> = {
   'audio.micOnlyWhenUsed': 'Only send while an app uses it',
   'audio.micOnlyWhenUsedHint': 'The microphone is only transmitted once a laptop app opens the virtual microphone – and you see it in the tray.',
   'audio.micSetDefault': 'Set as default device',
-  'audio.micSetDefaultHint': '“Desk Bridge Microphone” and “Speakers” become the default on the laptop (only with your consent).',
+  'audio.micSetDefaultHint': 'While connected and the mic is on, the virtual microphone (“CABLE Output”) is the laptop’s default microphone. Afterwards the previous one comes back.',
   'audio.micHotkey': 'Mute with hotkey: {keys}',
   'audio.micInUse': 'Used by {app}',
 
