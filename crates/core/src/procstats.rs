@@ -10,7 +10,10 @@ pub struct ProcStats {
 
 impl Default for ProcStats {
     fn default() -> Self {
-        Self { last_wall: Instant::now(), last_cpu_100ns: cpu_time_100ns() }
+        Self {
+            last_wall: Instant::now(),
+            last_cpu_100ns: cpu_time_100ns(),
+        }
     }
 }
 
@@ -31,7 +34,12 @@ impl ProcStats {
 fn cpu_time_100ns() -> u64 {
     use windows::Win32::Foundation::FILETIME;
     use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
-    let (mut c, mut e, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+    let (mut c, mut e, mut k, mut u) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
     // SAFETY: out-parameters are valid for the call; the pseudo handle needs no closing.
     unsafe {
         if GetProcessTimes(GetCurrentProcess(), &mut c, &mut e, &mut k, &mut u).is_err() {
@@ -46,7 +54,10 @@ fn cpu_time_100ns() -> u64 {
 fn rss_mb() -> f32 {
     use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
     use windows::Win32::System::Threading::GetCurrentProcess;
-    let mut pmc = PROCESS_MEMORY_COUNTERS { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32, ..Default::default() };
+    let mut pmc = PROCESS_MEMORY_COUNTERS {
+        cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        ..Default::default()
+    };
     // SAFETY: `pmc` is a properly sized, initialised out structure.
     unsafe {
         if GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc, pmc.cb).is_err() {

@@ -18,6 +18,8 @@ impl SystemServices for NullSystemServices {
     }
 
     fn send_sas(&self) -> Result<()> {
-        Err(crate::PlatformError::Unsupported("the Desk Bridge service is not running"))
+        Err(crate::PlatformError::Unsupported(
+            "the Desk Bridge service is not running",
+        ))
     }
 }

@@ -46,7 +46,11 @@ impl Transport {
     pub fn bind(identity: Arc<Identity>, peers: PeerStore, addr: SocketAddr) -> Result<Self> {
         let server = tls::server_config(&identity)?;
         let endpoint = quinn::Endpoint::server(server, addr)?;
-        Ok(Self { endpoint, identity, peers })
+        Ok(Self {
+            endpoint,
+            identity,
+            peers,
+        })
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
@@ -66,7 +70,10 @@ impl Transport {
     /// Waits for the next incoming connection attempt. Returns `None` when the endpoint closed.
     pub async fn accept(&self) -> Option<Pending> {
         let incoming = self.endpoint.accept().await?;
-        Some(Pending { incoming, peers: self.peers.clone() })
+        Some(Pending {
+            incoming,
+            peers: self.peers.clone(),
+        })
     }
 
     /// Connects to an already paired peer. Fails if the presented certificate does not match the
@@ -85,7 +92,11 @@ impl Transport {
             conn.close(close::UNKNOWN_PEER.into(), b"fingerprint mismatch");
             return Err(NetError::FingerprintMismatch);
         }
-        Ok(SessionConn { conn, peer: peer.clone(), initiator: true })
+        Ok(SessionConn {
+            conn,
+            peer: peer.clone(),
+            initiator: true,
+        })
     }
 
     /// Opens a pairing connection to a device that is showing a code.
@@ -126,7 +137,11 @@ impl Pending {
             Some(a) if a == ALPN_SESSION => {
                 let fp = tls::peer_fingerprint(&conn)?;
                 match self.peers.by_fingerprint(&fp) {
-                    Some(peer) => Ok(Accepted::Session(SessionConn { conn, peer, initiator: false })),
+                    Some(peer) => Ok(Accepted::Session(SessionConn {
+                        conn,
+                        peer,
+                        initiator: false,
+                    })),
                     None => {
                         conn.close(close::UNKNOWN_PEER.into(), b"unknown peer");
                         Err(NetError::UnknownPeer(hex(&fp)[..16].to_string()))
@@ -210,30 +225,48 @@ impl SessionConn {
         let fut = async {
             if self.initiator {
                 let (s, r) = self.conn.open_bi().await?;
-                let mut control = Channel { tx: Tx { send: s }, rx: Rx { recv: r } };
+                let mut control = Channel {
+                    tx: Tx { send: s },
+                    rx: Rx { recv: r },
+                };
                 control
                     .tx
-                    .send(&pb::Control { msg: Some(pb::control::Msg::Hello(own)) })
+                    .send(&pb::Control {
+                        msg: Some(pb::control::Msg::Hello(own)),
+                    })
                     .await?;
                 let (mut s2, r2) = self.conn.open_bi().await?;
                 s2.write_all(&[INPUT_PREFACE]).await?;
-                let input = Channel { tx: Tx { send: s2 }, rx: Rx { recv: r2 } };
+                let input = Channel {
+                    tx: Tx { send: s2 },
+                    rx: Rx { recv: r2 },
+                };
                 let theirs = Self::read_hello(&mut control.rx).await?;
                 Ok::<_, NetError>((theirs, Channels { control, input }))
             } else {
                 let (s, r) = self.conn.accept_bi().await?;
-                let mut control = Channel { tx: Tx { send: s }, rx: Rx { recv: r } };
+                let mut control = Channel {
+                    tx: Tx { send: s },
+                    rx: Rx { recv: r },
+                };
                 let theirs = Self::read_hello(&mut control.rx).await?;
                 let (s2, mut r2) = self.conn.accept_bi().await?;
                 let mut pre = [0u8; 1];
-                r2.read_exact(&mut pre).await.map_err(|e| NetError::Protocol(e.to_string()))?;
+                r2.read_exact(&mut pre)
+                    .await
+                    .map_err(|e| NetError::Protocol(e.to_string()))?;
                 if pre[0] != INPUT_PREFACE {
                     return Err(NetError::Protocol("bad input stream preface".into()));
                 }
-                let input = Channel { tx: Tx { send: s2 }, rx: Rx { recv: r2 } };
+                let input = Channel {
+                    tx: Tx { send: s2 },
+                    rx: Rx { recv: r2 },
+                };
                 control
                     .tx
-                    .send(&pb::Control { msg: Some(pb::control::Msg::Hello(own)) })
+                    .send(&pb::Control {
+                        msg: Some(pb::control::Msg::Hello(own)),
+                    })
                     .await?;
                 Ok((theirs, Channels { control, input }))
             }
@@ -242,12 +275,19 @@ impl SessionConn {
             .await
             .map_err(|_| NetError::Protocol("hello timeout".into()))??;
         if !compatible(theirs.proto_version, PROTO_VERSION) {
-            self.conn.close(close::VERSION.into(), b"incompatible version");
-            return Err(NetError::IncompatibleVersion { peer: theirs.proto_version, own: PROTO_VERSION });
+            self.conn
+                .close(close::VERSION.into(), b"incompatible version");
+            return Err(NetError::IncompatibleVersion {
+                peer: theirs.proto_version,
+                own: PROTO_VERSION,
+            });
         }
         if theirs.device_id != self.peer.id.to_string() {
-            self.conn.close(close::UNKNOWN_PEER.into(), b"device id mismatch");
-            return Err(NetError::Protocol("hello device id does not match pinned peer".into()));
+            self.conn
+                .close(close::UNKNOWN_PEER.into(), b"device id mismatch");
+            return Err(NetError::Protocol(
+                "hello device id does not match pinned peer".into(),
+            ));
         }
         Ok((theirs, ch))
     }

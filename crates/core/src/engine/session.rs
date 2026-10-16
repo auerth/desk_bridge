@@ -40,7 +40,10 @@ impl PeerLink {
     }
 
     pub fn send_input(&self, ev: pb::input_event::Ev) {
-        let _ = self.input_tx.send(pb::InputEvent { ts_us: crate::clock::now_us(), ev: Some(ev) });
+        let _ = self.input_tx.send(pb::InputEvent {
+            ts_us: crate::clock::now_us(),
+            ev: Some(ev),
+        });
     }
 
     pub fn send_input_event(&self, ev: pb::InputEvent) {
@@ -118,14 +121,17 @@ fn spawn_io(
             loop {
                 match rx.recv::<pb::Control>().await {
                     Ok(c) => {
-                        if let Some(m) = c.msg {
-                            if tx.send(Msg::PeerControl { session_id, msg: m }).is_err() {
-                                break;
-                            }
+                        if let Some(m) = c.msg
+                            && tx.send(Msg::PeerControl { session_id, msg: m }).is_err()
+                        {
+                            break;
                         }
                     }
                     Err(e) => {
-                        let _ = tx.send(Msg::SessionClosed { session_id, reason: format!("control: {e}") });
+                        let _ = tx.send(Msg::SessionClosed {
+                            session_id,
+                            reason: format!("control: {e}"),
+                        });
                         break;
                     }
                 }
@@ -145,7 +151,10 @@ fn spawn_io(
                         }
                     }
                     Err(e) => {
-                        let _ = tx.send(Msg::SessionClosed { session_id, reason: format!("input: {e}") });
+                        let _ = tx.send(Msg::SessionClosed {
+                            session_id,
+                            reason: format!("input: {e}"),
+                        });
                         break;
                     }
                 }
@@ -182,7 +191,9 @@ fn spawn_io(
                         Some(s) => {
                             let _ = s.send(r);
                         }
-                        None => tracing::debug!(kind = kind[0], "uni stream without consumer dropped"),
+                        None => {
+                            tracing::debug!(kind = kind[0], "uni stream without consumer dropped")
+                        }
                     }
                 });
             }
@@ -194,7 +205,10 @@ fn spawn_io(
         let tx = msg_tx;
         tokio::spawn(async move {
             let e = sc.closed().await;
-            let _ = tx.send(Msg::SessionClosed { session_id, reason: format!("connection closed: {e}") });
+            let _ = tx.send(Msg::SessionClosed {
+                session_id,
+                reason: format!("connection closed: {e}"),
+            });
         });
     }
 
@@ -210,7 +224,10 @@ fn spawn_io(
     }
 }
 
-async fn writer<M: prost::Message + 'static>(mut tx: deskbridge_net::transport::Tx, mut rx: UnboundedReceiver<M>) {
+async fn writer<M: prost::Message + 'static>(
+    mut tx: deskbridge_net::transport::Tx,
+    mut rx: UnboundedReceiver<M>,
+) {
     while let Some(m) = rx.recv().await {
         if tx.send(&m).await.is_err() {
             break;

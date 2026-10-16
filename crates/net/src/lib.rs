@@ -34,17 +34,24 @@ pub fn hex(bytes: &[u8]) -> String {
 /// Parses lowercase/uppercase hex.
 #[must_use]
 pub fn unhex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
 }
 
 /// Short, human friendly fingerprint (first 8 bytes, grouped) for the UI.
 #[must_use]
 pub fn short_fp(fp: &[u8]) -> String {
     let h = hex(&fp[..fp.len().min(8)]);
-    h.as_bytes().chunks(4).map(|c| std::str::from_utf8(c).unwrap()).collect::<Vec<_>>().join("-")
+    h.as_bytes()
+        .chunks(4)
+        .map(|c| std::str::from_utf8(c).unwrap())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 #[cfg(test)]
@@ -56,6 +63,9 @@ mod tests {
         let b = [0u8, 1, 0xab, 0xff];
         assert_eq!(unhex(&hex(&b)).unwrap(), b);
         assert!(unhex("abc").is_none());
-        assert_eq!(short_fp(&[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0]), "1234-5678-9abc-def0");
+        assert_eq!(
+            short_fp(&[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0]),
+            "1234-5678-9abc-def0"
+        );
     }
 }

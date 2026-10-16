@@ -1,10 +1,10 @@
 //! Two endpoints on 127.0.0.1: pairing with a code, then a pinned session.
 
+use deskbridge_net::NetError;
 use deskbridge_net::identity::Identity;
 use deskbridge_net::pairing::{self, PairingWindow};
 use deskbridge_net::peers::{Peer, PeerStore};
 use deskbridge_net::transport::{Accepted, Transport};
-use deskbridge_net::NetError;
 use deskbridge_proto::{PROTO_VERSION, pb};
 use std::sync::Arc;
 
@@ -18,7 +18,11 @@ fn node() -> Node {
     let id = Arc::new(Identity::generate().unwrap());
     let peers = PeerStore::in_memory();
     let t = Transport::bind(id.clone(), peers.clone(), "127.0.0.1:0".parse().unwrap()).unwrap();
-    Node { transport: Arc::new(t), id, peers }
+    Node {
+        transport: Arc::new(t),
+        id,
+        peers,
+    }
 }
 
 fn hello(n: &Node, name: &str) -> pb::Hello {
@@ -48,7 +52,14 @@ fn spawn_pair_server(
     })
 }
 
-async fn do_pair(server: &Node, client: &Node, code: &str) -> (Result<pairing::PairedDevice, NetError>, Result<pairing::PairedDevice, NetError>) {
+async fn do_pair(
+    server: &Node,
+    client: &Node,
+    code: &str,
+) -> (
+    Result<pairing::PairedDevice, NetError>,
+    Result<pairing::PairedDevice, NetError>,
+) {
     let window = Arc::new(PairingWindow::new("123456".into()));
     let srv = spawn_pair_server(server, window);
     let addr = server.transport.local_addr().unwrap();
@@ -68,15 +79,26 @@ async fn pairing_with_correct_code_then_session() {
     assert_eq!(on_laptop.device_id, pc.id.device_id);
     assert_eq!(on_pc.fingerprint, laptop.id.fingerprint);
 
-    pc.peers.add(Peer::new(on_pc.device_id, on_pc.name, &on_pc.fingerprint)).unwrap();
-    laptop.peers.add(Peer::new(on_laptop.device_id, on_laptop.name, &on_laptop.fingerprint)).unwrap();
+    pc.peers
+        .add(Peer::new(on_pc.device_id, on_pc.name, &on_pc.fingerprint))
+        .unwrap();
+    laptop
+        .peers
+        .add(Peer::new(
+            on_laptop.device_id,
+            on_laptop.name,
+            &on_laptop.fingerprint,
+        ))
+        .unwrap();
 
     // Session: PC connects to the laptop.
     let lt = laptop.transport.clone();
     let lh = hello(&laptop, "Laptop");
     let server = tokio::spawn(async move {
         let pending = lt.accept().await.unwrap();
-        let Accepted::Session(sc) = pending.finish().await.unwrap() else { panic!("session expected") };
+        let Accepted::Session(sc) = pending.finish().await.unwrap() else {
+            panic!("session expected")
+        };
         let (their_hello, mut ch) = sc.handshake(lh).await.unwrap();
         // echo one input event back as EdgeHit
         let ev: pb::InputEvent = ch.input.rx.recv().await.unwrap();
@@ -89,7 +111,11 @@ async fn pairing_with_correct_code_then_session() {
     });
 
     let peer = pc.peers.by_id(laptop.id.device_id).unwrap();
-    let sc = pc.transport.connect_session(laptop.transport.local_addr().unwrap(), &peer).await.unwrap();
+    let sc = pc
+        .transport
+        .connect_session(laptop.transport.local_addr().unwrap(), &peer)
+        .await
+        .unwrap();
     let (theirs, mut ch) = sc.handshake(hello(&pc, "PC")).await.unwrap();
     assert_eq!(theirs.name, "Laptop");
 
@@ -101,7 +127,8 @@ async fn pairing_with_correct_code_then_session() {
     let back: pb::InputEvent = ch.input.rx.recv().await.unwrap();
     assert_eq!(back, ev);
 
-    sc.send_datagram(bytes::Bytes::from_static(b"audio")).unwrap();
+    sc.send_datagram(bytes::Bytes::from_static(b"audio"))
+        .unwrap();
     assert_eq!(&sc.read_datagram().await.unwrap()[..], b"audio");
     assert_eq!(server.await.unwrap(), "PC");
 }
@@ -131,7 +158,10 @@ async fn unknown_device_is_rejected_for_sessions() {
         let r = sc.handshake(hello(&stranger, "Stranger")).await;
         assert!(r.is_err());
     }
-    assert!(matches!(server.await.unwrap(), Err(NetError::UnknownPeer(_))));
+    assert!(matches!(
+        server.await.unwrap(),
+        Err(NetError::UnknownPeer(_))
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -145,6 +175,9 @@ async fn pinned_fingerprint_mismatch_is_detected() {
             let _ = p.finish().await;
         }
     });
-    let r = pc.transport.connect_session(impostor.transport.local_addr().unwrap(), &wrong).await;
+    let r = pc
+        .transport
+        .connect_session(impostor.transport.local_addr().unwrap(), &wrong)
+        .await;
     assert!(matches!(r, Err(NetError::FingerprintMismatch)));
 }

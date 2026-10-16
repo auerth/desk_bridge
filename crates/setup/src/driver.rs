@@ -476,10 +476,10 @@ mod sys {
         };
         let mut infs: Vec<String> = Vec::new();
         let found = for_each_device(hwid, |set, data| {
-            if let Some(inf) = driver_inf_name(set, data) {
-                if !infs.iter().any(|i| i.eq_ignore_ascii_case(&inf)) {
-                    infs.push(inf);
-                }
+            if let Some(inf) = driver_inf_name(set, data)
+                && !infs.iter().any(|i| i.eq_ignore_ascii_case(&inf))
+            {
+                infs.push(inf);
             }
             if !dry_run {
                 unsafe { SetupDiCallClassInstaller(DIF_REMOVE, set, Some(&*data)) }

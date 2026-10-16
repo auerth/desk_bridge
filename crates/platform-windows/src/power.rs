@@ -444,12 +444,11 @@ unsafe extern "system" fn power_wndproc(
                                 std::slice::from_raw_parts(s.Data.as_ptr(), s.DataLength as usize);
                             (s.PowerSetting, data)
                         };
-                        if guid == GUID_LIDSWITCH_STATE_CHANGE {
-                            if let Some(closed) = parse_lid_closed(data) {
-                                if let Some(ev) = ctx.lid.borrow_mut().update(closed) {
-                                    ctx.send(ev);
-                                }
-                            }
+                        if guid == GUID_LIDSWITCH_STATE_CHANGE
+                            && let Some(closed) = parse_lid_closed(data)
+                            && let Some(ev) = ctx.lid.borrow_mut().update(closed)
+                        {
+                            ctx.send(ev);
                         }
                     }
                     _ => {}

@@ -292,16 +292,17 @@ impl ClipboardSync {
                 );
             }
         }
-        if let Some(t) = &text {
-            if !kept.iter().any(|k| k.mime == mime::TEXT) && oversized.is_none() {
-                add_format(
-                    &mut kept,
-                    &mut oversized,
-                    cfg.max_size_bytes,
-                    mime::TEXT,
-                    t.len() as u64,
-                );
-            }
+        if let Some(t) = &text
+            && !kept.iter().any(|k| k.mime == mime::TEXT)
+            && oversized.is_none()
+        {
+            add_format(
+                &mut kept,
+                &mut oversized,
+                cfg.max_size_bytes,
+                mime::TEXT,
+                t.len() as u64,
+            );
         }
 
         // File lists replace all other formats.
@@ -356,10 +357,10 @@ impl ClipboardSync {
             match &text {
                 Some(t) if (t.len() as u64) < eager_limit => inline_text = t.as_bytes().to_vec(),
                 None if tf.size > 0 && tf.size < eager_limit => {
-                    if let Ok(Some(data)) = self.backend.read(mime::TEXT) {
-                        if (data.len() as u64) < eager_limit {
-                            inline_text = data;
-                        }
+                    if let Ok(Some(data)) = self.backend.read(mime::TEXT)
+                        && (data.len() as u64) < eager_limit
+                    {
+                        inline_text = data;
                     }
                 }
                 _ => {}
@@ -618,10 +619,10 @@ impl ClipboardProvider for RemoteProvider {
                 "Format {m} wurde nicht angeboten"
             )));
         };
-        if m == mime::TEXT {
-            if let Some(t) = &self.inline {
-                return Ok(t.clone());
-            }
+        if m == mime::TEXT
+            && let Some(t) = &self.inline
+        {
+            return Ok(t.clone());
         }
         let data = self
             .fetcher

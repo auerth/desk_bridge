@@ -78,7 +78,9 @@ fn codec_policy(s: &str) -> CodecPolicy {
 
 impl Engine {
     fn peer_has_cap(&self, cap: &str) -> bool {
-        self.session.as_ref().is_some_and(|s| s.link.hello.caps.iter().any(|c| c.name == cap))
+        self.session
+            .as_ref()
+            .is_some_and(|s| s.link.hello.caps.iter().any(|c| c.name == cap))
     }
 
     // ---------------------------------------------------------------------------------------
@@ -92,12 +94,17 @@ impl Engine {
         // incoming datagrams: speaker audio (headset side) and microphone audio (stream source)
         let (dtx, mut drx) = unbounded_channel::<Bytes>();
         link.set_datagram_sink(Some(dtx));
-        let rxs = Arc::new(parking_lot::RwLock::new((None::<Arc<AudioReceiver>>, None::<Arc<AudioReceiver>>)));
+        let rxs = Arc::new(parking_lot::RwLock::new((
+            None::<Arc<AudioReceiver>>,
+            None::<Arc<AudioReceiver>>,
+        )));
         self.audio_rx_slots = Some(rxs.clone());
         let opus_flag = self.audio.last_packet_opus.clone();
         tokio::spawn(async move {
             while let Some(d) = drx.recv().await {
-                let Ok(pkt) = AudioPacket::decode(d) else { continue };
+                let Ok(pkt) = AudioPacket::decode(d) else {
+                    continue;
+                };
                 let slots = rxs.read();
                 match pkt.stream_id {
                     STREAM_AUDIO_SPEAKER => {
@@ -151,7 +158,12 @@ impl Engine {
 
     fn start_speaker_sink(&mut self) {
         let wired = true;
-        let Ok(rx) = AudioReceiver::new(ReceiverConfig { channels_in: 2, wired, min_ms: 5.0, max_ms: 60.0 }) else {
+        let Ok(rx) = AudioReceiver::new(ReceiverConfig {
+            channels_in: 2,
+            wired,
+            min_ms: 5.0,
+            max_ms: 60.0,
+        }) else {
             tracing::error!("audio receiver could not be created");
             return;
         };
@@ -168,14 +180,20 @@ impl Engine {
     /// (Re)opens the render stream on the configured device; keeps the stream paused if the
     /// device is absent (powered-off headset) and tells the source to stop sending meanwhile.
     pub(crate) fn restart_playback(&mut self) {
-        let Some(rx) = self.audio.speaker_rx.clone() else { return };
+        let Some(rx) = self.audio.speaker_rx.clone() else {
+            return;
+        };
         self.audio.playback = None;
         if !self.cfg.audio.laptop_to_pc.enabled {
             self.send_route(pb::Stream::LaptopToPc, false);
             return;
         }
         let want = self.cfg.audio.laptop_to_pc.output_device.clone();
-        let device = if want.is_empty() { None } else { Some(want.clone()) };
+        let device = if want.is_empty() {
+            None
+        } else {
+            Some(want.clone())
+        };
         // A configured device that is currently absent → paused, never silently another device.
         if let Some(id) = &device {
             let present = self
@@ -192,10 +210,18 @@ impl Engine {
             }
         }
         rx.reset();
-        match self.platform.audio_playback.start(device.as_deref(), rx.source()) {
+        match self
+            .platform
+            .audio_playback
+            .start(device.as_deref(), rx.source())
+        {
             Ok(h) => {
                 let name = self.device_name(DeviceKind::Render, device.as_deref());
-                self.audio.playback = Some(Playback { _handle: h, device_id: device, device_name: name });
+                self.audio.playback = Some(Playback {
+                    _handle: h,
+                    device_id: device,
+                    device_name: name,
+                });
                 self.audio.out_missing = false;
                 self.send_route(pb::Stream::LaptopToPc, true);
             }
@@ -218,7 +244,11 @@ impl Engine {
 
     pub(crate) fn send_route(&self, stream: pb::Stream, enabled: bool) {
         if let Some(s) = &self.session {
-            s.link.send_control(pb::control::Msg::AudioRoute(pb::AudioRoute { stream: stream as i32, enabled }));
+            s.link
+                .send_control(pb::control::Msg::AudioRoute(pb::AudioRoute {
+                    stream: stream as i32,
+                    enabled,
+                }));
         }
     }
 
@@ -243,18 +273,36 @@ impl Engine {
             return;
         };
         let (tx, rx) = unbounded_channel();
-        let capture = match self.platform.audio_capture.start(CaptureSource::Loopback(None), tx) {
+        let capture = match self
+            .platform
+            .audio_capture
+            .start(CaptureSource::Loopback(None), tx)
+        {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!("loopback capture failed: {e}");
-                self.warn_once("audio_capture", &format!("Laptop-Ton konnte nicht erfasst werden: {e}"));
+                self.warn_once(
+                    "audio_capture",
+                    &format!("Laptop-Ton konnte nicht erfasst werden: {e}"),
+                );
                 return;
             }
         };
         let peak = Arc::new(AtomicU32::new(0));
         let opus = Arc::new(AtomicBool::new(false));
-        let task = tokio::spawn(run_sender_owned(link, sender, rx, peak.clone(), opus.clone()));
-        self.audio.speaker_tx = Some(SendPipe { _capture: capture, task, peak, opus });
+        let task = tokio::spawn(run_sender_owned(
+            link,
+            sender,
+            rx,
+            peak.clone(),
+            opus.clone(),
+        ));
+        self.audio.speaker_tx = Some(SendPipe {
+            _capture: capture,
+            task,
+            peak,
+            opus,
+        });
     }
 
     // ---------------------------------------------------------------------------------------
@@ -267,7 +315,12 @@ impl Engine {
         if !va.available() || !self.peer_has_cap(deskbridge_proto::caps::AUDIO_HEADSET) {
             return;
         }
-        let Ok(rx) = AudioReceiver::new(ReceiverConfig { channels_in: 1, wired: true, min_ms: 5.0, max_ms: 60.0 }) else {
+        let Ok(rx) = AudioReceiver::new(ReceiverConfig {
+            channels_in: 1,
+            wired: true,
+            min_ms: 5.0,
+            max_ms: 60.0,
+        }) else {
             return;
         };
         let rx = Arc::new(rx);
@@ -318,16 +371,21 @@ impl Engine {
             }
         }
         if let Some(s) = &self.session {
-            s.link.send_control(pb::control::Msg::MicInUse(pb::MicInUse { in_use: va.mic_in_use(), process: String::new() }));
+            s.link
+                .send_control(pb::control::Msg::MicInUse(pb::MicInUse {
+                    in_use: va.mic_in_use(),
+                    process: String::new(),
+                }));
         }
     }
 
     pub(crate) fn on_mic_usage(&mut self, u: deskbridge_platform::audio::MicUsage) {
         if let Some(s) = &self.session {
-            s.link.send_control(pb::control::Msg::MicInUse(pb::MicInUse {
-                in_use: u.in_use,
-                process: u.process.unwrap_or_default(),
-            }));
+            s.link
+                .send_control(pb::control::Msg::MicInUse(pb::MicInUse {
+                    in_use: u.in_use,
+                    process: u.process.unwrap_or_default(),
+                }));
         }
     }
 
@@ -339,7 +397,11 @@ impl Engine {
         let supported = self.peer_has_cap(deskbridge_proto::caps::AUDIO_MIC_SINK);
         let cfg = self.cfg.audio.mic_to_laptop.clone();
         let in_use = self.audio.mic_in_use.as_ref().is_some_and(|m| m.0);
-        let should = supported && cfg.enabled && !cfg.mute && !self.audio.mic_missing && (in_use || !cfg.only_when_used);
+        let should = supported
+            && cfg.enabled
+            && !cfg.mute
+            && !self.audio.mic_missing
+            && (in_use || !cfg.only_when_used);
         if should && self.audio.mic_tx.is_none() {
             self.start_mic_sender(&cfg.input_device);
         } else if !should && self.audio.mic_tx.is_some() {
@@ -361,16 +423,29 @@ impl Engine {
             return;
         };
         let (tx, rx) = unbounded_channel();
-        let dev = if device.is_empty() { None } else { Some(device.to_string()) };
+        let dev = if device.is_empty() {
+            None
+        } else {
+            Some(device.to_string())
+        };
         // A configured microphone that is absent must NOT be replaced by another one.
         if let Some(id) = &dev {
-            let present = self.platform.audio_devices.list(DeviceKind::Capture).map(|l| l.iter().any(|d| &d.id == id)).unwrap_or(false);
+            let present = self
+                .platform
+                .audio_devices
+                .list(DeviceKind::Capture)
+                .map(|l| l.iter().any(|d| &d.id == id))
+                .unwrap_or(false);
             if !present {
                 self.audio.mic_missing = true;
                 return;
             }
         }
-        let capture = match self.platform.audio_capture.start(CaptureSource::Microphone(dev), tx) {
+        let capture = match self
+            .platform
+            .audio_capture
+            .start(CaptureSource::Microphone(dev), tx)
+        {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!("microphone capture failed: {e}");
@@ -380,8 +455,19 @@ impl Engine {
         };
         let peak = Arc::new(AtomicU32::new(0));
         let opus = Arc::new(AtomicBool::new(false));
-        let task = tokio::spawn(run_sender_owned(link, sender, rx, peak.clone(), opus.clone()));
-        self.audio.mic_tx = Some(SendPipe { _capture: capture, task, peak, opus });
+        let task = tokio::spawn(run_sender_owned(
+            link,
+            sender,
+            rx,
+            peak.clone(),
+            opus.clone(),
+        ));
+        self.audio.mic_tx = Some(SendPipe {
+            _capture: capture,
+            task,
+            peak,
+            opus,
+        });
     }
 
     // ---------------------------------------------------------------------------------------
@@ -404,7 +490,8 @@ impl Engine {
                 true
             }
             M::MicInUse(m) => {
-                self.audio.mic_in_use = Some((m.in_use, (!m.process.is_empty()).then(|| m.process.clone())));
+                self.audio.mic_in_use =
+                    Some((m.in_use, (!m.process.is_empty()).then(|| m.process.clone())));
                 self.sync_mic_sender();
                 true
             }
@@ -436,17 +523,26 @@ impl Engine {
                 }
             }
             DeviceEvent::Added(d) => {
-                if self.audio.out_missing && d.kind == DeviceKind::Render && (want_out.is_empty() || d.id == want_out) {
+                if self.audio.out_missing
+                    && d.kind == DeviceKind::Render
+                    && (want_out.is_empty() || d.id == want_out)
+                {
                     self.restart_playback();
                 }
-                if self.audio.mic_missing && d.kind == DeviceKind::Capture && (want_mic.is_empty() || d.id == want_mic) {
+                if self.audio.mic_missing
+                    && d.kind == DeviceKind::Capture
+                    && (want_mic.is_empty() || d.id == want_mic)
+                {
                     self.audio.mic_missing = false;
                     self.sync_mic_sender();
                 }
             }
             DeviceEvent::DefaultChanged { kind, .. } => {
                 // Following the system default: reopen on the new default.
-                if kind == DeviceKind::Render && want_out.is_empty() && self.audio.speaker_rx.is_some() {
+                if kind == DeviceKind::Render
+                    && want_out.is_empty()
+                    && self.audio.speaker_rx.is_some()
+                {
                     self.restart_playback();
                 }
             }
@@ -460,16 +556,30 @@ impl Engine {
 
     pub(crate) fn toggle_laptop_mute(&mut self) {
         self.cfg.audio.laptop_to_pc.mute = !self.cfg.audio.laptop_to_pc.mute;
-        let (icon, text) = if self.cfg.audio.laptop_to_pc.mute { ("speaker-off", "Laptop-Ton stumm") } else { ("speaker", "Laptop-Ton an") };
-        self.emit(UiEvent::Osd { icon: icon.into(), text: text.into() });
+        let (icon, text) = if self.cfg.audio.laptop_to_pc.mute {
+            ("speaker-off", "Laptop-Ton stumm")
+        } else {
+            ("speaker", "Laptop-Ton an")
+        };
+        self.emit(UiEvent::Osd {
+            icon: icon.into(),
+            text: text.into(),
+        });
         self.persist_config();
         self.apply_audio_config();
     }
 
     pub(crate) fn toggle_mic_mute(&mut self) {
         self.cfg.audio.mic_to_laptop.mute = !self.cfg.audio.mic_to_laptop.mute;
-        let (icon, text) = if self.cfg.audio.mic_to_laptop.mute { ("mic-off", "Mikro stumm") } else { ("mic", "Mikro aktiv") };
-        self.emit(UiEvent::Osd { icon: icon.into(), text: text.into() });
+        let (icon, text) = if self.cfg.audio.mic_to_laptop.mute {
+            ("mic-off", "Mikro stumm")
+        } else {
+            ("mic", "Mikro aktiv")
+        };
+        self.emit(UiEvent::Osd {
+            icon: icon.into(),
+            text: text.into(),
+        });
         self.persist_config();
         self.apply_audio_config();
     }
@@ -481,9 +591,16 @@ impl Engine {
             rx.set_muted(c.mute);
         }
         if self.cfg.device.headset_sink && self.session.is_some() {
-            let current = self.audio.playback.as_ref().map(|p| p.device_id.clone().unwrap_or_default());
+            let current = self
+                .audio
+                .playback
+                .as_ref()
+                .map(|p| p.device_id.clone().unwrap_or_default());
             let device_changed = current.is_some_and(|d| d != c.output_device);
-            if device_changed || (c.enabled && self.audio.playback.is_none()) || (!c.enabled && self.audio.playback.is_some()) {
+            if device_changed
+                || (c.enabled && self.audio.playback.is_none())
+                || (!c.enabled && self.audio.playback.is_some())
+            {
                 self.audio.out_missing = false;
                 self.restart_playback();
             }
@@ -509,8 +626,18 @@ impl Engine {
                 })
                 .collect()
         };
-        let render = conv(self.platform.audio_devices.list(DeviceKind::Render).map_err(|e| e.to_string())?);
-        let capture = conv(self.platform.audio_devices.list(DeviceKind::Capture).map_err(|e| e.to_string())?);
+        let render = conv(
+            self.platform
+                .audio_devices
+                .list(DeviceKind::Render)
+                .map_err(|e| e.to_string())?,
+        );
+        let capture = conv(
+            self.platform
+                .audio_devices
+                .list(DeviceKind::Capture)
+                .map_err(|e| e.to_string())?,
+        );
         self.emit(UiEvent::AudioDevices { render, capture });
         Ok(serde_json::json!({ "ok": true }))
     }
@@ -538,7 +665,10 @@ impl Engine {
         let h = self
             .platform
             .audio_playback
-            .start(dev.as_deref(), Arc::new(Tone(std::sync::atomic::AtomicU64::new(0))))
+            .start(
+                dev.as_deref(),
+                Arc::new(Tone(std::sync::atomic::AtomicU64::new(0))),
+            )
             .map_err(|e| format!("Testton konnte nicht abgespielt werden: {e}"))?;
         self.audio.tone = Some(h);
         let tx = self.msg_tx.clone();
@@ -557,16 +687,33 @@ impl Engine {
         let mut a = AudioFeatureDto::default();
         a.base.enabled = cfg.laptop_to_pc.enabled;
         a.muted = cfg.laptop_to_pc.mute;
-        a.base.state = if !cfg.laptop_to_pc.enabled { Live::Off } else { Live::Ready };
+        a.base.state = if !cfg.laptop_to_pc.enabled {
+            Live::Off
+        } else {
+            Live::Ready
+        };
         if let Some(rx) = &self.audio.speaker_rx {
             let st = rx.stats();
             a.level = rx.peak_level();
             a.buffer_ms = Some(st.fill_ms);
             a.latency_ms = Some(st.fill_ms + 10.0);
-            a.codec = if st.packets == 0 { String::new() } else if self.audio.last_packet_opus.load(Ordering::Relaxed) { "opus".into() } else { "pcm".into() };
-            a.device_name = self.audio.playback.as_ref().and_then(|p| p.device_name.clone());
+            a.codec = if st.packets == 0 {
+                String::new()
+            } else if self.audio.last_packet_opus.load(Ordering::Relaxed) {
+                "opus".into()
+            } else {
+                "pcm".into()
+            };
+            a.device_name = self
+                .audio
+                .playback
+                .as_ref()
+                .and_then(|p| p.device_name.clone());
             a.device_missing = self.audio.out_missing;
-            if cfg.laptop_to_pc.enabled && st.packets > 0 && matches!(st.state, deskbridge_audio::PlayState::Playing) {
+            if cfg.laptop_to_pc.enabled
+                && st.packets > 0
+                && matches!(st.state, deskbridge_audio::PlayState::Playing)
+            {
                 a.base.state = Live::Live;
             }
             if self.audio.out_missing {
@@ -574,12 +721,20 @@ impl Engine {
             }
         } else if let Some(p) = &self.audio.speaker_tx {
             a.level = p.level();
-            a.codec = if p.opus.load(Ordering::Relaxed) { "opus".into() } else { "pcm".into() };
+            a.codec = if p.opus.load(Ordering::Relaxed) {
+                "opus".into()
+            } else {
+                "pcm".into()
+            };
             if cfg.laptop_to_pc.enabled {
                 a.base.state = Live::Live;
             }
         } else if !connected {
-            a.base.state = if cfg.laptop_to_pc.enabled { Live::Ready } else { Live::Off };
+            a.base.state = if cfg.laptop_to_pc.enabled {
+                Live::Ready
+            } else {
+                Live::Off
+            };
         }
         f.laptop_audio = a;
 
@@ -587,7 +742,11 @@ impl Engine {
         let mut m = AudioFeatureDto::default();
         m.base.enabled = cfg.mic_to_laptop.enabled;
         m.muted = cfg.mic_to_laptop.mute;
-        m.base.state = if !cfg.mic_to_laptop.enabled { Live::Off } else { Live::Ready };
+        m.base.state = if !cfg.mic_to_laptop.enabled {
+            Live::Off
+        } else {
+            Live::Ready
+        };
         if self.cfg.device.headset_sink {
             if connected && !self.peer_has_cap(deskbridge_proto::caps::AUDIO_MIC_SINK) {
                 m.base.state = Live::Unavailable;
@@ -596,7 +755,11 @@ impl Engine {
             if let Some(p) = &self.audio.mic_tx {
                 m.level = p.level();
                 m.base.state = Live::Live;
-                m.codec = if p.opus.load(Ordering::Relaxed) { "opus".into() } else { "pcm".into() };
+                m.codec = if p.opus.load(Ordering::Relaxed) {
+                    "opus".into()
+                } else {
+                    "pcm".into()
+                };
                 if let Some((true, Some(name))) = &self.audio.mic_in_use {
                     m.base.detail = Some(format!("Laptop nutzt dein Mikro ({name})"));
                 } else {
@@ -624,7 +787,9 @@ impl Engine {
     }
 
     pub(crate) fn audio_is_active(&self) -> bool {
-        self.audio.speaker_rx.is_some() || self.audio.speaker_tx.is_some() || self.audio.mic_tx.is_some()
+        self.audio.speaker_rx.is_some()
+            || self.audio.speaker_tx.is_some()
+            || self.audio.mic_tx.is_some()
     }
 
     pub(crate) fn on_tone_done(&mut self) {

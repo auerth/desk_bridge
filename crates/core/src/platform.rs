@@ -1,21 +1,23 @@
 //! The set of OS services the engine runs on. Windows builds fill it with
 //! `deskbridge-platform-windows`, tests with the mocks.
 
-use deskbridge_platform::audio::{AudioCapture, AudioDevices, AudioPlayback, DeviceKind, VirtualAudio};
+use deskbridge_display::mock::MockDisplayManager;
+use deskbridge_platform::audio::{
+    AudioCapture, AudioDevices, AudioPlayback, DeviceKind, VirtualAudio,
+};
 use deskbridge_platform::clipboard::ClipboardBackend;
 use deskbridge_platform::display::DisplayManager;
-use deskbridge_video::backend::{VideoBackend, mock::MockVideoBackend};
-use deskbridge_display::mock::MockDisplayManager;
 use deskbridge_platform::input::{InputCapture, InputInjector};
 use deskbridge_platform::mock::{
-    MockAudioCapture, MockAudioDevices, MockAudioPlayback, MockCapture, MockClipboard, MockInjector, MockScreens,
-    MockVirtualAudio, audio_device, screen,
+    MockAudioCapture, MockAudioDevices, MockAudioPlayback, MockCapture, MockClipboard,
+    MockInjector, MockScreens, MockVirtualAudio, audio_device, screen,
 };
 use deskbridge_platform::power::{PowerEvent, PowerManager};
 use deskbridge_platform::screen::ScreenProvider;
 use deskbridge_platform::secret::{PlainProtector, SecretProtector};
 use deskbridge_platform::system::{NullSystemServices, SystemServices};
 use deskbridge_platform::{Result, UnboundedSender};
+use deskbridge_video::backend::{VideoBackend, mock::MockVideoBackend};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -103,6 +105,20 @@ impl Platform {
             display: display.clone(),
             os: "mock".into(),
         };
-        (p, MockHandles { capture, injector, screens, clipboard, audio_devices, audio_capture, audio_playback, virtual_audio, video, display })
+        (
+            p,
+            MockHandles {
+                capture,
+                injector,
+                screens,
+                clipboard,
+                audio_devices,
+                audio_capture,
+                audio_playback,
+                virtual_audio,
+                video,
+                display,
+            },
+        )
     }
 }

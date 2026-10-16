@@ -44,7 +44,12 @@ impl ServerCertVerifier for AcceptAny {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
     }
 
     fn verify_tls13_signature(
@@ -53,7 +58,12 @@ impl ServerCertVerifier for AcceptAny {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -81,7 +91,12 @@ impl ClientCertVerifier for AcceptAny {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
     }
 
     fn verify_tls13_signature(
@@ -90,7 +105,12 @@ impl ClientCertVerifier for AcceptAny {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -146,7 +166,9 @@ pub fn transport_config() -> quinn::TransportConfig {
     let mut t = quinn::TransportConfig::default();
     t.keep_alive_interval(Some(std::time::Duration::from_secs(1)));
     t.max_idle_timeout(Some(
-        std::time::Duration::from_secs(10).try_into().expect("idle timeout fits"),
+        std::time::Duration::from_secs(10)
+            .try_into()
+            .expect("idle timeout fits"),
     ));
     t.datagram_receive_buffer_size(Some(4 * 1024 * 1024));
     t.datagram_send_buffer_size(4 * 1024 * 1024);

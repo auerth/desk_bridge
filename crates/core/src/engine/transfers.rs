@@ -16,9 +16,9 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc as std_mpsc;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Semaphore, mpsc::unbounded_channel, oneshot};
 
@@ -62,7 +62,10 @@ pub(crate) struct Transfers {
 
 impl Transfers {
     pub fn new(state_dir: Option<PathBuf>) -> Self {
-        Self { mgr: TransferManager::new(state_dir), reg: Arc::default() }
+        Self {
+            mgr: TransferManager::new(state_dir),
+            reg: Arc::default(),
+        }
     }
 }
 
@@ -120,11 +123,18 @@ impl Engine {
         self.send_files_with_hint(paths, String::new())
     }
 
-    pub(crate) fn send_files_with_hint(&mut self, paths: Vec<String>, hint: String) -> Result<Value, String> {
-        let Some(s) = &self.session else { return Err("Nicht verbunden".into()) };
+    pub(crate) fn send_files_with_hint(
+        &mut self,
+        paths: Vec<String>,
+        hint: String,
+    ) -> Result<Value, String> {
+        let Some(s) = &self.session else {
+            return Err("Nicht verbunden".into());
+        };
         let link = s.link.clone();
         let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-        let plan = deskbridge_files::scan::plan_with_warnings(&paths).map_err(|e| format!("Dateien nicht lesbar: {e}"))?;
+        let plan = deskbridge_files::scan::plan_with_warnings(&paths)
+            .map_err(|e| format!("Dateien nicht lesbar: {e}"))?;
         if plan.files.is_empty() {
             return Err("Keine Dateien ausgewählt".into());
         }
@@ -135,9 +145,26 @@ impl Engine {
         let entries: Vec<pb::FileEntry> = plan.files.iter().map(|f| f.entry.clone()).collect();
         let id = self.xfer.mgr.next_id();
         let name = display_name(&entries);
-        let handle = self.xfer.mgr.begin(id, Direction::Send, name, entries.iter().filter(|e| !e.is_dir).count() as u32, total, None);
-        self.xfer.reg.outgoing.lock().insert(id, Outgoing { plan: plan.files, handle });
-        link.send_control(pb::control::Msg::SendFiles(pb::SendFiles { transfer_id: id, files: entries, target_hint: hint }));
+        let handle = self.xfer.mgr.begin(
+            id,
+            Direction::Send,
+            name,
+            entries.iter().filter(|e| !e.is_dir).count() as u32,
+            total,
+            None,
+        );
+        self.xfer.reg.outgoing.lock().insert(
+            id,
+            Outgoing {
+                plan: plan.files,
+                handle,
+            },
+        );
+        link.send_control(pb::control::Msg::SendFiles(pb::SendFiles {
+            transfer_id: id,
+            files: entries,
+            target_hint: hint,
+        }));
         self.dirty = true;
         Ok(json!({ "transfer_id": id }))
     }
@@ -146,12 +173,18 @@ impl Engine {
     pub(crate) fn on_send_files(&mut self, sf: pb::SendFiles) {
         let Some(s) = &self.session else { return };
         let link = s.link.clone();
-        if sf.files.iter().any(|f| deskbridge_files::sanitize::safe_join(std::path::Path::new("x"), &f.rel_path).is_err()) {
+        if sf.files.iter().any(|f| {
+            deskbridge_files::sanitize::safe_join(std::path::Path::new("x"), &f.rel_path).is_err()
+        }) {
             tracing::warn!("SendFiles with unsafe paths rejected");
             return;
         }
         let update_meta = self.update_meta_from_hint(&sf.target_hint);
-        let root = if update_meta.is_some() { self.paths.data_dir.join("Updates") } else { target_dir(&self.cfg) };
+        let root = if update_meta.is_some() {
+            self.paths.data_dir.join("Updates")
+        } else {
+            target_dir(&self.cfg)
+        };
         let _ = std::fs::create_dir_all(&root);
         let total: u64 = sf.files.iter().map(|f| f.size).sum();
         let name = display_name(&sf.files);
@@ -182,10 +215,16 @@ impl Engine {
         let files = sf.files;
         tokio::spawn(async move {
             for (i, e) in files.iter().enumerate() {
-                let Ok(p) = sem.clone().acquire_owned().await else { break };
+                let Ok(p) = sem.clone().acquire_owned().await else {
+                    break;
+                };
                 p.forget();
                 let offset = wire::resume_offset(&root, e);
-                link.send_control(pb::control::Msg::FileRequest(pb::FileRequest { transfer_id: id, index: i as u32, offset }));
+                link.send_control(pb::control::Msg::FileRequest(pb::FileRequest {
+                    transfer_id: id,
+                    index: i as u32,
+                    offset,
+                }));
             }
         });
         self.dirty = true;
@@ -198,7 +237,10 @@ impl Engine {
         let (planned, handle) = {
             let out = self.xfer.reg.outgoing.lock();
             match out.get(&req.transfer_id) {
-                Some(o) => (o.plan.get(req.index as usize).cloned(), Some(o.handle.clone())),
+                Some(o) => (
+                    o.plan.get(req.index as usize).cloned(),
+                    Some(o.handle.clone()),
+                ),
                 None => (
                     self.clip
                         .as_ref()
@@ -209,21 +251,34 @@ impl Engine {
             }
         };
         let Some(planned) = planned else {
-            tracing::debug!(id = req.transfer_id, idx = req.index, "file request for unknown transfer");
+            tracing::debug!(
+                id = req.transfer_id,
+                idx = req.index,
+                "file request for unknown transfer"
+            );
             return;
         };
         tokio::spawn(async move {
             let res: Result<(), String> = async {
                 let mut s = link.open_uni(uni::FILE).await.map_err(|e| e.to_string())?;
-                s.write_all(&preamble(req.transfer_id, req.index)).await.map_err(|e| e.to_string())?;
+                s.write_all(&preamble(req.transfer_id, req.index))
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut prog = |n: u64| {
                     if let Some(h) = &handle {
                         h.add_bytes(n);
                     }
                 };
-                wire::send_file(&mut s, req.transfer_id, req.index, &planned, req.offset, &mut prog)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                wire::send_file(
+                    &mut s,
+                    req.transfer_id,
+                    req.index,
+                    &planned,
+                    req.offset,
+                    &mut prog,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
                 let _ = s.finish();
                 // Let the data drain before the stream object goes away.
                 let _ = tokio::time::timeout(Duration::from_secs(30), s.stopped()).await;
@@ -241,15 +296,15 @@ impl Engine {
 
     /// Marks outgoing transfers finished once the peer reports completion.
     pub(crate) fn on_transfer_progress(&mut self, p: pb::TransferProgress) {
-        if p.finished || p.failed {
-            if let Some(o) = self.xfer.reg.outgoing.lock().remove(&p.transfer_id) {
-                if p.failed {
-                    o.handle.fail("Fehler beim Empfänger");
-                } else {
-                    o.handle.finish();
-                }
-                self.dirty = true;
+        if (p.finished || p.failed)
+            && let Some(o) = self.xfer.reg.outgoing.lock().remove(&p.transfer_id)
+        {
+            if p.failed {
+                o.handle.fail("Fehler beim Empfänger");
+            } else {
+                o.handle.finish();
             }
+            self.dirty = true;
         }
     }
 
@@ -273,7 +328,11 @@ impl Engine {
     }
 
     pub(crate) fn has_running_transfers(&self) -> bool {
-        self.xfer.mgr.snapshot().iter().any(|t| t.status == "running")
+        self.xfer
+            .mgr
+            .snapshot()
+            .iter()
+            .any(|t| t.status == "running")
     }
 
     pub(crate) fn open_incoming_folder(&self) -> Result<Value, String> {
@@ -284,7 +343,13 @@ impl Engine {
     }
 
     pub(crate) fn show_transfer(&self, id: u64) -> Result<Value, String> {
-        let t = self.xfer.mgr.snapshot().into_iter().find(|t| t.id == id).ok_or("Unbekannter Transfer")?;
+        let t = self
+            .xfer
+            .mgr
+            .snapshot()
+            .into_iter()
+            .find(|t| t.id == id)
+            .ok_or("Unbekannter Transfer")?;
         if let Some(p) = t.path {
             open_in_explorer(&PathBuf::from(p), false);
         }
@@ -311,7 +376,9 @@ fn display_name(entries: &[pb::FileEntry]) -> String {
     match top.as_slice() {
         [one] => (*one).to_string(),
         [first, rest @ ..] => format!("{first} und {} weitere", rest.len()),
-        [] => entries.first().map_or_else(|| "Dateien".to_string(), |e| e.rel_path.clone()),
+        [] => entries
+            .first()
+            .map_or_else(|| "Dateien".to_string(), |e| e.rel_path.clone()),
     }
 }
 
@@ -385,15 +452,25 @@ async fn handle_file_stream(
                 if let (Some(meta), Some(path)) = (&i.update, &i.last_path) {
                     let ok = super::update::sha256_file(path).is_ok_and(|h| h == meta.sha256);
                     let event = if ok {
-                        UiEvent::PartnerUpdateReady { path: path.to_string_lossy().into_owned(), version: meta.version.clone() }
+                        UiEvent::PartnerUpdateReady {
+                            path: path.to_string_lossy().into_owned(),
+                            version: meta.version.clone(),
+                        }
                     } else {
                         let _ = std::fs::remove_file(path);
-                        UiEvent::Notification { level: "error".into(), text: "Das empfangene Update ist beschädigt und wurde verworfen.".into() }
+                        UiEvent::Notification {
+                            level: "error".into(),
+                            text: "Das empfangene Update ist beschädigt und wurde verworfen."
+                                .into(),
+                        }
                     };
                     let _ = pushes.send(crate::ipc::Push::Event { event });
                 } else {
                     let _ = pushes.send(crate::ipc::Push::Event {
-                        event: UiEvent::Notification { level: "info".into(), text: format!("Empfangen: {}", i.name) },
+                        event: UiEvent::Notification {
+                            level: "info".into(),
+                            text: format!("Empfangen: {}", i.name),
+                        },
                     });
                 }
             }
@@ -417,10 +494,21 @@ struct NetFileSource {
 }
 
 impl FileSource for NetFileSource {
-    fn provider(&self, offer_id: u64, files: &[pb::FileEntry]) -> Option<Arc<dyn VirtualFileProvider>> {
+    fn provider(
+        &self,
+        offer_id: u64,
+        files: &[pb::FileEntry],
+    ) -> Option<Arc<dyn VirtualFileProvider>> {
         let total: u64 = files.iter().map(|f| f.size).sum();
         let count = files.iter().filter(|f| !f.is_dir).count();
-        let handle = self.mgr.begin(offer_id, Direction::Receive, display_name(files), count as u32, total, None);
+        let handle = self.mgr.begin(
+            offer_id,
+            Direction::Receive,
+            display_name(files),
+            count as u32,
+            total,
+            None,
+        );
         Some(Arc::new(NetProvider {
             link: self.link.clone(),
             reg: self.reg.clone(),
@@ -464,7 +552,9 @@ impl FileSource for NetFileSource {
         let list = files.to_vec();
         self.rt.spawn(async move {
             for i in 0..list.len() {
-                let Ok(p) = sem.clone().acquire_owned().await else { break };
+                let Ok(p) = sem.clone().acquire_owned().await else {
+                    break;
+                };
                 p.forget();
                 link.send_control(pb::control::Msg::FileRequest(pb::FileRequest {
                     transfer_id: offer_id,
@@ -478,10 +568,18 @@ impl FileSource for NetFileSource {
             Ok(true) => {}
             _ => return None,
         }
-        let mut tops: Vec<String> = files.iter().map(|f| f.rel_path.split('/').next().unwrap_or("").to_string()).collect();
+        let mut tops: Vec<String> = files
+            .iter()
+            .map(|f| f.rel_path.split('/').next().unwrap_or("").to_string())
+            .collect();
         tops.sort();
         tops.dedup();
-        Some(tops.into_iter().filter(|t| !t.is_empty()).map(|t| root.join(t)).collect())
+        Some(
+            tops.into_iter()
+                .filter(|t| !t.is_empty())
+                .map(|t| root.join(t))
+                .collect(),
+        )
     }
 }
 
@@ -505,16 +603,22 @@ impl VirtualFileProvider for NetProvider {
             return Ok(Box::new(std::io::empty()));
         }
         let (tx, rx) = oneshot::channel();
-        self.reg.virtual_waiters.lock().insert((self.id, index as u32), tx);
-        self.link.send_control(pb::control::Msg::FileRequest(pb::FileRequest {
-            transfer_id: self.id,
-            index: index as u32,
-            offset: 0,
-        }));
+        self.reg
+            .virtual_waiters
+            .lock()
+            .insert((self.id, index as u32), tx);
+        self.link
+            .send_control(pb::control::Msg::FileRequest(pb::FileRequest {
+                transfer_id: self.id,
+                index: index as u32,
+                offset: 0,
+            }));
         let stream = self
             .rt
             .block_on(tokio::time::timeout(Duration::from_secs(30), rx))
-            .map_err(|_| deskbridge_platform::PlatformError::other("Zeitüberschreitung beim Abruf der Datei"))?
+            .map_err(|_| {
+                deskbridge_platform::PlatformError::other("Zeitüberschreitung beim Abruf der Datei")
+            })?
             .map_err(|_| deskbridge_platform::PlatformError::other("Verbindung getrennt"))?;
         Ok(Box::new(StreamingReader {
             rt: self.rt.clone(),
@@ -564,10 +668,14 @@ impl StreamingReader {
 
     async fn next_chunk(&mut self) -> std::io::Result<bool> {
         let mut len = [0u8; 4];
-        self.r.read_exact(&mut len).await.map_err(std::io::Error::other)?;
+        self.r
+            .read_exact(&mut len)
+            .await
+            .map_err(std::io::Error::other)?;
         let n = u32::from_le_bytes(len) as usize;
         if n == 0 {
-            let trailer: pb::FileTrailer = read_msg(&mut self.r).await.map_err(std::io::Error::other)?;
+            let trailer: pb::FileTrailer =
+                read_msg(&mut self.r).await.map_err(std::io::Error::other)?;
             let actual = self.hasher.finalize();
             if !trailer.ok || trailer.blake3.as_slice() != actual.as_bytes() {
                 return Err(std::io::Error::other("Prüfsumme stimmt nicht überein"));
@@ -579,7 +687,10 @@ impl StreamingReader {
         }
         self.buf.resize(n, 0);
         self.pos = 0;
-        self.r.read_exact(&mut self.buf).await.map_err(std::io::Error::other)?;
+        self.r
+            .read_exact(&mut self.buf)
+            .await
+            .map_err(std::io::Error::other)?;
         self.hasher.update(&self.buf);
         self.handle.add_bytes(n as u64);
         Ok(true)
@@ -599,7 +710,8 @@ impl Read for StreamingReader {
                 ReadState::Done => return Ok(0),
                 ReadState::Start => {
                     let rt = self.rt.clone();
-                    let res = rt.block_on(async { read_msg::<_, pb::FileHeader>(&mut self.r).await });
+                    let res =
+                        rt.block_on(async { read_msg::<_, pb::FileHeader>(&mut self.r).await });
                     if let Err(e) = res {
                         self.finish_one(false, "Dateikopf ungültig");
                         return Err(std::io::Error::other(e));

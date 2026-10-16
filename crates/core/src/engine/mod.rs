@@ -5,14 +5,14 @@ mod audio;
 mod clip;
 mod connect;
 mod dto;
-mod focus;
 mod features;
+mod focus;
 mod input;
 mod pairing;
 pub mod session;
 mod transfers;
-mod update;
 mod ui;
+mod update;
 
 use crate::backoff::Backoff;
 use crate::clock::{ClockSync, now_us};
@@ -46,24 +46,52 @@ use uuid::Uuid;
 pub use session::PeerLink as Link;
 
 /// Receivers the datagram router feeds: (speaker, microphone).
-pub(crate) type AudioSlots = Arc<parking_lot::RwLock<(Option<Arc<deskbridge_audio::AudioReceiver>>, Option<Arc<deskbridge_audio::AudioReceiver>>)>>;
+pub(crate) type AudioSlots = Arc<
+    parking_lot::RwLock<(
+        Option<Arc<deskbridge_audio::AudioReceiver>>,
+        Option<Arc<deskbridge_audio::AudioReceiver>>,
+    )>,
+>;
 
 /// Messages processed by the actor.
 pub(crate) enum Msg {
-    Ui { req: UiRequest, reply: oneshot::Sender<Result<Value, String>> },
+    Ui {
+        req: UiRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
     Discovery(DiscoveryEvent),
     Accepted(Accepted),
     SessionReady(PeerLink),
-    ConnectFailed { peer: Uuid, error: String },
-    SessionClosed { session_id: u64, reason: String },
-    PeerControl { session_id: u64, msg: pb::control::Msg },
-    PeerInput { session_id: u64, ev: pb::InputEvent },
+    ConnectFailed {
+        peer: Uuid,
+        error: String,
+    },
+    SessionClosed {
+        session_id: u64,
+        reason: String,
+    },
+    PeerControl {
+        session_id: u64,
+        msg: pb::control::Msg,
+    },
+    PeerInput {
+        session_id: u64,
+        ev: pb::InputEvent,
+    },
     Capture(CaptureEvent),
     Clipboard(ClipboardEvent),
     Power(PowerEvent),
     ScreensChanged,
-    PairingFinished { ok: bool, message: String, peer: Option<deskbridge_net::pairing::PairedDevice>, addr: Option<SocketAddr> },
-    Warn { code: String, message: String },
+    PairingFinished {
+        ok: bool,
+        message: String,
+        peer: Option<deskbridge_net::pairing::PairedDevice>,
+        addr: Option<SocketAddr>,
+    },
+    Warn {
+        code: String,
+        message: String,
+    },
     MicUsage(deskbridge_platform::audio::MicUsage),
     ToneDone,
     FocusSourceUp {
@@ -73,7 +101,9 @@ pub(crate) enum Msg {
         cfg: deskbridge_platform::video::EncoderConfig,
         link: PeerLink,
     },
-    FocusSourceFailed { reason: String },
+    FocusSourceFailed {
+        reason: String,
+    },
     AudioDevice(deskbridge_platform::audio::DeviceEvent),
     Tick,
     Shutdown,
@@ -103,7 +133,9 @@ pub struct EngineHandle {
 impl EngineHandle {
     pub async fn request(&self, req: UiRequest) -> Result<Value, String> {
         let (reply, rx) = oneshot::channel();
-        self.tx.send(Msg::Ui { req, reply }).map_err(|_| "engine stopped".to_string())?;
+        self.tx
+            .send(Msg::Ui { req, reply })
+            .map_err(|_| "engine stopped".to_string())?;
         rx.await.map_err(|_| "engine stopped".to_string())?
     }
 
@@ -141,7 +173,10 @@ impl EngineHandle {
 
     /// Shows a persistent warning banner in the UI.
     pub fn warn(&self, code: &str, message: &str) {
-        let _ = self.tx.send(Msg::Warn { code: code.into(), message: message.into() });
+        let _ = self.tx.send(Msg::Warn {
+            code: code.into(),
+            message: message.into(),
+        });
     }
 }
 
@@ -223,7 +258,14 @@ fn unix_ms() -> u64 {
 
 /// Starts the engine. Returns once the QUIC endpoint is bound.
 pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
-    let EngineParams { paths, mut config, platform, bind, enable_discovery, identity } = params;
+    let EngineParams {
+        paths,
+        mut config,
+        platform,
+        bind,
+        enable_discovery,
+        identity,
+    } = params;
     paths.ensure()?;
     config.sanitize();
     if config.device.name.is_empty() {
@@ -236,7 +278,9 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
     // A crashed focus session on this device must not leave the displays rearranged (plan 8.7).
     {
         let (tp, dm) = (paths.topology_file(), platform.display.clone());
-        match tokio::task::spawn_blocking(move || deskbridge_display::recover_on_startup(&tp, &dm)).await {
+        match tokio::task::spawn_blocking(move || deskbridge_display::recover_on_startup(&tp, &dm))
+            .await
+        {
             Ok(Ok(outcome)) => tracing::info!(?outcome, "display recovery check"),
             Ok(Err(e)) => tracing::warn!("display recovery failed: {e}"),
             Err(e) => tracing::warn!("display recovery task failed: {e}"),
@@ -259,7 +303,11 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
     if enable_discovery {
         match Discovery::new(own_id) {
             Ok(mut d) => {
-                if let Err(e) = d.announce(&config.device.name, local_addr.port(), crate::brand::VERSION) {
+                if let Err(e) = d.announce(
+                    &config.device.name,
+                    local_addr.port(),
+                    crate::brand::VERSION,
+                ) {
                     tracing::warn!("mDNS announce failed: {e}");
                 }
                 let (dtx, mut drx) = mpsc::unbounded_channel();
@@ -406,7 +454,13 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         });
     }
 
-    let handle = EngineHandle { tx: msg_tx, pushes, local_addr, device_id: own_id, shutdown };
+    let handle = EngineHandle {
+        tx: msg_tx,
+        pushes,
+        local_addr,
+        device_id: own_id,
+        shutdown,
+    };
     tokio::spawn(engine.run(msg_rx));
     Ok(handle)
 }
@@ -469,19 +523,32 @@ impl Engine {
             Msg::Accepted(a) => self.on_accepted(a),
             Msg::SessionReady(link) => self.on_session_ready(link),
             Msg::ConnectFailed { peer, error } => self.on_connect_failed(peer, &error),
-            Msg::SessionClosed { session_id, reason } => self.on_session_closed(session_id, &reason),
+            Msg::SessionClosed { session_id, reason } => {
+                self.on_session_closed(session_id, &reason)
+            }
             Msg::PeerControl { session_id, msg } => self.on_peer_control(session_id, msg),
             Msg::PeerInput { session_id, ev } => self.on_peer_input(session_id, ev),
             Msg::Capture(ev) => self.on_capture(ev),
             Msg::Clipboard(ev) => self.on_clipboard(ev),
             Msg::Power(ev) => self.on_power(ev),
             Msg::ScreensChanged => self.on_screens_changed(),
-            Msg::PairingFinished { ok, message, peer, addr } => self.on_pairing_finished(ok, message, peer, addr),
+            Msg::PairingFinished {
+                ok,
+                message,
+                peer,
+                addr,
+            } => self.on_pairing_finished(ok, message, peer, addr),
             Msg::Tick => self.on_tick(),
             Msg::Warn { code, message } => self.warn_once(&code, &message),
             Msg::MicUsage(u) => self.on_mic_usage(u),
             Msg::ToneDone => self.on_tone_done(),
-            Msg::FocusSourceUp { screen_id, capturer, encoder, cfg, link } => self.on_focus_source_up(screen_id, capturer, encoder, cfg, link),
+            Msg::FocusSourceUp {
+                screen_id,
+                capturer,
+                encoder,
+                cfg,
+                link,
+            } => self.on_focus_source_up(screen_id, capturer, encoder, cfg, link),
             Msg::FocusSourceFailed { reason } => self.on_focus_source_failed(&reason),
             Msg::AudioDevice(ev) => self.on_audio_device_event(ev),
             Msg::Shutdown => {}
@@ -498,7 +565,10 @@ impl Engine {
 
     pub(crate) fn warn_once(&mut self, code: &str, message: &str) {
         if !self.warnings.iter().any(|w| w.code == code) {
-            self.warnings.push(WarningDto { code: code.into(), message: message.into() });
+            self.warnings.push(WarningDto {
+                code: code.into(),
+                message: message.into(),
+            });
             self.dirty = true;
         }
     }
@@ -514,7 +584,9 @@ impl Engine {
 
     pub(crate) fn publish_state(&mut self) {
         let state = self.build_state();
-        let _ = self.pushes.send(Push::State { state: Box::new(state) });
+        let _ = self.pushes.send(Push::State {
+            state: Box::new(state),
+        });
         self.dirty = false;
         self.last_publish = Instant::now();
     }
@@ -559,9 +631,19 @@ impl Engine {
             os: self.platform.os.clone(),
             app_version: crate::brand::VERSION.to_string(),
             proto_version: deskbridge_proto::PROTO_VERSION,
-            caps: c.into_iter().map(|n| pb::Capability { name: n.to_string(), version: 1 }).collect(),
+            caps: c
+                .into_iter()
+                .map(|n| pb::Capability {
+                    name: n.to_string(),
+                    version: 1,
+                })
+                .collect(),
             screens: self.local_screens.iter().map(screen_to_pb).collect(),
-            video: Some(focus::hello_video_caps(self.platform.video.as_ref(), d.stream_source, d.input_source)),
+            video: Some(focus::hello_video_caps(
+                self.platform.video.as_ref(),
+                d.stream_source,
+                d.input_source,
+            )),
         };
         *self.hello.write() = hello;
     }
@@ -586,9 +668,13 @@ impl Engine {
                 // Remember the freshest address of paired peers.
                 if self.peers.by_id(d.device_id).is_some() {
                     if let Some(ip) = d.addrs.iter().find(|a| a.is_ipv4()).or(d.addrs.first()) {
-                        let _ = self.peers.update_address(d.device_id, ip.to_string(), d.port);
+                        let _ = self
+                            .peers
+                            .update_address(d.device_id, ip.to_string(), d.port);
                     }
-                    if !deskbridge_proto::compatible(d.proto, deskbridge_proto::PROTO_VERSION) && d.proto != 0 {
+                    if !deskbridge_proto::compatible(d.proto, deskbridge_proto::PROTO_VERSION)
+                        && d.proto != 0
+                    {
                         self.version_mismatch = true;
                     }
                     // Seen again: try right away.
@@ -596,7 +682,13 @@ impl Engine {
                         self.next_attempt = Instant::now();
                     }
                 }
-                self.discovered.insert(d.device_id, DiscoveredEntry { d, last_seen: Instant::now() });
+                self.discovered.insert(
+                    d.device_id,
+                    DiscoveredEntry {
+                        d,
+                        last_seen: Instant::now(),
+                    },
+                );
             }
             DiscoveryEvent::Lost { device_id } => {
                 self.discovered.remove(&device_id);
@@ -618,7 +710,11 @@ impl Engine {
                 self.backoff.reset();
                 self.next_attempt = Instant::now();
                 if let Some(d) = self.discovery.as_mut() {
-                    let _ = d.announce(&self.cfg.device.name, self.transport.local_addr().map_or(0, |a| a.port()), crate::brand::VERSION);
+                    let _ = d.announce(
+                        &self.cfg.device.name,
+                        self.transport.local_addr().map_or(0, |a| a.port()),
+                        crate::brand::VERSION,
+                    );
                 }
             }
             PowerEvent::LidClosed | PowerEvent::LidOpened => {
@@ -633,9 +729,10 @@ impl Engine {
         self.router.set_screens(self.local_screens.clone());
         self.refresh_hello();
         if let Some(s) = &self.session {
-            s.link.send_control(pb::control::Msg::ScreensUpdate(pb::ScreensUpdate {
-                screens: self.local_screens.iter().map(screen_to_pb).collect(),
-            }));
+            s.link
+                .send_control(pb::control::Msg::ScreensUpdate(pb::ScreensUpdate {
+                    screens: self.local_screens.iter().map(screen_to_pb).collect(),
+                }));
         }
         self.rebuild_layout(false);
         self.dirty = true;
@@ -650,21 +747,23 @@ impl Engine {
             if w.seconds_left() == 0 {
                 self.pairing = None;
                 self.dirty = true;
-            } else if self.tick_count % 4 == 0 {
+            } else if self.tick_count.is_multiple_of(4) {
                 self.dirty = true; // countdown
             }
         }
         // stale discovery entries
         let before = self.discovered.len();
-        self.discovered.retain(|_, e| now.duration_since(e.last_seen) < Duration::from_secs(120));
+        self.discovered
+            .retain(|_, e| now.duration_since(e.last_seen) < Duration::from_secs(120));
         if self.discovered.len() != before {
             self.dirty = true;
         }
 
         if let Some(s) = &mut self.session {
             // heartbeat every 500 ms
-            if self.tick_count % 2 == 0 {
-                s.link.send_control(pb::control::Msg::Ping(pb::Ping { t0_us: now_us() }));
+            if self.tick_count.is_multiple_of(2) {
+                s.link
+                    .send_control(pb::control::Msg::Ping(pb::Ping { t0_us: now_us() }));
             }
             let silent = now.duration_since(s.last_pong);
             let new_state = if silent > Duration::from_secs(6) {
@@ -690,7 +789,7 @@ impl Engine {
             self.maybe_connect();
         }
 
-        if self.tick_count % 8 == 0 {
+        if self.tick_count.is_multiple_of(8) {
             let (cpu, rss) = self.procstats.sample();
             self.proc_cpu = cpu;
             self.proc_rss = rss;
@@ -732,19 +831,25 @@ impl Engine {
 
     pub(crate) fn on_peer_control(&mut self, session_id: u64, msg: pb::control::Msg) {
         use pb::control::Msg as M;
-        let Some(s) = self.session.as_mut() else { return };
+        let Some(s) = self.session.as_mut() else {
+            return;
+        };
         if s.link.session_id != session_id {
             return;
         }
         match msg {
             M::Ping(p) => {
-                s.link.send_control(M::Pong(pb::Pong { t0_us: p.t0_us, t1_us: now_us() }));
+                s.link.send_control(M::Pong(pb::Pong {
+                    t0_us: p.t0_us,
+                    t1_us: now_us(),
+                }));
             }
             M::Pong(p) => {
                 s.last_pong = Instant::now();
                 self.clock.on_pong(p.t0_us, p.t1_us, now_us());
                 if let Some(rtt) = self.clock.rtt_us() {
-                    self.rtt_history.push_back(rtt.min(u64::from(u32::MAX)) as u32);
+                    self.rtt_history
+                        .push_back(rtt.min(u64::from(u32::MAX)) as u32);
                     while self.rtt_history.len() > 60 {
                         self.rtt_history.pop_front();
                     }
@@ -769,7 +874,6 @@ impl Engine {
             other => self.on_feature_control(other),
         }
     }
-
 }
 
 pub(crate) fn screen_to_pb(s: &ScreenInfo) -> pb::Screen {

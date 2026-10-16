@@ -8,6 +8,15 @@
 //! `DESKBRIDGE_DATA_ROOT`, `DESKBRIDGE_PORT`, `DESKBRIDGE_PIPE`.
 
 #![cfg_attr(not(windows), allow(unused))]
+#![allow(non_upper_case_globals)]
+
+/// Exported (see build.rs): selects the discrete GPU on Optimus / PowerXpress laptops.
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub static NvOptimusEnablement: u32 = 1;
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub static AmdPowerXpressRequestHighPerformance: u32 = 1;
 
 #[cfg(windows)]
 mod pipe;
@@ -63,10 +72,10 @@ fn run_agent() -> i32 {
             Config::default()
         }
     };
-    if let Ok(p) = std::env::var("DESKBRIDGE_PORT") {
-        if let Ok(p) = p.parse::<u16>() {
-            config.network.port = p;
-        }
+    if let Ok(p) = std::env::var("DESKBRIDGE_PORT")
+        && let Ok(p) = p.parse::<u16>()
+    {
+        config.network.port = p;
     }
     let _log = logging::init(&paths.logs_dir(), "agent", &config.general.log_level);
     logging::install_panic_hook(&paths.logs_dir());
@@ -81,7 +90,11 @@ fn run_agent() -> i32 {
         secure::release_stuck_keys();
     }
 
-    let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().thread_name("db-rt").build() {
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("db-rt")
+        .build()
+    {
         Ok(r) => r,
         Err(e) => {
             eprintln!("runtime: {e}");

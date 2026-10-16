@@ -141,12 +141,12 @@ pub fn install(ctx: &Ctx, args: &InstallArgs) -> Result<i32> {
                     lnk.display(),
                     agent.display()
                 ));
-                if !ctx.dry_run {
-                    if let Some(p) = step(&mut failures, "SendTo shortcut", || {
+                if !ctx.dry_run
+                    && let Some(p) = step(&mut failures, "SendTo shortcut", || {
                         shortcut::create(&sendto, &agent)
-                    }) {
-                        manifest.send_to_shortcut = Some(p.display().to_string());
-                    }
+                    })
+                {
+                    manifest.send_to_shortcut = Some(p.display().to_string());
                 }
             }
             None => tracing::warn!("%APPDATA% is not set; skipping the SendTo shortcut"),
@@ -212,10 +212,14 @@ pub fn install(ctx: &Ctx, args: &InstallArgs) -> Result<i32> {
     // (f) allow the service to generate Ctrl+Alt+Del (only if the admin has not set the policy)
     if !args.no_service && !args.no_sas_policy {
         ctx.plan("set policy SoftwareSASGeneration=1 if not configured (Ctrl+Alt+End support)");
-        if !ctx.dry_run {
-            if let Some(true) = step(&mut failures, "SAS policy", crate::sas_policy::enable_if_unset) {
-                manifest.sas_policy = true;
-            }
+        if !ctx.dry_run
+            && let Some(true) = step(
+                &mut failures,
+                "SAS policy",
+                crate::sas_policy::enable_if_unset,
+            )
+        {
+            manifest.sas_policy = true;
         }
     }
 
@@ -659,11 +663,11 @@ pub fn driver_cmd(ctx: &Ctx, cmd: &DriverCommand) -> Result<i32> {
                     ""
                 }
             );
-            if !ctx.dry_run {
-                if let Ok(Some(mut m)) = Manifest::load(&ctx.install_dir) {
-                    m.drivers.retain(|d| !crate::inf::hwid_eq(&d.hwid, hwid));
-                    m.save(&ctx.install_dir).ok();
-                }
+            if !ctx.dry_run
+                && let Ok(Some(mut m)) = Manifest::load(&ctx.install_dir)
+            {
+                m.drivers.retain(|d| !crate::inf::hwid_eq(&d.hwid, hwid));
+                m.save(&ctx.install_dir).ok();
             }
             Ok(0)
         }

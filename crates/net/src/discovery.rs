@@ -21,7 +21,10 @@ pub struct Discovered {
 impl Discovered {
     #[must_use]
     pub fn socket_addrs(&self) -> Vec<SocketAddr> {
-        self.addrs.iter().map(|ip| SocketAddr::new(*ip, self.port)).collect()
+        self.addrs
+            .iter()
+            .map(|ip| SocketAddr::new(*ip, self.port))
+            .collect()
     }
 }
 
@@ -38,14 +41,27 @@ pub struct Discovery {
 }
 
 fn sanitize_label(s: &str) -> String {
-    let t: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' }).collect();
+    let t: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
     if t.is_empty() { "deskbridge".into() } else { t }
 }
 
 impl Discovery {
     pub fn new(own_id: Uuid) -> Result<Self> {
         let daemon = ServiceDaemon::new().map_err(|e| NetError::Discovery(e.to_string()))?;
-        Ok(Self { daemon, own_id, fullname: None })
+        Ok(Self {
+            daemon,
+            own_id,
+            fullname: None,
+        })
     }
 
     /// Announces this device. Call again after a name or port change.
@@ -53,7 +69,11 @@ impl Discovery {
         if let Some(old) = self.fullname.take() {
             let _ = self.daemon.unregister(&old);
         }
-        let instance = format!("{}-{}", sanitize_label(name), &self.own_id.simple().to_string()[..8]);
+        let instance = format!(
+            "{}-{}",
+            sanitize_label(name),
+            &self.own_id.simple().to_string()[..8]
+        );
         let host = format!("{instance}.local.");
         let props: HashMap<String, String> = HashMap::from([
             ("id".to_string(), self.own_id.to_string()),
@@ -65,13 +85,18 @@ impl Discovery {
             .map_err(|e| NetError::Discovery(e.to_string()))?
             .enable_addr_auto();
         self.fullname = Some(info.get_fullname().to_string());
-        self.daemon.register(info).map_err(|e| NetError::Discovery(e.to_string()))?;
+        self.daemon
+            .register(info)
+            .map_err(|e| NetError::Discovery(e.to_string()))?;
         Ok(())
     }
 
     /// Browses for other Desk Bridge devices; events are delivered on `tx` until it is dropped.
     pub fn browse(&self, tx: UnboundedSender<DiscoveryEvent>) -> Result<()> {
-        let rx = self.daemon.browse(MDNS_SERVICE).map_err(|e| NetError::Discovery(e.to_string()))?;
+        let rx = self
+            .daemon
+            .browse(MDNS_SERVICE)
+            .map_err(|e| NetError::Discovery(e.to_string()))?;
         let own = self.own_id;
         std::thread::Builder::new()
             .name("mdns-browse".into())
@@ -80,7 +105,9 @@ impl Discovery {
                 while let Ok(ev) = rx.recv() {
                     match ev {
                         ServiceEvent::ServiceResolved(info) => {
-                            let Some(id) = info.get_property_val_str("id").and_then(|s| Uuid::parse_str(s).ok())
+                            let Some(id) = info
+                                .get_property_val_str("id")
+                                .and_then(|s| Uuid::parse_str(s).ok())
                             else {
                                 continue;
                             };
@@ -93,7 +120,10 @@ impl Discovery {
                                 name: info.get_property_val_str("name").unwrap_or("?").to_string(),
                                 addrs: info.get_addresses().iter().copied().collect(),
                                 port: info.get_port(),
-                                proto: info.get_property_val_str("proto").and_then(|s| s.parse().ok()).unwrap_or(0),
+                                proto: info
+                                    .get_property_val_str("proto")
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0),
                                 version: info.get_property_val_str("ver").unwrap_or("").to_string(),
                             };
                             if tx.send(DiscoveryEvent::Found(d)).is_err() {
@@ -101,10 +131,10 @@ impl Discovery {
                             }
                         }
                         ServiceEvent::ServiceRemoved(_, fullname) => {
-                            if let Some(id) = by_fullname.remove(&fullname) {
-                                if tx.send(DiscoveryEvent::Lost { device_id: id }).is_err() {
-                                    break;
-                                }
+                            if let Some(id) = by_fullname.remove(&fullname)
+                                && tx.send(DiscoveryEvent::Lost { device_id: id }).is_err()
+                            {
+                                break;
                             }
                         }
                         _ => {}

@@ -30,7 +30,12 @@ pub struct RouterConfig {
 
 impl Default for RouterConfig {
     fn default() -> Self {
-        Self { switch_delay: Duration::ZERO, require_modifiers: 0, corner_margin_px: 8, double_bump: false }
+        Self {
+            switch_delay: Duration::ZERO,
+            require_modifiers: 0,
+            corner_margin_px: 8,
+            double_bump: false,
+        }
     }
 }
 
@@ -56,7 +61,10 @@ impl AbsRegion {
 pub enum State {
     Local,
     /// Cursor is on the remote device (relative mode).
-    Remote { device: Uuid, screen: u32 },
+    Remote {
+        device: Uuid,
+        screen: u32,
+    },
 }
 
 /// What the caller has to do.
@@ -176,11 +184,21 @@ impl Router {
             // Is there another *local* screen right behind this edge? Then Windows handles it.
             let beyond = match edge {
                 Edge::Left => Point { x: s.x - 1, y: p.y },
-                Edge::Right => Point { x: s.right(), y: p.y },
+                Edge::Right => Point {
+                    x: s.right(),
+                    y: p.y,
+                },
                 Edge::Top => Point { x: p.x, y: s.y - 1 },
-                _ => Point { x: p.x, y: s.bottom() },
+                _ => Point {
+                    x: p.x,
+                    y: s.bottom(),
+                },
             };
-            if self.screens.iter().any(|o| o.id != s.id && o.contains(beyond)) {
+            if self
+                .screens
+                .iter()
+                .any(|o| o.id != s.id && o.contains(beyond))
+            {
                 continue;
             }
             let (pos, len) = match edge {
@@ -218,7 +236,9 @@ impl Router {
     }
 
     fn on_capture_local(&mut self, ev: CaptureEvent, now: Instant) -> Vec<Action> {
-        let CaptureEvent::MouseMove { x, y } = ev else { return vec![] };
+        let CaptureEvent::MouseMove { x, y } = ev else {
+            return vec![];
+        };
         if self.locked {
             return vec![];
         }
@@ -240,7 +260,9 @@ impl Router {
         if hit.device == self.own {
             return vec![];
         }
-        if self.cfg.require_modifiers != 0 && (self.mods & self.cfg.require_modifiers) != self.cfg.require_modifiers {
+        if self.cfg.require_modifiers != 0
+            && (self.mods & self.cfg.require_modifiers) != self.cfg.require_modifiers
+        {
             self.edge_since = None;
             return vec![];
         }
@@ -258,7 +280,9 @@ impl Router {
         // double bump
         if self.cfg.double_bump {
             match &mut self.bump {
-                Some((e, t, armed)) if *e == edge && now.duration_since(*t) < Duration::from_millis(500) => {
+                Some((e, t, armed))
+                    if *e == edge && now.duration_since(*t) < Duration::from_millis(500) =>
+                {
                     if !*armed {
                         // second touch within the window
                         self.bump = None;
@@ -289,7 +313,10 @@ impl Router {
         ];
         // Modifiers that are physically held keep working on the target.
         for k in self.held.iter().copied().filter(|k| hid::is_modifier(*k)) {
-            out.push(Action::Send(Ev::Key(pb::Key { hid: u32::from(k), down: true })));
+            out.push(Action::Send(Ev::Key(pb::Key {
+                hid: u32::from(k),
+                down: true,
+            })));
         }
         out.push(Action::Osd(Location::Remote));
         out
@@ -298,7 +325,10 @@ impl Router {
     fn leave_remote(&mut self, cursor: Option<Point>) -> Vec<Action> {
         self.state = State::Local;
         self.edge_since = None;
-        let mut out = vec![Action::Send(Ev::Leave(pb::Leave {})), Action::SetGrab(GrabMode::None)];
+        let mut out = vec![
+            Action::Send(Ev::Leave(pb::Leave {})),
+            Action::SetGrab(GrabMode::None),
+        ];
         if let Some(c) = cursor {
             out.push(Action::MoveCursor(c));
         }
@@ -309,11 +339,19 @@ impl Router {
     fn on_capture_remote(&mut self, ev: CaptureEvent) -> Vec<Action> {
         match ev {
             CaptureEvent::Key { hid, down } => {
-                vec![Action::Send(Ev::Key(pb::Key { hid: u32::from(hid), down }))]
+                vec![Action::Send(Ev::Key(pb::Key {
+                    hid: u32::from(hid),
+                    down,
+                }))]
             }
-            CaptureEvent::MouseRel { dx, dy } => vec![Action::Send(Ev::Rel(pb::MouseRel { dx, dy }))],
+            CaptureEvent::MouseRel { dx, dy } => {
+                vec![Action::Send(Ev::Rel(pb::MouseRel { dx, dy }))]
+            }
             CaptureEvent::Button { button, down } => {
-                vec![Action::Send(Ev::Btn(pb::MouseButton { button: button.to_wire(), down }))]
+                vec![Action::Send(Ev::Btn(pb::MouseButton {
+                    button: button.to_wire(),
+                    down,
+                }))]
             }
             CaptureEvent::Wheel { dx, dy } => vec![Action::Send(Ev::Wheel(pb::Wheel { dx, dy }))],
             CaptureEvent::MouseMove { .. } | CaptureEvent::Hotkey(_) => vec![],
@@ -353,10 +391,16 @@ impl Router {
             }
             _ if !self.region_inside => vec![],
             CaptureEvent::Key { hid, down } => {
-                vec![Action::Send(Ev::Key(pb::Key { hid: u32::from(hid), down }))]
+                vec![Action::Send(Ev::Key(pb::Key {
+                    hid: u32::from(hid),
+                    down,
+                }))]
             }
             CaptureEvent::Button { button, down } => {
-                vec![Action::Send(Ev::Btn(pb::MouseButton { button: button.to_wire(), down }))]
+                vec![Action::Send(Ev::Btn(pb::MouseButton {
+                    button: button.to_wire(),
+                    down,
+                }))]
             }
             CaptureEvent::Wheel { dx, dy } => vec![Action::Send(Ev::Wheel(pb::Wheel { dx, dy }))],
             CaptureEvent::MouseRel { .. } | CaptureEvent::Hotkey(_) => vec![],
@@ -364,7 +408,9 @@ impl Router {
     }
 
     fn on_hotkey(&mut self, id: u32) -> Vec<Action> {
-        let Some(action) = HotkeyAction::from_id(id) else { return vec![] };
+        let Some(action) = HotkeyAction::from_id(id) else {
+            return vec![];
+        };
         match action {
             HotkeyAction::LockCursor => {
                 self.locked = !self.locked;
@@ -372,7 +418,11 @@ impl Router {
             }
             HotkeyAction::Emergency => {
                 self.locked = false;
-                let mut out = if self.is_remote() { self.force_local() } else { vec![] };
+                let mut out = if self.is_remote() {
+                    self.force_local()
+                } else {
+                    vec![]
+                };
                 out.push(Action::Hotkey(action));
                 out
             }
@@ -394,7 +444,11 @@ impl Router {
     }
 
     fn first_remote_screen(&self) -> Option<(Uuid, u32)> {
-        self.layout.screens.iter().find(|s| s.device != self.own).map(|s| (s.device, s.screen))
+        self.layout
+            .screens
+            .iter()
+            .find(|s| s.device != self.own)
+            .map(|s| (s.device, s.screen))
     }
 
     /// Unconditionally returns to local control (emergency, connection loss).
@@ -407,17 +461,25 @@ impl Router {
         }
         self.state = State::Local;
         self.edge_since = None;
-        vec![Action::Send(Ev::Leave(pb::Leave {})), Action::SetGrab(GrabMode::None), Action::Osd(Location::Local)]
+        vec![
+            Action::Send(Ev::Leave(pb::Leave {})),
+            Action::SetGrab(GrabMode::None),
+            Action::Osd(Location::Local),
+        ]
     }
 
     /// The peer reports that its cursor pushed through an edge towards us.
     pub fn on_edge_hit(&mut self, hit: &pb::EdgeHit) -> Vec<Action> {
-        let State::Remote { device, .. } = self.state else { return vec![] };
+        let State::Remote { device, .. } = self.state else {
+            return vec![];
+        };
         if self.locked {
             return vec![];
         }
         let edge = Edge::try_from(hit.edge).unwrap_or(Edge::Unspecified);
-        let Some(back) = self.layout.neighbor((device, hit.screen_id), edge, f64::from(hit.rel_pos))
+        let Some(back) =
+            self.layout
+                .neighbor((device, hit.screen_id), edge, f64::from(hit.rel_pos))
         else {
             return self.leave_remote(None);
         };
@@ -427,10 +489,22 @@ impl Router {
         let cursor = self.screens.iter().find(|s| s.id == back.screen).map(|s| {
             let along = |len: u32| (back.rel * f64::from(len.saturating_sub(1))).round() as i32;
             match back.entry_edge {
-                Edge::Left => Point { x: s.x + 2, y: s.y + along(s.h) },
-                Edge::Right => Point { x: s.right() - 3, y: s.y + along(s.h) },
-                Edge::Top => Point { x: s.x + along(s.w), y: s.y + 2 },
-                _ => Point { x: s.x + along(s.w), y: s.bottom() - 3 },
+                Edge::Left => Point {
+                    x: s.x + 2,
+                    y: s.y + along(s.h),
+                },
+                Edge::Right => Point {
+                    x: s.right() - 3,
+                    y: s.y + along(s.h),
+                },
+                Edge::Top => Point {
+                    x: s.x + along(s.w),
+                    y: s.y + 2,
+                },
+                _ => Point {
+                    x: s.x + along(s.w),
+                    y: s.bottom() - 3,
+                },
             }
         });
         self.leave_remote(cursor)
@@ -475,7 +549,11 @@ mod tests {
             &(lp(), vec![lp_screen.clone()]),
             Edge::Right,
         );
-        let layout = Layout::from_parts(&[(pc(), vec![pc_screen.clone()]), (lp(), vec![lp_screen])], &placements, 1);
+        let layout = Layout::from_parts(
+            &[(pc(), vec![pc_screen.clone()]), (lp(), vec![lp_screen])],
+            &placements,
+            1,
+        );
         let mut r = Router::new(pc(), cfg);
         r.set_layout(layout);
         r.set_screens(vec![pc_screen]);
@@ -491,9 +569,15 @@ mod tests {
         let mut r = router(RouterConfig::default());
         let t = Instant::now();
         // Not at the edge yet.
-        assert!(r.on_capture(CaptureEvent::MouseMove { x: 2000, y: 720 }, t).is_empty());
+        assert!(
+            r.on_capture(CaptureEvent::MouseMove { x: 2000, y: 720 }, t)
+                .is_empty()
+        );
         // Corner is locked.
-        assert!(r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 2 }, t).is_empty());
+        assert!(
+            r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 2 }, t)
+                .is_empty()
+        );
         let a = r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, t);
         assert!(has_enter(&a), "{a:?}");
         assert!(a.contains(&Action::SetGrab(GrabMode::All)));
@@ -504,20 +588,48 @@ mod tests {
     fn remote_forwards_events_and_locks_out_local() {
         let mut r = router(RouterConfig::default());
         r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, Instant::now());
-        let a = r.on_capture(CaptureEvent::Key { hid: hid::A, down: true }, Instant::now());
-        assert_eq!(a, vec![Action::Send(Ev::Key(pb::Key { hid: u32::from(hid::A), down: true }))]);
+        let a = r.on_capture(
+            CaptureEvent::Key {
+                hid: hid::A,
+                down: true,
+            },
+            Instant::now(),
+        );
+        assert_eq!(
+            a,
+            vec![Action::Send(Ev::Key(pb::Key {
+                hid: u32::from(hid::A),
+                down: true
+            }))]
+        );
         let a = r.on_capture(CaptureEvent::MouseRel { dx: 3, dy: -2 }, Instant::now());
-        assert_eq!(a, vec![Action::Send(Ev::Rel(pb::MouseRel { dx: 3, dy: -2 }))]);
+        assert_eq!(
+            a,
+            vec![Action::Send(Ev::Rel(pb::MouseRel { dx: 3, dy: -2 }))]
+        );
     }
 
     #[test]
     fn edge_hit_returns_and_places_cursor() {
         let mut r = router(RouterConfig::default());
         r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, Instant::now());
-        let a = r.on_edge_hit(&pb::EdgeHit { screen_id: 0, edge: Edge::Left as i32, rel_pos: 0.5 });
+        let a = r.on_edge_hit(&pb::EdgeHit {
+            screen_id: 0,
+            edge: Edge::Left as i32,
+            rel_pos: 0.5,
+        });
         assert!(a.contains(&Action::Send(Ev::Leave(pb::Leave {}))));
         assert!(a.contains(&Action::SetGrab(GrabMode::None)));
-        let cursor = a.iter().find_map(|x| if let Action::MoveCursor(p) = x { Some(*p) } else { None }).unwrap();
+        let cursor = a
+            .iter()
+            .find_map(|x| {
+                if let Action::MoveCursor(p) = x {
+                    Some(*p)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         assert_eq!(cursor.x, 2560 - 3);
         assert!((cursor.y - 720).abs() <= 2);
         assert_eq!(r.state(), State::Local);
@@ -535,42 +647,90 @@ mod tests {
     #[test]
     fn lock_prevents_switching() {
         let mut r = router(RouterConfig::default());
-        r.on_capture(CaptureEvent::Hotkey(HotkeyAction::LockCursor.id()), Instant::now());
+        r.on_capture(
+            CaptureEvent::Hotkey(HotkeyAction::LockCursor.id()),
+            Instant::now(),
+        );
         assert!(r.is_locked());
-        assert!(r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, Instant::now()).is_empty());
+        assert!(
+            r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, Instant::now())
+                .is_empty()
+        );
     }
 
     #[test]
     fn delay_requires_dwell() {
-        let mut r = router(RouterConfig { switch_delay: Duration::from_millis(200), ..Default::default() });
+        let mut r = router(RouterConfig {
+            switch_delay: Duration::from_millis(200),
+            ..Default::default()
+        });
         let t = Instant::now();
-        assert!(r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, t).is_empty());
-        assert!(r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, t + Duration::from_millis(100)).is_empty());
-        let a = r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, t + Duration::from_millis(250));
+        assert!(
+            r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, t)
+                .is_empty()
+        );
+        assert!(
+            r.on_capture(
+                CaptureEvent::MouseMove { x: 2559, y: 720 },
+                t + Duration::from_millis(100)
+            )
+            .is_empty()
+        );
+        let a = r.on_capture(
+            CaptureEvent::MouseMove { x: 2559, y: 720 },
+            t + Duration::from_millis(250),
+        );
         assert!(has_enter(&a));
     }
 
     #[test]
     fn modifier_requirement() {
-        let mut r = router(RouterConfig { require_modifiers: CTRL, ..Default::default() });
-        assert!(r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, Instant::now()).is_empty());
-        r.on_capture(CaptureEvent::Key { hid: hid::L_CTRL, down: true }, Instant::now());
-        assert!(has_enter(&r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, Instant::now())));
+        let mut r = router(RouterConfig {
+            require_modifiers: CTRL,
+            ..Default::default()
+        });
+        assert!(
+            r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, Instant::now())
+                .is_empty()
+        );
+        r.on_capture(
+            CaptureEvent::Key {
+                hid: hid::L_CTRL,
+                down: true,
+            },
+            Instant::now(),
+        );
+        assert!(has_enter(&r.on_capture(
+            CaptureEvent::MouseMove { x: 2559, y: 720 },
+            Instant::now()
+        )));
     }
 
     #[test]
     fn held_modifiers_are_replayed_on_enter() {
         let mut r = router(RouterConfig::default());
-        r.on_capture(CaptureEvent::Key { hid: hid::L_SHIFT, down: true }, Instant::now());
+        r.on_capture(
+            CaptureEvent::Key {
+                hid: hid::L_SHIFT,
+                down: true,
+            },
+            Instant::now(),
+        );
         let a = r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, Instant::now());
-        assert!(a.contains(&Action::Send(Ev::Key(pb::Key { hid: u32::from(hid::L_SHIFT), down: true }))));
+        assert!(a.contains(&Action::Send(Ev::Key(pb::Key {
+            hid: u32::from(hid::L_SHIFT),
+            down: true
+        }))));
     }
 
     #[test]
     fn emergency_hotkey_goes_local() {
         let mut r = router(RouterConfig::default());
         r.on_capture(CaptureEvent::MouseMove { x: 2559, y: 720 }, Instant::now());
-        let a = r.on_capture(CaptureEvent::Hotkey(HotkeyAction::Emergency.id()), Instant::now());
+        let a = r.on_capture(
+            CaptureEvent::Hotkey(HotkeyAction::Emergency.id()),
+            Instant::now(),
+        );
         assert!(a.contains(&Action::SetGrab(GrabMode::None)));
         assert!(a.contains(&Action::Hotkey(HotkeyAction::Emergency)));
         assert_eq!(r.state(), State::Local);
@@ -579,29 +739,78 @@ mod tests {
     #[test]
     fn jump_hotkey_toggles() {
         let mut r = router(RouterConfig::default());
-        let a = r.on_capture(CaptureEvent::Hotkey(HotkeyAction::JumpOther.id()), Instant::now());
+        let a = r.on_capture(
+            CaptureEvent::Hotkey(HotkeyAction::JumpOther.id()),
+            Instant::now(),
+        );
         assert!(has_enter(&a));
-        let a = r.on_capture(CaptureEvent::Hotkey(HotkeyAction::JumpOther.id()), Instant::now());
+        let a = r.on_capture(
+            CaptureEvent::Hotkey(HotkeyAction::JumpOther.id()),
+            Instant::now(),
+        );
         assert!(a.contains(&Action::Send(Ev::Leave(pb::Leave {}))));
     }
 
     #[test]
     fn region_maps_absolute_and_switches_keyboard() {
         let mut r = router(RouterConfig::default());
-        let _ = r.set_region(Some(AbsRegion { device: lp(), screen: 0, x: 2560, y: 0, w: 2560, h: 1440 }));
+        let _ = r.set_region(Some(AbsRegion {
+            device: lp(),
+            screen: 0,
+            x: 2560,
+            y: 0,
+            w: 2560,
+            h: 1440,
+        }));
         // outside → nothing
-        assert!(r.on_capture(CaptureEvent::MouseMove { x: 100, y: 100 }, Instant::now()).is_empty());
+        assert!(
+            r.on_capture(CaptureEvent::MouseMove { x: 100, y: 100 }, Instant::now())
+                .is_empty()
+        );
         // inside → enter + grab + abs
-        let a = r.on_capture(CaptureEvent::MouseMove { x: 2560 + 1280, y: 720 }, Instant::now());
+        let a = r.on_capture(
+            CaptureEvent::MouseMove {
+                x: 2560 + 1280,
+                y: 720,
+            },
+            Instant::now(),
+        );
         assert!(a.contains(&Action::SetGrab(GrabMode::KeyboardOnly)));
         assert!(has_enter(&a));
-        let abs = a.iter().find_map(|x| if let Action::Send(Ev::Abs(m)) = x { Some(*m) } else { None }).unwrap();
+        let abs = a
+            .iter()
+            .find_map(|x| {
+                if let Action::Send(Ev::Abs(m)) = x {
+                    Some(*m)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         assert!((abs.x - 0.5).abs() < 0.01 && (abs.y - 0.5).abs() < 0.01);
         // keys flow only while inside
-        assert!(!r.on_capture(CaptureEvent::Key { hid: hid::A, down: true }, Instant::now()).is_empty());
+        assert!(
+            !r.on_capture(
+                CaptureEvent::Key {
+                    hid: hid::A,
+                    down: true
+                },
+                Instant::now()
+            )
+            .is_empty()
+        );
         let a = r.on_capture(CaptureEvent::MouseMove { x: 10, y: 10 }, Instant::now());
         assert!(a.contains(&Action::Send(Ev::Leave(pb::Leave {}))));
-        assert!(r.on_capture(CaptureEvent::Key { hid: hid::A, down: true }, Instant::now()).is_empty());
+        assert!(
+            r.on_capture(
+                CaptureEvent::Key {
+                    hid: hid::A,
+                    down: true
+                },
+                Instant::now()
+            )
+            .is_empty()
+        );
     }
 
     #[allow(dead_code)]

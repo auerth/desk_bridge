@@ -43,7 +43,12 @@ pub enum CaptureOutput {
 pub trait ScreenCapturer: Send {
     /// Starts capturing the given screen (id from `ScreenProvider`). Frames are only emitted when
     /// the picture changed; the stream layer adds keep-alives.
-    fn start(&mut self, screen_id: u32, fps: u32, sink: UnboundedSender<CaptureOutput>) -> Result<()>;
+    fn start(
+        &mut self,
+        screen_id: u32,
+        fps: u32,
+        sink: UnboundedSender<CaptureOutput>,
+    ) -> Result<()>;
     fn stop(&mut self);
     /// Name of the GPU adapter the frames live on.
     fn adapter_name(&self) -> String;

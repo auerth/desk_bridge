@@ -151,12 +151,11 @@ mod sys {
 
     /// Remove every rule with our name. Missing rule is not an error.
     pub fn remove_rule() -> Result<()> {
-        if let Ok(p) = policy() {
-            if let Ok(rules) = unsafe { p.Rules() } {
-                if unsafe { rules.Remove(&BSTR::from(FIREWALL_RULE_NAME)) }.is_ok() {
-                    return Ok(());
-                }
-            }
+        if let Ok(p) = policy()
+            && let Ok(rules) = unsafe { p.Rules() }
+            && unsafe { rules.Remove(&BSTR::from(FIREWALL_RULE_NAME)) }.is_ok()
+        {
+            return Ok(());
         }
         // COM unavailable or failed: netsh reports non-zero when nothing matched, so only
         // surface an error if the rule is still present afterwards.

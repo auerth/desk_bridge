@@ -18,7 +18,11 @@ impl Default for Backoff {
 impl Backoff {
     #[must_use]
     pub fn new(min: Duration, max: Duration) -> Self {
-        Self { current: min, min, max }
+        Self {
+            current: min,
+            min,
+            max,
+        }
     }
 
     /// Returns the delay to wait now and advances the sequence.

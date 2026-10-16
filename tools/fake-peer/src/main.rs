@@ -92,7 +92,11 @@ fn parse() -> Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = parse();
-    let dir = std::env::temp_dir().join(format!("deskbridge-fake-{}-{}", args.name, std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "deskbridge-fake-{}-{}",
+        args.name,
+        std::process::id()
+    ));
     let (platform, mocks) = Platform::mock(args.width, args.height);
     let mut cfg = Config::default();
     cfg.device.name = args.name.clone();
@@ -111,16 +115,25 @@ async fn main() -> anyhow::Result<()> {
     println!("listening on {}", h.local_addr());
 
     if args.show_code {
-        let r = h.request(UiRequest::StartPairing).await.map_err(anyhow::Error::msg)?;
+        let r = h
+            .request(UiRequest::StartPairing)
+            .await
+            .map_err(anyhow::Error::msg)?;
         println!("pairing code: {}", r["code"].as_str().unwrap_or("?"));
     }
     if let Some((addr, code)) = &args.pair {
-        h.request(UiRequest::PairWith { device_id: None, address: Some(addr.clone()), code: code.clone() })
-            .await
-            .map_err(anyhow::Error::msg)?;
+        h.request(UiRequest::PairWith {
+            device_id: None,
+            address: Some(addr.clone()),
+            code: code.clone(),
+        })
+        .await
+        .map_err(anyhow::Error::msg)?;
     }
     for c in &args.connect {
-        h.request(UiRequest::AddManualHost { host: c.clone() }).await.map_err(anyhow::Error::msg)?;
+        h.request(UiRequest::AddManualHost { host: c.clone() })
+            .await
+            .map_err(anyhow::Error::msg)?;
     }
 
     // recorder
@@ -133,11 +146,21 @@ async fn main() -> anyhow::Result<()> {
                 let ops = inj.ops();
                 for op in &ops[seen.min(ops.len())..] {
                     let line = match op {
-                        InjectedOp::Key { hid, down } => format!("{{\"ev\":\"key\",\"hid\":{hid},\"down\":{down}}}"),
-                        InjectedOp::MouseRel { dx, dy } => format!("{{\"ev\":\"rel\",\"dx\":{dx},\"dy\":{dy}}}"),
-                        InjectedOp::MouseAbs { x, y } => format!("{{\"ev\":\"abs\",\"x\":{x},\"y\":{y}}}"),
-                        InjectedOp::Button { button, down } => format!("{{\"ev\":\"btn\",\"b\":\"{button:?}\",\"down\":{down}}}"),
-                        InjectedOp::Wheel { dx, dy } => format!("{{\"ev\":\"wheel\",\"dx\":{dx},\"dy\":{dy}}}"),
+                        InjectedOp::Key { hid, down } => {
+                            format!("{{\"ev\":\"key\",\"hid\":{hid},\"down\":{down}}}")
+                        }
+                        InjectedOp::MouseRel { dx, dy } => {
+                            format!("{{\"ev\":\"rel\",\"dx\":{dx},\"dy\":{dy}}}")
+                        }
+                        InjectedOp::MouseAbs { x, y } => {
+                            format!("{{\"ev\":\"abs\",\"x\":{x},\"y\":{y}}}")
+                        }
+                        InjectedOp::Button { button, down } => {
+                            format!("{{\"ev\":\"btn\",\"b\":\"{button:?}\",\"down\":{down}}}")
+                        }
+                        InjectedOp::Wheel { dx, dy } => {
+                            format!("{{\"ev\":\"wheel\",\"dx\":{dx},\"dy\":{dy}}}")
+                        }
                     };
                     let _ = writeln!(f, "{line}");
                 }
@@ -155,15 +178,26 @@ async fn main() -> anyhow::Result<()> {
             let text = std::fs::read_to_string(path).unwrap_or_default();
             let start = std::time::Instant::now();
             for line in text.lines() {
-                let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                    continue;
+                };
                 let t = v["t_ms"].as_u64().unwrap_or(0);
                 if let Some(wait) = Duration::from_millis(t).checked_sub(start.elapsed()) {
                     tokio::time::sleep(wait).await;
                 }
                 let ev = match v["ev"].as_str() {
-                    Some("move") => CaptureEvent::MouseMove { x: v["x"].as_i64().unwrap_or(0) as i32, y: v["y"].as_i64().unwrap_or(0) as i32 },
-                    Some("rel") => CaptureEvent::MouseRel { dx: v["dx"].as_i64().unwrap_or(0) as i32, dy: v["dy"].as_i64().unwrap_or(0) as i32 },
-                    Some("key") => CaptureEvent::Key { hid: v["hid"].as_u64().unwrap_or(0) as u16, down: v["down"].as_bool().unwrap_or(true) },
+                    Some("move") => CaptureEvent::MouseMove {
+                        x: v["x"].as_i64().unwrap_or(0) as i32,
+                        y: v["y"].as_i64().unwrap_or(0) as i32,
+                    },
+                    Some("rel") => CaptureEvent::MouseRel {
+                        dx: v["dx"].as_i64().unwrap_or(0) as i32,
+                        dy: v["dy"].as_i64().unwrap_or(0) as i32,
+                    },
+                    Some("key") => CaptureEvent::Key {
+                        hid: v["hid"].as_u64().unwrap_or(0) as u16,
+                        down: v["down"].as_bool().unwrap_or(true),
+                    },
                     _ => continue,
                 };
                 cap.feed(ev);

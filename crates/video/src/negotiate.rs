@@ -7,7 +7,8 @@ use deskbridge_proto::pb::{Codec, VideoCaps};
 /// Default codec preference when the caller does not force one. HEVC first (best hardware coverage
 /// on both ends, 4:4:4 possible), then AV1 (better quality per bit but only RTX 40/50, RDNA3+, Arc),
 /// then H.264 as the universal fallback. ADR 0005 confirms the order for the owner's setup.
-pub const DEFAULT_CODEC_ORDER: [VideoCodec; 3] = [VideoCodec::Hevc, VideoCodec::Av1, VideoCodec::H264];
+pub const DEFAULT_CODEC_ORDER: [VideoCodec; 3] =
+    [VideoCodec::Hevc, VideoCodec::Av1, VideoCodec::H264];
 
 /// Hardware H.264 encoders and decoders support at most 4096 pixels per side (measured: NVENC
 /// rejects 5120 wide; ADR 0005).
@@ -30,7 +31,14 @@ pub struct WantedStream {
 impl WantedStream {
     #[must_use]
     pub fn new(width: u32, height: u32, fps: u32) -> Self {
-        Self { width, height, fps, prefer: None, want_yuv444: false, bitrate_kbps: None }
+        Self {
+            width,
+            height,
+            fps,
+            prefer: None,
+            want_yuv444: false,
+            bitrate_kbps: None,
+        }
     }
 }
 
@@ -133,7 +141,9 @@ pub fn negotiate(
         .find(|&c| supports(&encoder_side.encode, c) && supports(&decoder_side.decode, c))
         .ok_or(NegotiateError::NoCommonCodec)?;
     if let Some(p) = want.prefer.filter(|&p| p != codec) {
-        notes.push(format!("preferred codec {p:?} not available on both ends, using {codec:?}"));
+        notes.push(format!(
+            "preferred codec {p:?} not available on both ends, using {codec:?}"
+        ));
     }
 
     // 4:4:4 only for HEVC and only if both ends advertise it.
@@ -147,7 +157,9 @@ pub fn negotiate(
         } else {
             "the decoder cannot decode 4:4:4".to_owned()
         };
-        notes.push(format!("4:4:4 requested but not granted: {why}; using 4:2:0"));
+        notes.push(format!(
+            "4:4:4 requested but not granted: {why}; using 4:2:0"
+        ));
     }
 
     // Size: both ends' maxima (0 = unlimited). Keep the aspect ratio, round down to even numbers.
@@ -190,7 +202,9 @@ pub fn negotiate(
     let mut fps = want.fps;
     if let Some(mf) = min_nonzero(encoder_side.max_fps, decoder_side.max_fps).filter(|&mf| fps > mf)
     {
-        notes.push(format!("fps reduced from {fps} to {mf} (encoder/decoder limit)"));
+        notes.push(format!(
+            "fps reduced from {fps} to {mf} (encoder/decoder limit)"
+        ));
         fps = mf;
     }
 
@@ -199,7 +213,15 @@ pub fn negotiate(
         .unwrap_or_else(|| default_bitrate_kbps(codec, width, height, fps))
         .clamp(1_000, 300_000);
 
-    Ok(Negotiated { codec, width, height, fps, yuv444, bitrate_kbps, notes })
+    Ok(Negotiated {
+        codec,
+        width,
+        height,
+        fps,
+        yuv444,
+        bitrate_kbps,
+        notes,
+    })
 }
 
 fn min_nonzero(a: u32, b: u32) -> Option<u32> {
@@ -227,19 +249,33 @@ mod tests {
     }
 
     fn enc_side(codecs: &[Codec]) -> VideoCaps {
-        VideoCaps { max_width: 8192, max_height: 8192, max_fps: 240, ..caps(codecs, &[]) }
+        VideoCaps {
+            max_width: 8192,
+            max_height: 8192,
+            max_fps: 240,
+            ..caps(codecs, &[])
+        }
     }
 
     fn dec_side(codecs: &[Codec]) -> VideoCaps {
-        VideoCaps { max_width: 8192, max_height: 8192, max_fps: 240, ..caps(&[], codecs) }
+        VideoCaps {
+            max_width: 8192,
+            max_height: 8192,
+            max_fps: 240,
+            ..caps(&[], codecs)
+        }
     }
 
     const ALL: [Codec; 3] = [Codec::H264, Codec::Hevc, Codec::Av1];
 
     #[test]
     fn prefers_hevc_by_default() {
-        let n = negotiate(&enc_side(&ALL), &dec_side(&ALL), &WantedStream::new(5120, 1440, 120))
-            .unwrap();
+        let n = negotiate(
+            &enc_side(&ALL),
+            &dec_side(&ALL),
+            &WantedStream::new(5120, 1440, 120),
+        )
+        .unwrap();
         assert_eq!(n.codec, VideoCodec::Hevc);
         assert_eq!((n.width, n.height, n.fps), (5120, 1440, 120));
         assert_eq!(n.bitrate_kbps, 120_000);
@@ -299,13 +335,21 @@ mod tests {
             NegotiateError::NoCommonCodec
         );
         assert_eq!(
-            negotiate(&enc_side(&ALL), &dec_side(&ALL), &WantedStream::new(0, 1080, 60))
-                .unwrap_err(),
+            negotiate(
+                &enc_side(&ALL),
+                &dec_side(&ALL),
+                &WantedStream::new(0, 1080, 60)
+            )
+            .unwrap_err(),
             NegotiateError::InvalidRequest
         );
         assert_eq!(
-            negotiate(&enc_side(&ALL), &dec_side(&ALL), &WantedStream::new(100, 100, 0))
-                .unwrap_err(),
+            negotiate(
+                &enc_side(&ALL),
+                &dec_side(&ALL),
+                &WantedStream::new(100, 100, 0)
+            )
+            .unwrap_err(),
             NegotiateError::InvalidRequest
         );
     }
@@ -330,8 +374,14 @@ mod tests {
         let n = negotiate(&e, &d, &w).unwrap();
         assert!(n.yuv444);
         // both, but codec is not HEVC
-        let d2 = VideoCaps { decode: vec![Codec::H264 as i32], ..d.clone() };
-        let e2 = VideoCaps { encode: vec![Codec::H264 as i32], ..e.clone() };
+        let d2 = VideoCaps {
+            decode: vec![Codec::H264 as i32],
+            ..d.clone()
+        };
+        let e2 = VideoCaps {
+            encode: vec![Codec::H264 as i32],
+            ..e.clone()
+        };
         let n = negotiate(&e2, &d2, &w).unwrap();
         assert_eq!(n.codec, VideoCodec::H264);
         assert!(!n.yuv444);
@@ -341,7 +391,11 @@ mod tests {
     #[test]
     fn clamps_size_keeping_aspect_ratio() {
         let e = enc_side(&ALL);
-        let d = VideoCaps { max_width: 4096, max_height: 4096, ..dec_side(&ALL) };
+        let d = VideoCaps {
+            max_width: 4096,
+            max_height: 4096,
+            ..dec_side(&ALL)
+        };
         let n = negotiate(&e, &d, &WantedStream::new(5120, 1440, 120)).unwrap();
         assert_eq!(n.width, 4096);
         assert_eq!(n.height, 1152); // 1440 * 0.8
@@ -357,29 +411,51 @@ mod tests {
         assert_eq!(n.width, 4096);
         assert_eq!(n.height, 1152);
         // HEVC available: no clamp
-        let n = negotiate(&enc_side(&ALL), &dec_side(&ALL), &WantedStream::new(5120, 1440, 60)).unwrap();
+        let n = negotiate(
+            &enc_side(&ALL),
+            &dec_side(&ALL),
+            &WantedStream::new(5120, 1440, 60),
+        )
+        .unwrap();
         assert_eq!(n.width, 5120);
     }
 
     #[test]
     fn clamps_fps_and_zero_means_unlimited() {
-        let e = VideoCaps { max_fps: 60, ..enc_side(&ALL) };
+        let e = VideoCaps {
+            max_fps: 60,
+            ..enc_side(&ALL)
+        };
         let d = dec_side(&ALL);
         let n = negotiate(&e, &d, &WantedStream::new(2560, 1440, 120)).unwrap();
         assert_eq!(n.fps, 60);
         assert!(n.notes.iter().any(|s| s.contains("fps reduced")));
 
         // limits unknown (0) on both sides: nothing is clamped
-        let e = VideoCaps { max_width: 0, max_height: 0, max_fps: 0, ..enc_side(&ALL) };
-        let d = VideoCaps { max_width: 0, max_height: 0, max_fps: 0, ..dec_side(&ALL) };
+        let e = VideoCaps {
+            max_width: 0,
+            max_height: 0,
+            max_fps: 0,
+            ..enc_side(&ALL)
+        };
+        let d = VideoCaps {
+            max_width: 0,
+            max_height: 0,
+            max_fps: 0,
+            ..dec_side(&ALL)
+        };
         let n = negotiate(&e, &d, &WantedStream::new(7680, 2160, 144)).unwrap();
         assert_eq!((n.width, n.height, n.fps), (7680, 2160, 144));
     }
 
     #[test]
     fn odd_sizes_are_made_even() {
-        let n = negotiate(&enc_side(&ALL), &dec_side(&ALL), &WantedStream::new(3413, 1440, 120))
-            .unwrap();
+        let n = negotiate(
+            &enc_side(&ALL),
+            &dec_side(&ALL),
+            &WantedStream::new(3413, 1440, 120),
+        )
+        .unwrap();
         assert_eq!((n.width, n.height), (3412, 1440));
         assert!(n.notes.iter().any(|s| s.contains("even")));
     }

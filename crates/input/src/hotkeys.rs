@@ -81,11 +81,15 @@ impl HotkeyAction {
 /// defaults for missing or unparsable entries. Returns the hotkeys and the list of conflicts
 /// (two actions bound to the same combination; the later one is dropped).
 #[must_use]
-pub fn build(bindings: &std::collections::BTreeMap<String, String>) -> (Vec<Hotkey>, Vec<(HotkeyAction, HotkeyAction)>) {
+pub fn build(
+    bindings: &std::collections::BTreeMap<String, String>,
+) -> (Vec<Hotkey>, Vec<(HotkeyAction, HotkeyAction)>) {
     let mut out: Vec<Hotkey> = Vec::new();
     let mut conflicts = Vec::new();
     for a in HotkeyAction::ALL {
-        let spec = bindings.get(a.key()).map_or(a.default_binding(), String::as_str);
+        let spec = bindings
+            .get(a.key())
+            .map_or(a.default_binding(), String::as_str);
         let hk = Hotkey::parse(a.id(), spec).or_else(|| Hotkey::parse(a.id(), a.default_binding()));
         let Some(hk) = hk else { continue };
         if let Some(existing) = out.iter().find(|h| h.mods == hk.mods && h.key == hk.key) {
@@ -114,7 +118,10 @@ mod tests {
         let mut b = BTreeMap::new();
         b.insert("mic_mute".to_string(), "Ctrl+Alt+Shift+F".to_string());
         let (hk, conflicts) = build(&b);
-        assert_eq!(conflicts, vec![(HotkeyAction::FocusCycle, HotkeyAction::MicMute)]);
+        assert_eq!(
+            conflicts,
+            vec![(HotkeyAction::FocusCycle, HotkeyAction::MicMute)]
+        );
         assert_eq!(hk.len(), HotkeyAction::ALL.len() - 1);
     }
 

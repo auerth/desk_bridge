@@ -23,7 +23,10 @@ use windows::core::Interface;
 
 /// Maps a `windows` error to the platform error type.
 pub(crate) fn os_err(what: &str, e: &windows::core::Error) -> PlatformError {
-    PlatformError::Os { code: i64::from(e.code().0), msg: format!("{what}: {e}") }
+    PlatformError::Os {
+        code: i64::from(e.code().0),
+        msg: format!("{what}: {e}"),
+    }
 }
 
 fn qpc_freq() -> i64 {
@@ -104,7 +107,10 @@ pub fn create_device(adapter: Option<&IDXGIAdapter1>) -> Result<D3dDevice> {
     let mut context: Option<ID3D11DeviceContext> = None;
     let flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
     let adapter_base: Option<IDXGIAdapter> = match adapter {
-        Some(a) => Some(a.cast().map_err(|e| os_err("IDXGIAdapter1 -> IDXGIAdapter", &e))?),
+        Some(a) => Some(
+            a.cast()
+                .map_err(|e| os_err("IDXGIAdapter1 -> IDXGIAdapter", &e))?,
+        ),
         None => None,
     };
     // With an explicit adapter the driver type must be UNKNOWN; with none, HARDWARE.
@@ -128,12 +134,18 @@ pub fn create_device(adapter: Option<&IDXGIAdapter1>) -> Result<D3dDevice> {
         )
     }
     .map_err(|e| os_err("D3D11CreateDevice", &e))?;
-    let device = device.ok_or_else(|| PlatformError::other("D3D11CreateDevice returned no device"))?;
+    let device =
+        device.ok_or_else(|| PlatformError::other("D3D11CreateDevice returned no device"))?;
     let context =
         context.ok_or_else(|| PlatformError::other("D3D11CreateDevice returned no context"))?;
     enable_multithread_protection(&context);
     let (luid, name) = device_adapter_info(&device);
-    Ok(D3dDevice { device, context, adapter_luid: luid, adapter_name: name })
+    Ok(D3dDevice {
+        device,
+        context,
+        adapter_luid: luid,
+        adapter_name: name,
+    })
 }
 
 /// Several threads (capture, encode, decode, present) share one immediate context, so the
@@ -153,7 +165,10 @@ pub fn device_adapter_info(device: &ID3D11Device) -> (i64, String) {
         // SAFETY: plain COM calls.
         let adapter = unsafe { dxgi.GetAdapter()? };
         let desc = unsafe { adapter.GetDesc()? };
-        Ok((luid_to_i64(desc.AdapterLuid), wide_to_string(&desc.Description)))
+        Ok((
+            luid_to_i64(desc.AdapterLuid),
+            wide_to_string(&desc.Description),
+        ))
     })();
     r.unwrap_or((0, String::from("unknown adapter")))
 }
@@ -180,7 +195,12 @@ pub struct OutputInfo {
 impl OutputInfo {
     #[must_use]
     pub fn rect(&self) -> RECT {
-        RECT { left: self.x, top: self.y, right: self.x + self.w as i32, bottom: self.y + self.h as i32 }
+        RECT {
+            left: self.x,
+            top: self.y,
+            right: self.x + self.w as i32,
+            bottom: self.y + self.h as i32,
+        }
     }
 }
 
@@ -239,7 +259,9 @@ pub fn adapter_by_index(index: u32) -> Result<IDXGIAdapter1> {
     unsafe {
         let factory: IDXGIFactory1 =
             CreateDXGIFactory1().map_err(|e| os_err("CreateDXGIFactory1", &e))?;
-        factory.EnumAdapters1(index).map_err(|e| os_err("EnumAdapters1", &e))
+        factory
+            .EnumAdapters1(index)
+            .map_err(|e| os_err("EnumAdapters1", &e))
     }
 }
 
@@ -251,8 +273,15 @@ pub fn adapter_by_luid(luid: i64) -> Result<IDXGIAdapter1> {
             CreateDXGIFactory1().map_err(|e| os_err("CreateDXGIFactory1", &e))?;
         let mut i = 0;
         loop {
-            let a = factory.EnumAdapters1(i).map_err(|_| PlatformError::DeviceNotFound(format!("adapter luid {luid:#x}")))?;
-            if luid_to_i64(a.GetDesc1().map_err(|e| os_err("GetDesc1", &e))?.AdapterLuid) == luid {
+            let a = factory
+                .EnumAdapters1(i)
+                .map_err(|_| PlatformError::DeviceNotFound(format!("adapter luid {luid:#x}")))?;
+            if luid_to_i64(
+                a.GetDesc1()
+                    .map_err(|e| os_err("GetDesc1", &e))?
+                    .AdapterLuid,
+            ) == luid
+            {
                 return Ok(a);
             }
             i += 1;
@@ -263,8 +292,17 @@ pub fn adapter_by_luid(luid: i64) -> Result<IDXGIAdapter1> {
 /// Selects the output whose desktop rectangle equals `(x, y, w, h)`; falls back to the output
 /// with the largest overlap.
 #[must_use]
-pub fn find_output_by_rect(outputs: &[OutputInfo], x: i32, y: i32, w: u32, h: u32) -> Option<&OutputInfo> {
-    if let Some(o) = outputs.iter().find(|o| !o.software && o.attached && o.x == x && o.y == y && o.w == w && o.h == h) {
+pub fn find_output_by_rect(
+    outputs: &[OutputInfo],
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+) -> Option<&OutputInfo> {
+    if let Some(o) = outputs
+        .iter()
+        .find(|o| !o.software && o.attached && o.x == x && o.y == y && o.w == w && o.h == h)
+    {
         return Some(o);
     }
     let area = |o: &OutputInfo| -> i64 {
@@ -272,7 +310,11 @@ pub fn find_output_by_rect(outputs: &[OutputInfo], x: i32, y: i32, w: u32, h: u3
         let t = y.max(o.y);
         let r = (x + w as i32).min(o.x + o.w as i32);
         let b = (y + h as i32).min(o.y + o.h as i32);
-        if r > l && b > t { i64::from(r - l) * i64::from(b - t) } else { 0 }
+        if r > l && b > t {
+            i64::from(r - l) * i64::from(b - t)
+        } else {
+            0
+        }
     };
     outputs
         .iter()
@@ -306,9 +348,19 @@ mod tests {
     #[test]
     fn rect_matching() {
         let v = vec![out(0, 0, 0, 0, 1920, 1080), out(0, 1, 1920, 0, 5120, 1440)];
-        assert_eq!(find_output_by_rect(&v, 1920, 0, 5120, 1440).unwrap().output_index, 1);
+        assert_eq!(
+            find_output_by_rect(&v, 1920, 0, 5120, 1440)
+                .unwrap()
+                .output_index,
+            1
+        );
         // slightly different rect: largest overlap wins
-        assert_eq!(find_output_by_rect(&v, 2000, 0, 2560, 1440).unwrap().output_index, 1);
+        assert_eq!(
+            find_output_by_rect(&v, 2000, 0, 2560, 1440)
+                .unwrap()
+                .output_index,
+            1
+        );
         assert!(find_output_by_rect(&v, 10_000, 0, 100, 100).is_none());
     }
 
@@ -322,7 +374,10 @@ mod tests {
 
     #[test]
     fn luid_packing() {
-        let l = windows::Win32::Foundation::LUID { LowPart: 5, HighPart: 2 };
+        let l = windows::Win32::Foundation::LUID {
+            LowPart: 5,
+            HighPart: 2,
+        };
         assert_eq!(luid_to_i64(l), (2i64 << 32) | 5);
         assert_eq!(wide_to_string(&[104, 105, 0, 120]), "hi");
     }

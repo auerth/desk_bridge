@@ -6,12 +6,15 @@ use deskbridge_core::ipc_server::serve_connection;
 use std::ffi::c_void;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
-use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HLOCAL, LocalFree};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HLOCAL, LocalFree,
+};
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows::Win32::Security::{
-    GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+    TokenUser,
 };
 use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess, OpenProcessToken};
 use windows::core::{HSTRING, PWSTR};
@@ -35,7 +38,10 @@ pub struct SingleInstance(HANDLE);
 
 impl SingleInstance {
     pub fn acquire(pipe_name: &str) -> Option<Self> {
-        let suffix: String = pipe_name.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        let suffix: String = pipe_name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect();
         let name = if pipe_name == brand::UI_PIPE_NAME {
             brand::AGENT_INSTANCE_ID.to_string()
         } else {
@@ -71,7 +77,13 @@ fn pipe_sddl() -> Option<String> {
         let mut len = 0u32;
         let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
         let mut buf = vec![0u8; len as usize];
-        let r = GetTokenInformation(token, TokenUser, Some(buf.as_mut_ptr().cast::<c_void>()), len, &mut len);
+        let r = GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr().cast::<c_void>()),
+            len,
+            &mut len,
+        );
         let _ = CloseHandle(token);
         r.ok()?;
         let user = &*(buf.as_ptr().cast::<TOKEN_USER>());
@@ -116,18 +128,28 @@ fn create_server(
 ) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
     let mut opts = ServerOptions::new();
     opts.first_pipe_instance(first).reject_remote_clients(true);
-    let Some(sddl) = sddl else { return opts.create(name) };
+    let Some(sddl) = sddl else {
+        return opts.create(name);
+    };
     // SAFETY: the descriptor stays alive until after the call returns (the kernel copies it).
     unsafe {
         let mut sd = PSECURITY_DESCRIPTOR::default();
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(&HSTRING::from(sddl), SDDL_REVISION_1, &mut sd, None)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            &HSTRING::from(sddl),
+            SDDL_REVISION_1,
+            &mut sd,
+            None,
+        )
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
         let mut sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: sd.0,
             bInheritHandle: false.into(),
         };
-        let r = opts.create_with_security_attributes_raw(name, (&mut sa as *mut SECURITY_ATTRIBUTES).cast::<c_void>());
+        let r = opts.create_with_security_attributes_raw(
+            name,
+            (&mut sa as *mut SECURITY_ATTRIBUTES).cast::<c_void>(),
+        );
         let _ = LocalFree(HLOCAL(sd.0));
         r
     }
@@ -140,7 +162,10 @@ pub enum ClientCommand {
 
 /// CLI client: one request, print the answer, return an exit code.
 pub fn client_main(cmd: ClientCommand) -> i32 {
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
         return 1;
     };
     rt.block_on(async {

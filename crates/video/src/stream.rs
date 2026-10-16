@@ -20,7 +20,10 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(
     payload: &[u8],
 ) -> io::Result<()> {
     if payload.len() > MAX_PAYLOAD_LEN {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "video payload too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "video payload too large",
+        ));
     }
     let mut head = [0u8; VIDEO_HEADER_LEN + 4];
     head[..VIDEO_HEADER_LEN].copy_from_slice(&h.encode());
@@ -40,7 +43,10 @@ pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> io::Result<(VideoHea
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
     let len = u32::from_le_bytes(head[VIDEO_HEADER_LEN..].try_into().expect("4 bytes")) as usize;
     if len > MAX_PAYLOAD_LEN {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "video payload length out of range"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "video payload length out of range",
+        ));
     }
     let mut payload = vec![0u8; len];
     r.read_exact(&mut payload).await?;
@@ -79,7 +85,13 @@ pub fn frame_header(
     ts_us: u64,
 ) -> VideoHeader {
     let flags = codec_flag_bits(codec) | if key { video_flags::KEY } else { 0 };
-    VideoHeader { frame_id, flags, width: width as u16, height: height as u16, ts_us }
+    VideoHeader {
+        frame_id,
+        flags,
+        width: width as u16,
+        height: height as u16,
+        ts_us,
+    }
 }
 
 /// Builds the header of a keep-alive frame (empty payload; the receiver re-presents the last picture).
@@ -209,7 +221,10 @@ impl LateFrameFilter {
                 self.waiting_for_key = false;
                 self.last_request_ms = None;
                 self.stats.accepted += 1;
-                return FilterOutcome { verdict: Verdict::Accept, request_keyframe: false };
+                return FilterOutcome {
+                    verdict: Verdict::Accept,
+                    request_keyframe: false,
+                };
             }
             self.waiting_for_key = true;
             return self.drop_waiting(now_ms);
@@ -219,11 +234,17 @@ impl LateFrameFilter {
         let delta = h.frame_id.wrapping_sub(newest) as i32;
         if delta == 0 {
             self.stats.dropped_late += 1;
-            return FilterOutcome { verdict: Verdict::Drop(DropReason::Duplicate), request_keyframe: false };
+            return FilterOutcome {
+                verdict: Verdict::Drop(DropReason::Duplicate),
+                request_keyframe: false,
+            };
         }
         if delta < 0 {
             self.stats.dropped_late += 1;
-            return FilterOutcome { verdict: Verdict::Drop(DropReason::Late), request_keyframe: false };
+            return FilterOutcome {
+                verdict: Verdict::Drop(DropReason::Late),
+                request_keyframe: false,
+            };
         }
 
         let gap = (delta - 1) as u64;
@@ -240,7 +261,10 @@ impl LateFrameFilter {
             self.interval.1 += 1;
             self.waiting_for_key = true;
             let request = self.should_request(now_ms);
-            return FilterOutcome { verdict: Verdict::Drop(DropReason::Stale), request_keyframe: request };
+            return FilterOutcome {
+                verdict: Verdict::Drop(DropReason::Stale),
+                request_keyframe: request,
+            };
         }
 
         self.newest = Some(h.frame_id);
@@ -249,7 +273,10 @@ impl LateFrameFilter {
             self.waiting_for_key = false;
             self.last_request_ms = None;
             self.stats.accepted += 1;
-            return FilterOutcome { verdict: Verdict::Accept, request_keyframe: false };
+            return FilterOutcome {
+                verdict: Verdict::Accept,
+                request_keyframe: false,
+            };
         }
 
         if gap > 0 {
@@ -259,7 +286,10 @@ impl LateFrameFilter {
             return self.drop_waiting(now_ms);
         }
         self.stats.accepted += 1;
-        FilterOutcome { verdict: Verdict::Accept, request_keyframe: false }
+        FilterOutcome {
+            verdict: Verdict::Accept,
+            request_keyframe: false,
+        }
     }
 
     /// The decoder failed on an accepted frame: wait for a keyframe and ask for one.
@@ -283,7 +313,9 @@ impl LateFrameFilter {
     }
 
     fn should_request(&mut self, now_ms: u64) -> bool {
-        let due = self.last_request_ms.is_none_or(|t| now_ms.saturating_sub(t) >= self.retry_ms);
+        let due = self
+            .last_request_ms
+            .is_none_or(|t| now_ms.saturating_sub(t) >= self.retry_ms);
         if due {
             self.last_request_ms = Some(now_ms);
             self.stats.keyframe_requests += 1;
@@ -306,7 +338,11 @@ impl LateFrameFilter {
     pub fn take_interval_loss_pct(&mut self) -> f32 {
         let (received, lost) = std::mem::take(&mut self.interval);
         let expected = received + lost;
-        if expected == 0 { 0.0 } else { lost as f32 * 100.0 / expected as f32 }
+        if expected == 0 {
+            0.0
+        } else {
+            lost as f32 * 100.0 / expected as f32
+        }
     }
 }
 
@@ -327,9 +363,13 @@ mod tests {
         let (h2, p2) = (h.clone(), payload.clone());
         let w = tokio::spawn(async move {
             write_frame(&mut a, &h2, &p2).await.unwrap();
-            write_frame(&mut a, &keepalive_header(43, VideoCodec::Hevc, 5120, 1440, 7), &[])
-                .await
-                .unwrap();
+            write_frame(
+                &mut a,
+                &keepalive_header(43, VideoCodec::Hevc, 5120, 1440, 7),
+                &[],
+            )
+            .await
+            .unwrap();
         });
         let (rh, rp) = read_frame(&mut b).await.unwrap();
         assert_eq!(rh, h);
@@ -381,7 +421,9 @@ mod tests {
     async fn write_rejects_huge_payload() {
         let mut sink = tokio::io::sink();
         let big = vec![0u8; MAX_PAYLOAD_LEN + 1];
-        let e = write_frame(&mut sink, &hdr(1, true), &big).await.unwrap_err();
+        let e = write_frame(&mut sink, &hdr(1, true), &big)
+            .await
+            .unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
     }
 
@@ -455,11 +497,17 @@ mod tests {
         assert!(o.request_keyframe);
         assert_eq!(f.stats().keyframe_requests, 2);
         // a late straggler (frame 2) must not break anything
-        assert_eq!(f.on_frame(&hdr(2, false), 301, None).verdict, Verdict::Drop(DropReason::Late));
+        assert_eq!(
+            f.on_frame(&hdr(2, false), 301, None).verdict,
+            Verdict::Drop(DropReason::Late)
+        );
         // keyframe heals
         let o = f.on_frame(&hdr(7, true), 310, None);
         assert_eq!(o.verdict, Verdict::Accept);
-        assert_eq!(f.on_frame(&hdr(8, false), 318, None).verdict, Verdict::Accept);
+        assert_eq!(
+            f.on_frame(&hdr(8, false), 318, None).verdict,
+            Verdict::Accept
+        );
     }
 
     #[test]
@@ -476,7 +524,10 @@ mod tests {
     fn stale_frames_count_as_loss() {
         let mut f = LateFrameFilter::new().with_max_age_us(50_000);
         f.on_frame(&hdr(0, true), 0, Some(1_000));
-        assert_eq!(f.on_frame(&hdr(1, false), 8, Some(10_000)).verdict, Verdict::Accept);
+        assert_eq!(
+            f.on_frame(&hdr(1, false), 8, Some(10_000)).verdict,
+            Verdict::Accept
+        );
         let o = f.on_frame(&hdr(2, false), 16, Some(120_000));
         assert_eq!(o.verdict, Verdict::Drop(DropReason::Stale));
         assert!(o.request_keyframe);
@@ -496,8 +547,14 @@ mod tests {
         assert!(f.is_waiting_for_keyframe());
         assert!(!f.on_decode_error(150), "throttled");
         assert!(f.poll_retry(400));
-        assert_eq!(f.on_frame(&hdr(1, false), 410, None).verdict, Verdict::Drop(DropReason::WaitingForKeyframe));
-        assert_eq!(f.on_frame(&hdr(2, true), 420, None).verdict, Verdict::Accept);
+        assert_eq!(
+            f.on_frame(&hdr(1, false), 410, None).verdict,
+            Verdict::Drop(DropReason::WaitingForKeyframe)
+        );
+        assert_eq!(
+            f.on_frame(&hdr(2, true), 420, None).verdict,
+            Verdict::Accept
+        );
         assert!(!f.poll_retry(1_000));
     }
 
@@ -522,10 +579,22 @@ mod tests {
     fn frame_id_wraparound() {
         let mut f = LateFrameFilter::new();
         f.on_frame(&hdr(u32::MAX - 1, true), 0, None);
-        assert_eq!(f.on_frame(&hdr(u32::MAX, false), 8, None).verdict, Verdict::Accept);
-        assert_eq!(f.on_frame(&hdr(0, false), 16, None).verdict, Verdict::Accept);
-        assert_eq!(f.on_frame(&hdr(1, false), 24, None).verdict, Verdict::Accept);
+        assert_eq!(
+            f.on_frame(&hdr(u32::MAX, false), 8, None).verdict,
+            Verdict::Accept
+        );
+        assert_eq!(
+            f.on_frame(&hdr(0, false), 16, None).verdict,
+            Verdict::Accept
+        );
+        assert_eq!(
+            f.on_frame(&hdr(1, false), 24, None).verdict,
+            Verdict::Accept
+        );
         assert_eq!(f.stats().lost, 0);
-        assert_eq!(f.on_frame(&hdr(u32::MAX, false), 30, None).verdict, Verdict::Drop(DropReason::Late));
+        assert_eq!(
+            f.on_frame(&hdr(u32::MAX, false), 30, None).verdict,
+            Verdict::Drop(DropReason::Late)
+        );
     }
 }

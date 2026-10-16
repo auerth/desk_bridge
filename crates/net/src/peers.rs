@@ -27,7 +27,13 @@ impl Peer {
 
     #[must_use]
     pub fn new(id: Uuid, name: String, fp: &Fingerprint) -> Self {
-        Self { id, name, fingerprint: hex(fp), last_ip: None, last_port: None }
+        Self {
+            id,
+            name,
+            fingerprint: hex(fp),
+            last_ip: None,
+            last_port: None,
+        }
     }
 }
 
@@ -48,22 +54,34 @@ impl PeerStore {
     /// In-memory store (tests).
     #[must_use]
     pub fn in_memory() -> Self {
-        Self { inner: Arc::default(), path: None }
+        Self {
+            inner: Arc::default(),
+            path: None,
+        }
     }
 
     pub fn load(path: PathBuf) -> Result<Self> {
         let peers = if path.exists() {
             let text = std::fs::read_to_string(&path)?;
-            toml::from_str::<File>(&text).map_err(|e| NetError::Config(e.to_string()))?.peer
+            toml::from_str::<File>(&text)
+                .map_err(|e| NetError::Config(e.to_string()))?
+                .peer
         } else {
             Vec::new()
         };
-        Ok(Self { inner: Arc::new(RwLock::new(peers)), path: Some(path) })
+        Ok(Self {
+            inner: Arc::new(RwLock::new(peers)),
+            path: Some(path),
+        })
     }
 
     fn persist(&self) -> Result<()> {
-        let Some(path) = &self.path else { return Ok(()) };
-        let file = File { peer: self.inner.read().clone() };
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
+        let file = File {
+            peer: self.inner.read().clone(),
+        };
         let text = toml::to_string_pretty(&file).map_err(|e| NetError::Config(e.to_string()))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -82,7 +100,11 @@ impl PeerStore {
     #[must_use]
     pub fn by_fingerprint(&self, fp: &Fingerprint) -> Option<Peer> {
         let h = hex(fp);
-        self.inner.read().iter().find(|p| p.fingerprint == h).cloned()
+        self.inner
+            .read()
+            .iter()
+            .find(|p| p.fingerprint == h)
+            .cloned()
     }
 
     #[must_use]
@@ -150,7 +172,9 @@ mod tests {
         let id = Uuid::now_v7();
         let fp = [7u8; 32];
         store.add(Peer::new(id, "Laptop".into(), &fp)).unwrap();
-        store.update_address(id, "192.168.1.5".into(), 47820).unwrap();
+        store
+            .update_address(id, "192.168.1.5".into(), 47820)
+            .unwrap();
         let again = PeerStore::load(path).unwrap();
         let p = again.by_fingerprint(&fp).unwrap();
         assert_eq!(p.name, "Laptop");

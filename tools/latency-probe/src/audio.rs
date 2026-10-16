@@ -1,6 +1,8 @@
 //! Audio click test helpers.
 
-use deskbridge_platform::audio::{AudioFrame, AudioCapture, AudioPlayback, CaptureSource, PullSource};
+use deskbridge_platform::audio::{
+    AudioCapture, AudioFrame, AudioPlayback, CaptureSource, PullSource,
+};
 use deskbridge_platform_windows::audio::{WasapiCapture, WasapiPlayback};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,7 +10,10 @@ use std::time::Duration;
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
 fn arg(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 /// QPC time in microseconds (the same clock the WASAPI capture timestamps use).
@@ -46,9 +51,13 @@ impl PullSource for ClickSource {
                 if n == 0 && self.remaining.load(Ordering::Relaxed) > 0 {
                     self.remaining.fetch_sub(1, Ordering::Relaxed);
                     self.burst_left.store(144, Ordering::Relaxed);
-                    self.next_in_frames.store(self.interval_frames, Ordering::Relaxed);
+                    self.next_in_frames
+                        .store(self.interval_frames, Ordering::Relaxed);
                     // timestamp of the first burst sample as handed to the audio engine
-                    self.log.lock().expect("log").push(qpc_us() + (i as u64) * 1_000_000 / 48_000);
+                    self.log
+                        .lock()
+                        .expect("log")
+                        .push(qpc_us() + (i as u64) * 1_000_000 / 48_000);
                 } else if n > 0 {
                     self.next_in_frames.store(n - 1, Ordering::Relaxed);
                 }
@@ -60,8 +69,12 @@ impl PullSource for ClickSource {
 }
 
 pub async fn emit(args: &[String]) -> i32 {
-    let count: u64 = arg(args, "--count").and_then(|s| s.parse().ok()).unwrap_or(10);
-    let interval_ms: u64 = arg(args, "--interval-ms").and_then(|s| s.parse().ok()).unwrap_or(1000);
+    let count: u64 = arg(args, "--count")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    let interval_ms: u64 = arg(args, "--interval-ms")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1000);
     let src = Arc::new(ClickSource {
         next_in_frames: AtomicU64::new(0),
         interval_frames: interval_ms * 48,
@@ -85,7 +98,9 @@ pub async fn emit(args: &[String]) -> i32 {
 }
 
 pub async fn detect(args: &[String]) -> i32 {
-    let secs: u64 = arg(args, "--seconds").and_then(|s| s.parse().ok()).unwrap_or(12);
+    let secs: u64 = arg(args, "--seconds")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(12);
     let source = if args.iter().any(|a| a == "--loopback") {
         CaptureSource::Loopback(arg(args, "--device"))
     } else {
@@ -121,9 +136,15 @@ pub fn compare(args: &[String]) -> i32 {
         eprintln!("usage: audio-compare EMIT.txt DETECT.txt [--offset-us N]");
         return 2;
     };
-    let offset: i64 = arg(args, "--offset-us").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let offset: i64 = arg(args, "--offset-us")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let read = |p: &str| -> Vec<i64> {
-        std::fs::read_to_string(p).unwrap_or_default().lines().filter_map(|l| l.trim().parse().ok()).collect()
+        std::fs::read_to_string(p)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .collect()
     };
     let (em, de) = (read(e), read(d));
     let mut delays = Vec::new();

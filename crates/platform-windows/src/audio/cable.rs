@@ -75,7 +75,9 @@ impl CableVirtualAudio {
     }
 
     fn active_processes() -> Vec<String> {
-        let Some(id) = Self::find(DeviceKind::Capture, CAPTURE_NAME) else { return vec![] };
+        let Some(id) = Self::find(DeviceKind::Capture, CAPTURE_NAME) else {
+            return vec![];
+        };
         mic_session_enumeration(Some(&id))
             .map(|v| v.into_iter().map(|s| s.process_name).collect())
             .unwrap_or_default()
@@ -84,18 +86,26 @@ impl CableVirtualAudio {
 
 impl VirtualAudio for CableVirtualAudio {
     fn available(&self) -> bool {
-        Self::find(DeviceKind::Render, RENDER_NAME).is_some() && Self::find(DeviceKind::Capture, CAPTURE_NAME).is_some()
+        Self::find(DeviceKind::Render, RENDER_NAME).is_some()
+            && Self::find(DeviceKind::Capture, CAPTURE_NAME).is_some()
     }
 
-    fn start_speaker_capture(&self, _sink: UnboundedSender<AudioFrame>) -> Result<Box<dyn StreamHandle>> {
-        Err(PlatformError::Unsupported("a cable has no separate virtual speaker for the laptop"))
+    fn start_speaker_capture(
+        &self,
+        _sink: UnboundedSender<AudioFrame>,
+    ) -> Result<Box<dyn StreamHandle>> {
+        Err(PlatformError::Unsupported(
+            "a cable has no separate virtual speaker for the laptop",
+        ))
     }
 
     fn write_mic(&self, frames: &[f32]) {
         {
             let mut p = self.inner.playback.lock();
             if p.is_none() {
-                let Some(id) = Self::find(DeviceKind::Render, RENDER_NAME) else { return };
+                let Some(id) = Self::find(DeviceKind::Render, RENDER_NAME) else {
+                    return;
+                };
                 match WasapiPlayback::new().start_concrete(Some(&id), self.inner.ring.clone()) {
                     Ok(h) => *p = Some(Box::new(h)),
                     Err(e) => {
@@ -133,7 +143,10 @@ impl VirtualAudio for CableVirtualAudio {
                     let mut now = CableVirtualAudio::active_processes();
                     now.sort();
                     if last.as_ref() != Some(&now) {
-                        let usage = MicUsage { in_use: !now.is_empty(), process: now.first().cloned() };
+                        let usage = MicUsage {
+                            in_use: !now.is_empty(),
+                            process: now.first().cloned(),
+                        };
                         let mut w = inner.watchers.lock();
                         w.retain(|t| t.send(usage.clone()).is_ok());
                         if w.is_empty() {
@@ -169,7 +182,11 @@ mod tests {
         }
         let mut out = vec![1.0f32; MAX_RING_SAMPLES + 10];
         v.inner.ring.fill(&mut out);
-        assert!(out[..MAX_RING_SAMPLES].iter().all(|s| (*s - 0.5).abs() < f32::EPSILON));
+        assert!(
+            out[..MAX_RING_SAMPLES]
+                .iter()
+                .all(|s| (*s - 0.5).abs() < f32::EPSILON)
+        );
         assert!(out[MAX_RING_SAMPLES..].iter().all(|s| *s == 0.0));
     }
 

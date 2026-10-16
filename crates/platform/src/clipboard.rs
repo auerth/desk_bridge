@@ -60,7 +60,11 @@ pub trait ClipboardBackend: Send + Sync {
     /// Sets plain text immediately and marks it as ours (no echo event).
     fn set_text(&self, text: &str) -> Result<()>;
     /// Registers formats for delayed rendering (marked as ours).
-    fn offer(&self, formats: Vec<ClipFormatInfo>, provider: Arc<dyn ClipboardProvider>) -> Result<()>;
+    fn offer(
+        &self,
+        formats: Vec<ClipFormatInfo>,
+        provider: Arc<dyn ClipboardProvider>,
+    ) -> Result<()>;
     /// Offers a list of files as virtual files (or a staged `CF_HDROP` fallback).
     fn offer_files(
         &self,

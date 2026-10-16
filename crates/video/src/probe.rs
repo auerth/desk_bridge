@@ -6,8 +6,7 @@ use deskbridge_platform_windows::video::{adapter_by_index, create_device};
 use deskbridge_proto::pb::VideoCaps;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_DECODER_PROFILE_AV1_VLD_PROFILE0, D3D11_DECODER_PROFILE_H264_VLD_NOFGT,
-    D3D11_DECODER_PROFILE_HEVC_VLD_MAIN,
-    D3D11_VIDEO_DECODER_DESC, ID3D11VideoDevice,
+    D3D11_DECODER_PROFILE_HEVC_VLD_MAIN, D3D11_VIDEO_DECODER_DESC, ID3D11VideoDevice,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
 use windows::core::{GUID, Interface};
@@ -17,7 +16,13 @@ use crate::negotiate::codec_to_pb;
 
 const CODECS: [VideoCodec; 3] = [VideoCodec::Hevc, VideoCodec::Av1, VideoCodec::H264];
 /// Size ladder for the maximum picture size probes (width, height).
-const SIZES: [(u32, u32); 5] = [(8192, 4320), (7680, 4320), (5120, 2880), (4096, 2304), (3840, 2160)];
+const SIZES: [(u32, u32); 5] = [
+    (8192, 4320),
+    (7680, 4320),
+    (5120, 2880),
+    (4096, 2304),
+    (3840, 2160),
+];
 
 /// Result of probing one adapter's encoders.
 #[derive(Debug, Clone, Default)]
@@ -30,7 +35,14 @@ pub struct AdapterEncoders {
 }
 
 fn enc_cfg(codec: VideoCodec, w: u32, h: u32) -> EncoderConfig {
-    EncoderConfig { codec, width: w, height: h, fps: 60, bitrate_kbps: 20_000, yuv444: false }
+    EncoderConfig {
+        codec,
+        width: w,
+        height: h,
+        fps: 60,
+        bitrate_kbps: 20_000,
+        yuv444: false,
+    }
 }
 
 /// Probes every hardware adapter and returns the per-adapter detail.
@@ -39,13 +51,19 @@ pub fn probe_encoders_detailed() -> Vec<AdapterEncoders> {
     crate::ff::init();
     let mut out = Vec::new();
     for index in 0..8u32 {
-        let Ok(adapter) = adapter_by_index(index) else { break };
+        let Ok(adapter) = adapter_by_index(index) else {
+            break;
+        };
         // SAFETY: plain COM call.
-        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else { continue };
+        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else {
+            continue;
+        };
         if desc.Flags & 2 != 0 {
             continue; // software adapter
         }
-        let Ok(dev) = create_device(Some(&adapter)) else { continue };
+        let Ok(dev) = create_device(Some(&adapter)) else {
+            continue;
+        };
         let mut entry = AdapterEncoders {
             adapter_index: index,
             adapter_name: dev.adapter_name.clone(),
@@ -66,7 +84,12 @@ pub fn probe_encoders_detailed() -> Vec<AdapterEncoders> {
                 .iter()
                 .copied()
                 .find(|&(w, h)| {
-                    FfmpegEncoder::with_options(enc_cfg(codec, w, h), Some(&dev.device), EncoderOptions::default()).is_ok()
+                    FfmpegEncoder::with_options(
+                        enc_cfg(codec, w, h),
+                        Some(&dev.device),
+                        EncoderOptions::default(),
+                    )
+                    .is_ok()
                 })
                 .unwrap_or((1280, 720));
             if max.0 * max.1 > entry.max_size.0 * entry.max_size.1 {
@@ -86,7 +109,10 @@ pub fn probe_encoders_detailed() -> Vec<AdapterEncoders> {
 pub fn probe_encoders() -> VideoCaps {
     let detail = probe_encoders_detailed();
     // Use the adapter that supports the most codecs (the dGPU on an Optimus laptop).
-    let Some(best) = detail.iter().max_by_key(|a| (a.encoders.len(), a.max_size.0 * a.max_size.1)) else {
+    let Some(best) = detail
+        .iter()
+        .max_by_key(|a| (a.encoders.len(), a.max_size.0 * a.max_size.1))
+    else {
         return VideoCaps::default();
     };
     let mut caps = VideoCaps::default();
@@ -134,19 +160,27 @@ const HEVC_MAIN10_444: GUID = GUID::from_u128(0x9798634d_fe9d_48e5_b4da_dbec45b3
 pub fn probe_decoders_detailed(adapter_hint: Option<&str>) -> Vec<AdapterDecoders> {
     let mut out = Vec::new();
     for index in 0..8u32 {
-        let Ok(adapter) = adapter_by_index(index) else { break };
+        let Ok(adapter) = adapter_by_index(index) else {
+            break;
+        };
         // SAFETY: plain COM call.
-        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else { continue };
+        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else {
+            continue;
+        };
         if desc.Flags & 2 != 0 {
             continue;
         }
-        let Ok(dev) = create_device(Some(&adapter)) else { continue };
+        let Ok(dev) = create_device(Some(&adapter)) else {
+            continue;
+        };
         if let Some(h) = adapter_hint
             && !dev.adapter_name.to_lowercase().contains(&h.to_lowercase())
         {
             continue;
         }
-        let Ok(vdev) = dev.device.cast::<ID3D11VideoDevice>() else { continue };
+        let Ok(vdev) = dev.device.cast::<ID3D11VideoDevice>() else {
+            continue;
+        };
         let mut entry = AdapterDecoders {
             adapter_index: index,
             adapter_name: dev.adapter_name.clone(),
@@ -159,14 +193,19 @@ pub fn probe_decoders_detailed(adapter_hint: Option<&str>) -> Vec<AdapterDecoder
                     entry.all_profiles.push(g);
                 }
             }
-            entry.hevc_rext_444_profile =
-                entry.all_profiles.iter().any(|g| *g == HEVC_MAIN_444 || *g == HEVC_MAIN10_444);
+            entry.hevc_rext_444_profile = entry
+                .all_profiles
+                .iter()
+                .any(|g| *g == HEVC_MAIN_444 || *g == HEVC_MAIN10_444);
             for codec in CODECS {
                 let guid = decoder_profile(codec);
                 if !entry.all_profiles.contains(&guid) {
                     continue;
                 }
-                if !vdev.CheckVideoDecoderFormat(&guid, DXGI_FORMAT_NV12).is_ok_and(|b| b.as_bool()) {
+                if !vdev
+                    .CheckVideoDecoderFormat(&guid, DXGI_FORMAT_NV12)
+                    .is_ok_and(|b| b.as_bool())
+                {
                     continue;
                 }
                 let max = SIZES.iter().copied().find(|&(w, h)| {

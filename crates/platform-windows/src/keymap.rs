@@ -307,10 +307,10 @@ pub fn classify_hook_key(vk: u32, scancode: u32, extended: bool) -> HookKey {
     if vk == VK_PAUSE || vk == VK_NUMLOCK {
         return HookKey::Hid(vk_to_hid(vk).unwrap_or(hid::PAUSE));
     }
-    if scancode <= 0xFF {
-        if let Some(h) = scancode_to_hid(scancode as u16, extended) {
-            return HookKey::Hid(h);
-        }
+    if scancode <= 0xFF
+        && let Some(h) = scancode_to_hid(scancode as u16, extended)
+    {
+        return HookKey::Hid(h);
     }
     match vk_to_hid(vk) {
         Some(h) => HookKey::Hid(h),

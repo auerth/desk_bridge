@@ -6,7 +6,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::ClientOptions;
 
 fn arg(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn pipe_path(args: &[String]) -> String {
@@ -20,7 +23,8 @@ fn pipe_path(args: &[String]) -> String {
 async fn get_state(args: &[String]) -> anyhow::Result<AppState> {
     let client = ClientOptions::new().open(pipe_path(args))?;
     let (rd, mut wr) = tokio::io::split(client);
-    wr.write_all(b"{\"id\":1,\"req\":{\"type\":\"get_state\"}}\n").await?;
+    wr.write_all(b"{\"id\":1,\"req\":{\"type\":\"get_state\"}}\n")
+        .await?;
     let mut lines = BufReader::new(rd).lines();
     while let Some(line) = lines.next_line().await? {
         let v: serde_json::Value = serde_json::from_str(&line)?;
@@ -32,8 +36,12 @@ async fn get_state(args: &[String]) -> anyhow::Result<AppState> {
 }
 
 pub async fn input(args: &[String]) -> i32 {
-    let secs: u64 = arg(args, "--seconds").and_then(|s| s.parse().ok()).unwrap_or(20);
-    println!("Measuring for {secs} s – move the mouse and type so that the other device receives input…");
+    let secs: u64 = arg(args, "--seconds")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+    println!(
+        "Measuring for {secs} s – move the mouse and type so that the other device receives input…"
+    );
     for _ in 0..secs {
         match get_state(args).await {
             Ok(s) => {
@@ -77,5 +85,8 @@ pub async fn rtt(args: &[String]) -> i32 {
 }
 
 fn fmt_us(v: Option<u32>) -> String {
-    v.map_or_else(|| "-".to_string(), |u| format!("{:.2} ms", f64::from(u) / 1000.0))
+    v.map_or_else(
+        || "-".to_string(),
+        |u| format!("{:.2} ms", f64::from(u) / 1000.0),
+    )
 }

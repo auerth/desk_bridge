@@ -125,7 +125,10 @@ mod tests {
         let got: pb::InputEvent = read_msg(&mut b).await.unwrap();
         assert_eq!(got, m);
         drop(a);
-        assert!(matches!(read_msg::<_, pb::InputEvent>(&mut b).await, Err(FrameError::Closed)));
+        assert!(matches!(
+            read_msg::<_, pb::InputEvent>(&mut b).await,
+            Err(FrameError::Closed)
+        ));
     }
 
     #[test]

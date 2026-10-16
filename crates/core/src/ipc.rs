@@ -27,42 +27,80 @@ pub enum UiRequest {
     GetState,
     GetConfig,
     /// Replaces the config (validated and clamped by the agent); returns the stored config.
-    SetConfig { config: Box<Config> },
+    SetConfig {
+        config: Box<Config>,
+    },
     /// Complete onboarding with chosen name/roles.
-    CompleteOnboarding { name: String, is_pc: bool },
+    CompleteOnboarding {
+        name: String,
+        is_pc: bool,
+    },
     /// Show a pairing code on this device (this device is the pairing server).
     StartPairing,
     CancelPairing,
     /// Enter a code to pair with a device found via discovery or a manual address.
-    PairWith { device_id: Option<String>, address: Option<String>, code: String },
-    Unpair { device_id: String },
-    RenamePeer { device_id: String, name: String },
+    PairWith {
+        device_id: Option<String>,
+        address: Option<String>,
+        code: String,
+    },
+    Unpair {
+        device_id: String,
+    },
+    RenamePeer {
+        device_id: String,
+        name: String,
+    },
     /// Connect to a manually entered host/IP (does not pair).
-    AddManualHost { host: String },
+    AddManualHost {
+        host: String,
+    },
     /// Toggle one of the dashboard chips.
-    SetFeature { feature: Feature, enabled: bool },
-    SetLayout { placements: Vec<PlacementDto> },
+    SetFeature {
+        feature: Feature,
+        enabled: bool,
+    },
+    SetLayout {
+        placements: Vec<PlacementDto>,
+    },
     /// Focus mode: "off" | "full" | "split" | "window" | "cycle".
-    SetFocus { mode: String },
+    SetFocus {
+        mode: String,
+    },
     /// Switch the cursor between devices (same as the jump hotkey).
     JumpToOtherDevice,
-    SetCursorLock { locked: bool },
+    SetCursorLock {
+        locked: bool,
+    },
     ListAudioDevices,
     /// Play a test tone "from the laptop" on the headset.
     PlayTestTone,
-    SendFiles { paths: Vec<String> },
+    SendFiles {
+        paths: Vec<String>,
+    },
     OpenIncomingFolder,
-    ShowTransferInFolder { transfer_id: u64 },
-    ExportDiagnostics { target: Option<String> },
+    ShowTransferInFolder {
+        transfer_id: u64,
+    },
+    ExportDiagnostics {
+        target: Option<String>,
+    },
     CheckForUpdate,
     /// Offer the installer at `path` to the partner device (it asks its user first).
-    OfferPartnerUpdate { path: String, version: String },
+    OfferPartnerUpdate {
+        path: String,
+        version: String,
+    },
     /// Answer a partner's update offer.
-    AnswerPartnerUpdate { accept: bool },
+    AnswerPartnerUpdate {
+        accept: bool,
+    },
     /// Mark the public network profile hint as handled ("make private").
     MakeNetworkPrivate,
     /// Disconnect everything / resume.
-    SetPaused { paused: bool },
+    SetPaused {
+        paused: bool,
+    },
     RestartAgent,
     ShutdownAgent,
     Ping,
@@ -112,17 +150,42 @@ pub enum Push {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UiEvent {
     /// Short pill on screen (also drawn by the agent as native OSD).
-    Osd { icon: String, text: String },
-    PairingResult { ok: bool, message: String, peer_name: Option<String> },
-    Notification { level: String, text: String },
+    Osd {
+        icon: String,
+        text: String,
+    },
+    PairingResult {
+        ok: bool,
+        message: String,
+        peer_name: Option<String>,
+    },
+    Notification {
+        level: String,
+        text: String,
+    },
     /// Audio device list answer for `ListAudioDevices`.
-    AudioDevices { render: Vec<AudioDeviceDto>, capture: Vec<AudioDeviceDto> },
-    UpdateAvailable { version: String, notes: String },
+    AudioDevices {
+        render: Vec<AudioDeviceDto>,
+        capture: Vec<AudioDeviceDto>,
+    },
+    UpdateAvailable {
+        version: String,
+        notes: String,
+    },
     /// The partner offers an update package (ask the user, then `AnswerPartnerUpdate`).
-    PartnerUpdateOffered { version: String, size: u64, from: String },
+    PartnerUpdateOffered {
+        version: String,
+        size: u64,
+        from: String,
+    },
     /// A partner update arrived, verified (SHA-256). The UI offers to start it.
-    PartnerUpdateReady { path: String, version: String },
-    DiagnosticsExported { path: String },
+    PartnerUpdateReady {
+        path: String,
+        version: String,
+    },
+    DiagnosticsExported {
+        path: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -380,9 +443,11 @@ mod tests {
 
     #[test]
     fn request_json_shape() {
-        let r: RequestEnvelope = serde_json::from_str(r#"{"id":3,"req":{"type":"set_focus","mode":"split"}}"#).unwrap();
+        let r: RequestEnvelope =
+            serde_json::from_str(r#"{"id":3,"req":{"type":"set_focus","mode":"split"}}"#).unwrap();
         assert!(matches!(r.req, UiRequest::SetFocus { ref mode } if mode == "split"));
-        let r: RequestEnvelope = serde_json::from_str(r#"{"id":1,"req":{"type":"get_state"}}"#).unwrap();
+        let r: RequestEnvelope =
+            serde_json::from_str(r#"{"id":1,"req":{"type":"get_state"}}"#).unwrap();
         assert!(matches!(r.req, UiRequest::GetState));
     }
 
@@ -396,7 +461,14 @@ mod tests {
 
     #[test]
     fn push_serialises() {
-        let m = ServerMessage::Push { push: Push::Event { event: UiEvent::Osd { icon: "laptop".into(), text: "Laptop".into() } } };
+        let m = ServerMessage::Push {
+            push: Push::Event {
+                event: UiEvent::Osd {
+                    icon: "laptop".into(),
+                    text: "Laptop".into(),
+                },
+            },
+        };
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(v["push"]["type"], "event");
         assert_eq!(v["push"]["event"]["kind"], "osd");

@@ -20,7 +20,10 @@ fn staging(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT) -> Result<ID3D1
         MipLevels: 1,
         ArraySize: 1,
         Format: fmt,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         Usage: D3D11_USAGE_STAGING,
         BindFlags: 0,
         CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,

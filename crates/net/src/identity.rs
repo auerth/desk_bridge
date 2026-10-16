@@ -44,10 +44,13 @@ pub fn fingerprint_of(cert_der: &[u8]) -> Fingerprint {
 impl Identity {
     /// Generates a fresh identity.
     pub fn generate() -> Result<Self> {
-        let key = KeyPair::generate_for(&PKCS_ED25519).map_err(|e| NetError::Identity(e.to_string()))?;
+        let key =
+            KeyPair::generate_for(&PKCS_ED25519).map_err(|e| NetError::Identity(e.to_string()))?;
         let params = CertificateParams::new(vec!["deskbridge".to_string()])
             .map_err(|e| NetError::Identity(e.to_string()))?;
-        let cert = params.self_signed(&key).map_err(|e| NetError::Identity(e.to_string()))?;
+        let cert = params
+            .self_signed(&key)
+            .map_err(|e| NetError::Identity(e.to_string()))?;
         let cert_der = cert.der().to_vec();
         Ok(Self {
             device_id: Uuid::now_v7(),
@@ -64,7 +67,8 @@ impl Identity {
             let plain = protector.unprotect(&blob)?;
             let stored: Stored = serde_json::from_slice(&plain)
                 .map_err(|e| NetError::Identity(format!("corrupt identity: {e}")))?;
-            let cert_der = unhex(&stored.cert_hex).ok_or_else(|| NetError::Identity("bad cert".into()))?;
+            let cert_der =
+                unhex(&stored.cert_hex).ok_or_else(|| NetError::Identity("bad cert".into()))?;
             let key = unhex(&stored.key_hex).ok_or_else(|| NetError::Identity("bad key".into()))?;
             let device_id = Uuid::parse_str(&stored.device_id)
                 .map_err(|e| NetError::Identity(format!("bad device id: {e}")))?;

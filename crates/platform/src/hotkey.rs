@@ -37,7 +37,11 @@ impl Hotkey {
                 }
             }
         }
-        Some(Self { id, mods, key: key? })
+        Some(Self {
+            id,
+            mods,
+            key: key?,
+        })
     }
 
     #[must_use]
@@ -82,7 +86,10 @@ pub struct HotkeyMatcher {
 impl HotkeyMatcher {
     #[must_use]
     pub fn new(hotkeys: Vec<Hotkey>) -> Self {
-        Self { hotkeys, ..Self::default() }
+        Self {
+            hotkeys,
+            ..Self::default()
+        }
     }
 
     pub fn set_hotkeys(&mut self, hotkeys: Vec<Hotkey>) {
@@ -108,7 +115,11 @@ impl HotkeyMatcher {
             return HotkeyOutcome::Pass;
         }
         if down {
-            if let Some(h) = self.hotkeys.iter().find(|h| h.key == key && h.mods == self.mods) {
+            if let Some(h) = self
+                .hotkeys
+                .iter()
+                .find(|h| h.key == key && h.mods == self.mods)
+            {
                 let id = h.id;
                 if self.swallowed.contains(&key) {
                     return HotkeyOutcome::Swallow; // auto-repeat

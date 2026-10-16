@@ -18,7 +18,9 @@ fn ok() -> Reply {
 impl Engine {
     pub(crate) fn handle_ui(&mut self, req: UiRequest) -> Reply {
         match req {
-            UiRequest::GetState => serde_json::to_value(self.build_state()).map_err(|e| e.to_string()),
+            UiRequest::GetState => {
+                serde_json::to_value(self.build_state()).map_err(|e| e.to_string())
+            }
             UiRequest::GetConfig => serde_json::to_value(&self.cfg).map_err(|e| e.to_string()),
             UiRequest::SetConfig { config } => self.set_config(*config),
             UiRequest::CompleteOnboarding { name, is_pc } => {
@@ -38,13 +40,19 @@ impl Engine {
                 self.cancel_pairing();
                 ok()
             }
-            UiRequest::PairWith { device_id, address, code } => self.pair_with(device_id, address, code),
+            UiRequest::PairWith {
+                device_id,
+                address,
+                code,
+            } => self.pair_with(device_id, address, code),
             UiRequest::Unpair { device_id } => {
                 let id = Uuid::parse_str(&device_id).map_err(|e| e.to_string())?;
-                if let Some(s) = &self.session {
-                    if s.link.peer.id == id {
-                        s.link.send_control(pb::control::Msg::Goodbye(pb::Goodbye { reason: "unpaired".into() }));
-                    }
+                if let Some(s) = &self.session
+                    && s.link.peer.id == id
+                {
+                    s.link.send_control(pb::control::Msg::Goodbye(pb::Goodbye {
+                        reason: "unpaired".into(),
+                    }));
                 }
                 let connected_to = self.session.as_ref().map(|s| s.link.peer.id);
                 self.peers.remove(id).map_err(|e| e.to_string())?;
@@ -108,8 +116,10 @@ impl Engine {
 
     fn set_config(&mut self, mut new: crate::config::Config) -> Reply {
         new.sanitize();
-        let name_changed = new.device.name != self.cfg.device.name || new.device.input_source != self.cfg.device.input_source
-            || new.device.headset_sink != self.cfg.device.headset_sink || new.device.stream_source != self.cfg.device.stream_source;
+        let name_changed = new.device.name != self.cfg.device.name
+            || new.device.input_source != self.cfg.device.input_source
+            || new.device.headset_sink != self.cfg.device.headset_sink
+            || new.device.stream_source != self.cfg.device.stream_source;
         let hotkeys_changed = new.hotkeys != self.cfg.hotkeys;
         self.cfg = new;
         if self.cfg.device.name.trim().is_empty() {

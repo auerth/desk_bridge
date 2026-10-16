@@ -20,14 +20,16 @@ fn virtual_audio() -> Arc<dyn deskbridge_platform::audio::VirtualAudio> {
     if cable.available() {
         Arc::new(cable)
     } else {
-        Arc::new(VirtualAudioStub::default())
+        Arc::new(VirtualAudioStub)
     }
 }
 
 pub fn build() -> Platform {
     Platform {
         capture: Arc::new(WinInputCapture::new()),
-        injector: Arc::new(SecureDesktopInjector::new(Arc::new(WinInputInjector::new()))),
+        injector: Arc::new(SecureDesktopInjector::new(
+            Arc::new(WinInputInjector::new()),
+        )),
         screens: Arc::new(WinScreenProvider::new()),
         clipboard: Arc::new(WinClipboard::new()),
         power: Arc::new(WinPowerManager::new()),

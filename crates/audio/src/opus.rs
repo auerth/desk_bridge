@@ -110,7 +110,7 @@ impl OpusEncoder {
     /// Encodes one frame of interleaved samples (2.5/5/10/20/... ms, i.e. a multiple of
     /// 120 frames) and *replaces* the content of `out` with the packet.
     pub fn encode(&mut self, pcm: &[f32], out: &mut Vec<u8>) -> Result<()> {
-        if pcm.is_empty() || pcm.len() % self.channels != 0 {
+        if pcm.is_empty() || !pcm.len().is_multiple_of(self.channels) {
             return Err(Error::Invalid(
                 "pcm length must be a multiple of the channel count",
             ));

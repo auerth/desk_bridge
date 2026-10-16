@@ -40,10 +40,10 @@ fn main() -> std::process::ExitCode {
         Ok(code) => std::process::ExitCode::from(u8::try_from(code).unwrap_or(1)),
         Err(e) => {
             tracing::error!("{e:#}");
-            if !cli.quiet {
-                if let Some(f) = log_file {
-                    eprintln!("(details: {})", f.display());
-                }
+            if !cli.quiet
+                && let Some(f) = log_file
+            {
+                eprintln!("(details: {})", f.display());
             }
             std::process::ExitCode::from(1)
         }

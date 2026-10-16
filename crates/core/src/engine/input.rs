@@ -54,7 +54,10 @@ impl Engine {
         self.platform.capture.set_hotkeys(hk);
         if let Err(e) = self.platform.capture.start(tx) {
             tracing::error!("input capture failed to start: {e}");
-            self.warn_once("capture_failed", &format!("Eingabe-Erfassung konnte nicht gestartet werden: {e}"));
+            self.warn_once(
+                "capture_failed",
+                &format!("Eingabe-Erfassung konnte nicht gestartet werden: {e}"),
+            );
             return;
         }
         let m = self.msg_tx.clone();
@@ -99,7 +102,11 @@ impl Engine {
                 Action::SetGrab(mode) => self.platform.capture.set_grab(mode),
                 Action::MoveCursor(p) => self.platform.capture.set_cursor_pos(p.x, p.y),
                 Action::Osd(loc) => {
-                    let peer_name = self.session.as_ref().map(|s| s.link.peer.name.clone()).unwrap_or_default();
+                    let peer_name = self
+                        .session
+                        .as_ref()
+                        .map(|s| s.link.peer.name.clone())
+                        .unwrap_or_default();
                     let (icon, text) = match loc {
                         Location::Remote => ("laptop".to_string(), peer_name),
                         Location::Local => ("monitor".to_string(), self.cfg.device.name.clone()),
@@ -117,12 +124,22 @@ impl Engine {
         match h {
             HotkeyAction::LockCursor => {
                 self.cursor_locked = self.router.is_locked();
-                let text = if self.cursor_locked { "Cursor gesperrt" } else { "Cursor frei" };
-                self.emit(UiEvent::Osd { icon: "lock".into(), text: text.into() });
+                let text = if self.cursor_locked {
+                    "Cursor gesperrt"
+                } else {
+                    "Cursor frei"
+                };
+                self.emit(UiEvent::Osd {
+                    icon: "lock".into(),
+                    text: text.into(),
+                });
             }
             HotkeyAction::Emergency => {
                 self.cursor_locked = false;
-                self.emit(UiEvent::Osd { icon: "alert".into(), text: "Notfall: alles lokal".into() });
+                self.emit(UiEvent::Osd {
+                    icon: "alert".into(),
+                    text: "Notfall: alles lokal".into(),
+                });
                 self.on_emergency();
             }
             HotkeyAction::JumpOther => {}
@@ -134,7 +151,8 @@ impl Engine {
     pub(crate) fn tick_input(&mut self) {
         if self.cfg.device.input_source && self.session.is_some() && !self.router.is_remote() {
             let (caps, num, scroll) = self.platform.injector.toggles();
-            self.router.set_toggles(pb::ToggleState { caps, num, scroll });
+            self.router
+                .set_toggles(pb::ToggleState { caps, num, scroll });
         }
     }
 
@@ -160,7 +178,10 @@ impl Engine {
                     if now_active != was_active {
                         let name = self.cfg.device.name.clone();
                         if now_active {
-                            self.emit(UiEvent::Osd { icon: "laptop".into(), text: name });
+                            self.emit(UiEvent::Osd {
+                                icon: "laptop".into(),
+                                text: name,
+                            });
                         }
                         self.dirty = true;
                     }
@@ -172,11 +193,18 @@ impl Engine {
 
     /// One-way latency of input events, using the Ping/Pong clock offset (plan section 3).
     fn record_input_latency(&mut self, ev: &pb::InputEvent) {
-        if !matches!(ev.ev, Some(Ev::Key(_) | Ev::Rel(_) | Ev::Btn(_) | Ev::Abs(_) | Ev::Wheel(_))) {
+        if !matches!(
+            ev.ev,
+            Some(Ev::Key(_) | Ev::Rel(_) | Ev::Btn(_) | Ev::Abs(_) | Ev::Wheel(_))
+        ) {
             return;
         }
-        let Some(local) = self.clock.to_local(ev.ts_us) else { return };
-        let lat = crate::clock::now_us().saturating_sub(local).min(u64::from(u32::MAX)) as u32;
+        let Some(local) = self.clock.to_local(ev.ts_us) else {
+            return;
+        };
+        let lat = crate::clock::now_us()
+            .saturating_sub(local)
+            .min(u64::from(u32::MAX)) as u32;
         self.input_latency.push_back(lat);
         while self.input_latency.len() > 2000 {
             self.input_latency.pop_front();
@@ -222,10 +250,14 @@ impl Engine {
         };
         let own = self.own_id();
         let peer = s.link.peer.id;
-        let devices = [(own, self.local_screens.clone()), (peer, s.remote_screens.clone())];
+        let devices = [
+            (own, self.local_screens.clone()),
+            (peer, s.remote_screens.clone()),
+        ];
         let mut changed = false;
         let placements: Vec<pb::Placement> = if self.cfg.device.input_source {
-            let defaults = Layout::default_placements(&devices[0], &devices[1], self.default_side());
+            let defaults =
+                Layout::default_placements(&devices[0], &devices[1], self.default_side());
             // keep known placements, add missing ones
             for d in defaults {
                 let known = self
@@ -262,19 +294,25 @@ impl Engine {
         } else {
             self.peer_placements.clone()
         };
-        let revision = if self.cfg.device.input_source { self.cfg.layout.revision } else { self.peer_layout_revision };
+        let revision = if self.cfg.device.input_source {
+            self.cfg.layout.revision
+        } else {
+            self.peer_layout_revision
+        };
         self.layout = Layout::from_parts(&devices, &placements, revision);
         self.router.set_layout(self.layout.clone());
         if let Some(r) = self.receiver.as_mut() {
             r.set_layout(self.layout.clone());
         }
-        if (send || changed) && self.cfg.device.input_source {
-            if let Some(s) = &self.session {
-                s.link.send_control(pb::control::Msg::Layout(pb::LayoutUpdate {
+        if (send || changed)
+            && self.cfg.device.input_source
+            && let Some(s) = &self.session
+        {
+            s.link
+                .send_control(pb::control::Msg::Layout(pb::LayoutUpdate {
                     placements,
                     revision,
                 }));
-            }
         }
         self.dirty = true;
     }
@@ -294,7 +332,12 @@ impl Engine {
         }
         self.cfg.layout.placement = placements
             .into_iter()
-            .map(|p| PlacementConfig { device_id: p.device_id, screen_id: p.screen_id, x: p.x, y: p.y })
+            .map(|p| PlacementConfig {
+                device_id: p.device_id,
+                screen_id: p.screen_id,
+                x: p.x,
+                y: p.y,
+            })
             .collect();
         self.cfg.layout.revision += 1;
         self.persist_config();
@@ -303,7 +346,9 @@ impl Engine {
 
     /// Converts the remote hello screens (kept for tests).
     #[allow(dead_code)]
-    pub(crate) fn remote_screens_from_hello(h: &pb::Hello) -> Vec<deskbridge_platform::screen::ScreenInfo> {
+    pub(crate) fn remote_screens_from_hello(
+        h: &pb::Hello,
+    ) -> Vec<deskbridge_platform::screen::ScreenInfo> {
         h.screens.iter().map(screen_from_pb).collect()
     }
 }

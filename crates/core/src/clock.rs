@@ -40,7 +40,10 @@ impl ClockSync {
         let rtt = t2 - t0;
         let offset = t1 as i64 - (t0 as i64 + (rtt / 2) as i64);
         self.last_rtt_us = Some(rtt);
-        self.samples.push(Sample { rtt_us: rtt, offset_us: offset });
+        self.samples.push(Sample {
+            rtt_us: rtt,
+            offset_us: offset,
+        });
         if self.samples.len() > WINDOW {
             self.samples.remove(0);
         }
@@ -55,7 +58,10 @@ impl ClockSync {
     /// peer_clock - our_clock, from the lowest-RTT recent sample.
     #[must_use]
     pub fn offset_us(&self) -> Option<i64> {
-        self.samples.iter().min_by_key(|s| s.rtt_us).map(|s| s.offset_us)
+        self.samples
+            .iter()
+            .min_by_key(|s| s.rtt_us)
+            .map(|s| s.offset_us)
     }
 
     /// Converts a peer timestamp to our clock.

@@ -18,7 +18,11 @@ pub struct ZipWriter<W: Write> {
 
 impl<W: Write> ZipWriter<W> {
     pub fn new(w: W) -> Self {
-        Self { w, pos: 0, entries: Vec::new() }
+        Self {
+            w,
+            pos: 0,
+            entries: Vec::new(),
+        }
     }
 
     fn put(&mut self, data: &[u8]) -> io::Result<()> {
@@ -48,7 +52,12 @@ impl<W: Write> ZipWriter<W> {
         h.extend_from_slice(name_bytes);
         self.put(&h)?;
         self.put(data)?;
-        self.entries.push(Entry { name: name.to_string(), crc, size, offset });
+        self.entries.push(Entry {
+            name: name.to_string(),
+            crc,
+            size,
+            offset,
+        });
         Ok(())
     }
 

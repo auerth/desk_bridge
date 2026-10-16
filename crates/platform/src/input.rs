@@ -39,14 +39,29 @@ impl Button {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CaptureEvent {
     /// Keyboard key (HID usage). Already passed through the hotkey matcher.
-    Key { hid: u16, down: bool },
+    Key {
+        hid: u16,
+        down: bool,
+    },
     /// Absolute cursor position in physical virtual-desktop pixels (local mode only).
-    MouseMove { x: i32, y: i32 },
+    MouseMove {
+        x: i32,
+        y: i32,
+    },
     /// Raw relative motion (reported in both modes; the router decides what to use).
-    MouseRel { dx: i32, dy: i32 },
-    Button { button: Button, down: bool },
+    MouseRel {
+        dx: i32,
+        dy: i32,
+    },
+    Button {
+        button: Button,
+        down: bool,
+    },
     /// 120 = one notch.
-    Wheel { dx: i32, dy: i32 },
+    Wheel {
+        dx: i32,
+        dy: i32,
+    },
     /// A configured hotkey fired.
     Hotkey(u32),
 }

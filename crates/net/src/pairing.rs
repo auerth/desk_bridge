@@ -71,7 +71,11 @@ impl PairingWindow {
         Self {
             code,
             expires: Instant::now() + ttl,
-            state: Mutex::new(WindowState { failures: 0, locked_until: None, done: false }),
+            state: Mutex::new(WindowState {
+                failures: 0,
+                locked_until: None,
+                done: false,
+            }),
         }
     }
 
@@ -82,7 +86,9 @@ impl PairingWindow {
 
     #[must_use]
     pub fn seconds_left(&self) -> u64 {
-        self.expires.saturating_duration_since(Instant::now()).as_secs()
+        self.expires
+            .saturating_duration_since(Instant::now())
+            .as_secs()
     }
 
     fn check_open(&self) -> Result<()> {
@@ -119,11 +125,18 @@ impl PairingWindow {
 fn derive_key(spake_key: &[u8]) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(Some(b"deskbridge-pair-v1"), spake_key);
     let mut out = [0u8; 32];
-    hk.expand(b"confirm", &mut out).expect("32 bytes is a valid length");
+    hk.expand(b"confirm", &mut out)
+        .expect("32 bytes is a valid length");
     out
 }
 
-fn mac(key: &[u8; 32], role: &[u8], own: &Fingerprint, other: &Fingerprint, device_id: &str) -> Vec<u8> {
+fn mac(
+    key: &[u8; 32],
+    role: &[u8],
+    own: &Fingerprint,
+    other: &Fingerprint,
+    device_id: &str,
+) -> Vec<u8> {
     let mut m = HmacSha256::new_from_slice(key).expect("hmac accepts any key length");
     m.update(role);
     m.update(own);
@@ -176,10 +189,24 @@ pub async fn serve(
 
     let confirm: pb::PairConfirm = read_msg(&mut recv).await?;
     let ok = confirm.cert_fingerprint.as_slice() == their_fp
-        && verify_mac(&key, b"B", &their_fp, &own.fingerprint, &confirm.device_id, &confirm.mac);
+        && verify_mac(
+            &key,
+            b"B",
+            &their_fp,
+            &own.fingerprint,
+            &confirm.device_id,
+            &confirm.mac,
+        );
     if !ok {
         window.record_failure();
-        let _ = write_msg(&mut send, &pb::PairResult { ok: false, reason: "Falscher Code".into() }).await;
+        let _ = write_msg(
+            &mut send,
+            &pb::PairResult {
+                ok: false,
+                reason: "Falscher Code".into(),
+            },
+        )
+        .await;
         let _ = send.finish();
         return Err(NetError::Pairing("Falscher Code".into()));
     }
@@ -202,7 +229,11 @@ pub async fn serve(
     let _ = send.finish();
     let device_id = Uuid::parse_str(&confirm.device_id)
         .map_err(|_| NetError::Pairing("ungültige Geräte-ID".into()))?;
-    Ok(PairedDevice { device_id, name: confirm.name, fingerprint: their_fp })
+    Ok(PairedDevice {
+        device_id,
+        name: confirm.name,
+        fingerprint: their_fp,
+    })
 }
 
 /// Runs the pairing *client* (the device where the code is typed).
@@ -243,23 +274,54 @@ pub async fn connect(
     let confirm = match read_confirm_or_result(&mut recv).await? {
         Reply::Confirm(c) => c,
         Reply::Result(r) => {
-            return Err(NetError::Pairing(if r.reason.is_empty() { "abgelehnt".into() } else { r.reason }));
+            return Err(NetError::Pairing(if r.reason.is_empty() {
+                "abgelehnt".into()
+            } else {
+                r.reason
+            }));
         }
     };
     let ok = confirm.cert_fingerprint.as_slice() == their_fp
-        && verify_mac(&key, b"A", &their_fp, &own.fingerprint, &confirm.device_id, &confirm.mac);
+        && verify_mac(
+            &key,
+            b"A",
+            &their_fp,
+            &own.fingerprint,
+            &confirm.device_id,
+            &confirm.mac,
+        );
     if !ok {
-        let _ = write_msg(&mut send, &pb::PairResult { ok: false, reason: "MAC ungültig".into() }).await;
-        return Err(NetError::Pairing("Bestätigung des Partners ungültig".into()));
+        let _ = write_msg(
+            &mut send,
+            &pb::PairResult {
+                ok: false,
+                reason: "MAC ungültig".into(),
+            },
+        )
+        .await;
+        return Err(NetError::Pairing(
+            "Bestätigung des Partners ungültig".into(),
+        ));
     }
-    write_msg(&mut send, &pb::PairResult { ok: true, reason: String::new() }).await?;
+    write_msg(
+        &mut send,
+        &pb::PairResult {
+            ok: true,
+            reason: String::new(),
+        },
+    )
+    .await?;
     let _ = send.finish();
     // Wait until the server has received everything; closing the connection right away would
     // discard the final message.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), send.stopped()).await;
     let device_id = Uuid::parse_str(&confirm.device_id)
         .map_err(|_| NetError::Pairing("ungültige Geräte-ID".into()))?;
-    Ok(PairedDevice { device_id, name: confirm.name, fingerprint: their_fp })
+    Ok(PairedDevice {
+        device_id,
+        name: confirm.name,
+        fingerprint: their_fp,
+    })
 }
 
 enum Reply {
@@ -272,20 +334,25 @@ enum Reply {
 async fn read_confirm_or_result(recv: &mut quinn::RecvStream) -> Result<Reply> {
     use prost::Message;
     let mut len = [0u8; 4];
-    recv.read_exact(&mut len).await.map_err(|e| NetError::Pairing(format!("verbindung beendet: {e}")))?;
+    recv.read_exact(&mut len)
+        .await
+        .map_err(|e| NetError::Pairing(format!("verbindung beendet: {e}")))?;
     let n = u32::from_le_bytes(len) as usize;
     if n > 64 * 1024 {
         return Err(NetError::Protocol("pair reply too large".into()));
     }
     let mut payload = vec![0u8; n];
-    recv.read_exact(&mut payload).await.map_err(|e| NetError::Pairing(e.to_string()))?;
+    recv.read_exact(&mut payload)
+        .await
+        .map_err(|e| NetError::Pairing(e.to_string()))?;
     // A `PairResult` (varint field 1) fails to decode as `PairConfirm` (string field 1).
-    if let Ok(confirm) = pb::PairConfirm::decode(payload.as_slice()) {
-        if !confirm.mac.is_empty() {
-            return Ok(Reply::Confirm(confirm));
-        }
+    if let Ok(confirm) = pb::PairConfirm::decode(payload.as_slice())
+        && !confirm.mac.is_empty()
+    {
+        return Ok(Reply::Confirm(confirm));
     }
-    let result = pb::PairResult::decode(payload.as_slice()).map_err(|e| NetError::Protocol(e.to_string()))?;
+    let result = pb::PairResult::decode(payload.as_slice())
+        .map_err(|e| NetError::Protocol(e.to_string()))?;
     Ok(Reply::Result(result))
 }
 

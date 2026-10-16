@@ -211,10 +211,11 @@ impl WinDisplayManager {
     }
 
     fn reload_driver_if_running(&self, node: Option<&VddNode>) {
-        if self.tuning.use_pipe && node.is_some_and(VddNode::started) {
-            if let Err(e) = vddfile::send_pipe_command(CMD_RELOAD) {
-                tracing::warn!(error = %e, "RELOAD_DRIVER failed; modes apply at the next device start");
-            }
+        if self.tuning.use_pipe
+            && node.is_some_and(VddNode::started)
+            && let Err(e) = vddfile::send_pipe_command(CMD_RELOAD)
+        {
+            tracing::warn!(error = %e, "RELOAD_DRIVER failed; modes apply at the next device start");
         }
     }
 
@@ -435,10 +436,10 @@ impl WinDisplayManager {
         if let Err(e) = ccd::restore(before) {
             tracing::error!(error = %e, "rollback: topology restore failed");
         }
-        if self.node().ok().flatten().is_some_and(|n| n.started()) {
-            if let Err(e) = self.device_op(false) {
-                tracing::error!(error = %e, "rollback: disabling the device failed");
-            }
+        if self.node().ok().flatten().is_some_and(|n| n.started())
+            && let Err(e) = self.device_op(false)
+        {
+            tracing::error!(error = %e, "rollback: disabling the device failed");
         }
         if !ccd::has_active_display() {
             let _ = ccd::extend_all();

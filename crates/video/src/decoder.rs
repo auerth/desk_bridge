@@ -7,7 +7,9 @@ use std::time::Instant;
 
 use deskbridge_platform::video::{Frame, FrameData, VideoCodec, VideoDecoder};
 use deskbridge_platform::{PlatformError, Result};
-use deskbridge_platform_windows::video::{GpuFrame, device_adapter_info, enable_multithread_protection};
+use deskbridge_platform_windows::video::{
+    GpuFrame, device_adapter_info, enable_multithread_protection,
+};
 use ffmpeg_next::ffi;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_BIND_DECODER, D3D11_BIND_SHADER_RESOURCE, ID3D11Device, ID3D11Texture2D,
@@ -116,7 +118,9 @@ impl FfmpegDecoder {
         if let Some(dev) = device {
             match Self::open_hw(codec, dev) {
                 Ok(d) => return Ok(d),
-                Err(e) => tracing::warn!("D3D11VA decoder unavailable ({e}); using software decode"),
+                Err(e) => {
+                    tracing::warn!("D3D11VA decoder unavailable ({e}); using software decode")
+                }
             }
         }
         Self::open_sw(codec, device.cloned())
@@ -145,11 +149,17 @@ impl FfmpegDecoder {
         unsafe {
             let dec = ffi::avcodec_find_decoder_by_name(native_decoder_name(codec).as_ptr());
             if dec.is_null() {
-                return Err(PlatformError::DeviceNotFound("FFmpeg native decoder".into()));
+                return Err(PlatformError::DeviceNotFound(
+                    "FFmpeg native decoder".into(),
+                ));
             }
-            let immediate = dev.GetImmediateContext().map_err(|e| PlatformError::other(e.to_string()))?;
+            let immediate = dev
+                .GetImmediateContext()
+                .map_err(|e| PlatformError::other(e.to_string()))?;
             enable_multithread_protection(&immediate);
-            let hw_dev = BufRef(ffi::av_hwdevice_ctx_alloc(ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA));
+            let hw_dev = BufRef(ffi::av_hwdevice_ctx_alloc(
+                ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA,
+            ));
             if hw_dev.is_null() {
                 return Err(PlatformError::other("av_hwdevice_ctx_alloc failed"));
             }
@@ -180,9 +190,17 @@ impl FfmpegDecoder {
                 ctx,
                 pkt: ff::Packet::alloc()?,
                 frame: ff::Frame::alloc()?,
-                hw: Some(Hw { device: dev.clone(), luid, _hw_device: hw_dev, confirmed: false }),
+                hw: Some(Hw {
+                    device: dev.clone(),
+                    luid,
+                    _hw_device: hw_dev,
+                    confirmed: false,
+                }),
                 sws: None,
-                name: format!("{} (d3d11va on {name})", native_decoder_name(codec).to_string_lossy()),
+                name: format!(
+                    "{} (d3d11va on {name})",
+                    native_decoder_name(codec).to_string_lossy()
+                ),
                 last_decode_us: 0,
                 adapter_hint: Some(dev.clone()),
             })
@@ -195,7 +213,9 @@ impl FfmpegDecoder {
             // For AV1 this picks libdav1d (the native "av1" decoder is hardware-only).
             let dec = ffi::avcodec_find_decoder(codec_id(codec));
             if dec.is_null() {
-                return Err(PlatformError::DeviceNotFound("FFmpeg software decoder".into()));
+                return Err(PlatformError::DeviceNotFound(
+                    "FFmpeg software decoder".into(),
+                ));
             }
             let c = ffi::avcodec_alloc_context3(dec);
             if c.is_null() {
@@ -204,12 +224,14 @@ impl FfmpegDecoder {
             let ctx = CodecCtx(c);
             (*c).flags |= ffi::AV_CODEC_FLAG_LOW_DELAY as i32;
             (*c).thread_count = 8;
-            (*c).thread_type = ffi::FF_THREAD_SLICE as i32;
+            (*c).thread_type = ffi::FF_THREAD_SLICE;
             let r = ffi::avcodec_open2(c, dec, std::ptr::null_mut());
             if r < 0 {
                 return Err(ff::ff_err("avcodec_open2(sw decoder)", r));
             }
-            let name = std::ffi::CStr::from_ptr((*dec).name).to_string_lossy().into_owned();
+            let name = std::ffi::CStr::from_ptr((*dec).name)
+                .to_string_lossy()
+                .into_owned();
             Ok(Self {
                 codec,
                 ctx,
@@ -266,9 +288,16 @@ impl FfmpegDecoder {
         unsafe {
             let f = self.frame.0;
             let (w, h) = ((*f).width as u32, (*f).height as u32);
-            let ts = if (*f).pts == ffi::AV_NOPTS_VALUE { 0 } else { (*f).pts as u64 };
+            let ts = if (*f).pts == ffi::AV_NOPTS_VALUE {
+                0
+            } else {
+                (*f).pts as u64
+            };
             if (*f).format == ffi::AVPixelFormat::AV_PIX_FMT_D3D11 as i32 {
-                let hw = self.hw.as_mut().ok_or_else(|| PlatformError::other("hw frame without hw state"))?;
+                let hw = self
+                    .hw
+                    .as_mut()
+                    .ok_or_else(|| PlatformError::other("hw frame without hw state"))?;
                 hw.confirmed = true;
                 let tex_raw = (*f).data[0].cast::<c_void>();
                 let idx = (*f).data[1] as usize as u32;
@@ -315,15 +344,22 @@ impl FfmpegDecoder {
                     std::ptr::null(),
                 );
                 if s.is_null() {
-                    return Err(PlatformError::other("sws_getContext failed for decoded picture"));
+                    return Err(PlatformError::other(
+                        "sws_getContext failed for decoded picture",
+                    ));
                 }
-                let co = ffi::sws_getCoefficients(ffi::SWS_CS_ITU709 as i32);
+                let co = ffi::sws_getCoefficients(ffi::SWS_CS_ITU709);
                 ffi::sws_setColorspaceDetails(s, co, 0, co, 1, 0, 1 << 16, 1 << 16);
                 self.sws = Some((s, key));
             }
             let stride = w as usize * 4;
             let mut out = vec![0u8; stride * h as usize];
-            let dst = [out.as_mut_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()];
+            let dst = [
+                out.as_mut_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            ];
             let dst_stride = [stride as i32, 0, 0, 0];
             ffi::sws_scale(
                 self.sws.as_ref().expect("sws just created").0,
@@ -335,7 +371,12 @@ impl FfmpegDecoder {
                 dst_stride.as_ptr(),
             );
             ffi::av_frame_unref(f);
-            Ok(Frame { width: w, height: h, ts_us: ts, data: FrameData::Bgra { data: out, stride } })
+            Ok(Frame {
+                width: w,
+                height: h,
+                ts_us: ts,
+                data: FrameData::Bgra { data: out, stride },
+            })
         }
     }
 }
@@ -346,7 +387,9 @@ impl VideoDecoder for FfmpegDecoder {
         let r = match self.decode_inner(data) {
             Err(e) if self.hw.as_ref().is_some_and(|h| !h.confirmed) => {
                 // Hardware path never produced a picture: switch to software and retry this packet.
-                tracing::warn!("D3D11VA decode failed before the first picture ({e}); switching to software");
+                tracing::warn!(
+                    "D3D11VA decode failed before the first picture ({e}); switching to software"
+                );
                 self.switch_to_software()?;
                 self.decode_inner(data)
             }

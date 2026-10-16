@@ -94,6 +94,8 @@ impl Drop for Sws {
 struct Open {
     name: String,
     kind: Kind,
+    /// Pixel format of system-memory input (NV12 for hardware encoders, YUV420P for libaom/SVT-AV1).
+    sw_fmt: ffi::AVPixelFormat,
     ctx: CodecCtx,
     frame: ff::Frame,
     pkt: ff::Packet,
@@ -167,7 +169,12 @@ impl FfmpegEncoder {
         opts: EncoderOptions,
     ) -> Result<Self> {
         ff::init();
-        if cfg.width == 0 || cfg.height == 0 || cfg.fps == 0 || cfg.width % 2 != 0 || cfg.height % 2 != 0 {
+        if cfg.width == 0
+            || cfg.height == 0
+            || cfg.fps == 0
+            || !cfg.width.is_multiple_of(2)
+            || !cfg.height.is_multiple_of(2)
+        {
             return Err(PlatformError::other(format!(
                 "invalid encoder size {}x{}@{}",
                 cfg.width, cfg.height, cfg.fps
@@ -197,6 +204,40 @@ impl FfmpegEncoder {
         Ok(enc)
     }
 
+    /// Drains frames still held inside the encoder (software encoders buffer; NVENC does not).
+    pub fn flush(&mut self) -> Result<Vec<EncodedPacket>> {
+        let Some(o) = self.open.as_mut() else {
+            return Ok(vec![]);
+        };
+        let mut out = Vec::new();
+        // SAFETY: the context is open; a NULL frame starts draining.
+        unsafe {
+            let r = ffi::avcodec_send_frame(o.ctx.0, std::ptr::null());
+            if r < 0 && r != ff::AVERROR_EOF {
+                return Err(ff::ff_err("avcodec_send_frame(flush)", r));
+            }
+            loop {
+                let r = ffi::avcodec_receive_packet(o.ctx.0, o.pkt.0);
+                if r < 0 {
+                    break;
+                }
+                let p = &*o.pkt.0;
+                out.push(EncodedPacket {
+                    data: std::slice::from_raw_parts(p.data, p.size as usize).to_vec(),
+                    key: p.flags & ffi::AV_PKT_FLAG_KEY != 0,
+                    ts_us: if p.pts == ffi::AV_NOPTS_VALUE {
+                        0
+                    } else {
+                        p.pts as u64
+                    },
+                    encode_us: 0,
+                });
+                ffi::av_packet_unref(o.pkt.0);
+            }
+        }
+        Ok(out)
+    }
+
     /// Timing of the last `encode` call.
     #[must_use]
     pub fn last_timing(&self) -> EncodeTiming {
@@ -215,8 +256,13 @@ impl FfmpegEncoder {
         match &self.open {
             None => "not opened yet".into(),
             Some(o) => match o.kind {
-                Kind::ZeroCopy => format!("{} zero-copy (D3D11 BGRA -> video processor NV12 -> NVENC)", o.name),
-                Kind::SystemMemory => format!("{} system-memory NV12 (GPU read-back / swscale)", o.name),
+                Kind::ZeroCopy => format!(
+                    "{} zero-copy (D3D11 BGRA -> video processor NV12 -> NVENC)",
+                    o.name
+                ),
+                Kind::SystemMemory => {
+                    format!("{} system-memory NV12 (GPU read-back / swscale)", o.name)
+                }
             },
         }
     }
@@ -231,7 +277,14 @@ impl FfmpegEncoder {
         for name in names {
             let zero_copy_allowed =
                 name.ends_with("_nvenc") && device.is_some() && !self.opts.force_readback;
-            match open_codec(&name, &self.cfg, &self.opts, self.kbps, device, zero_copy_allowed) {
+            match open_codec(
+                &name,
+                &self.cfg,
+                &self.opts,
+                self.kbps,
+                device,
+                zero_copy_allowed,
+            ) {
                 Ok(o) => {
                     tracing::info!("video encoder opened: {name} ({:?})", o.kind);
                     self.last_name = name;
@@ -252,7 +305,9 @@ impl FfmpegEncoder {
             return Ok(());
         }
         self.pending_bitrate = false;
-        let Some(o) = self.open.as_mut() else { return Ok(()) };
+        let Some(o) = self.open.as_mut() else {
+            return Ok(());
+        };
         // SAFETY: the context is open and owned by us; NVENC re-reads the rate control fields
         // when they change between frames.
         unsafe {
@@ -297,8 +352,17 @@ impl VideoEncoder for FfmpegEncoder {
                             "frame lives on a different D3D11 device than the encoder",
                         ));
                     }
-                    if o.vp.as_ref().is_none_or(|v| v.in_size() != (g.width, g.height)) {
-                        o.vp = Some(VpConverter::new(dev, ctx, ConvKind::BgraToNv12, (g.width, g.height), cfg_size)?);
+                    if o.vp
+                        .as_ref()
+                        .is_none_or(|v| v.in_size() != (g.width, g.height))
+                    {
+                        o.vp = Some(VpConverter::new(
+                            dev,
+                            ctx,
+                            ConvKind::BgraToNv12,
+                            (g.width, g.height),
+                            cfg_size,
+                        )?);
                     }
                     let r = ffi::av_hwframe_get_buffer(o.hw_frames.0, f, 0);
                     if r < 0 {
@@ -308,29 +372,54 @@ impl VideoEncoder for FfmpegEncoder {
                     let idx = (*f).data[1] as usize as u32;
                     let tex = ID3D11Texture2D::from_raw_borrowed(&tex_raw)
                         .ok_or_else(|| PlatformError::other("hw frame without texture"))?;
-                    o.vp.as_mut().expect("converter ensured").blt(&g.texture, g.subresource, tex, idx, None)?;
+                    o.vp.as_mut().expect("converter ensured").blt(
+                        &g.texture,
+                        g.subresource,
+                        tex,
+                        idx,
+                        None,
+                    )?;
                     ctx.Flush();
                 }
                 (FrameData::Gpu(any), Kind::SystemMemory) => {
                     let g = GpuFrame::from_any(any.as_ref())
                         .ok_or_else(|| PlatformError::other("GPU frame of unknown type"))?;
-                    let ctx = g.device.GetImmediateContext().map_err(|e| PlatformError::other(e.to_string()))?;
-                    if o.readback.as_ref().is_none_or(|r| r.in_size != (g.width, g.height)) {
-                        o.readback = Some(make_readback(&g.device, &ctx, (g.width, g.height), cfg_size)?);
+                    let ctx = g
+                        .device
+                        .GetImmediateContext()
+                        .map_err(|e| PlatformError::other(e.to_string()))?;
+                    if o.readback
+                        .as_ref()
+                        .is_none_or(|r| r.in_size != (g.width, g.height))
+                    {
+                        o.readback = Some(make_readback(
+                            &g.device,
+                            &ctx,
+                            (g.width, g.height),
+                            cfg_size,
+                        )?);
                     }
                     let rb = o.readback.as_mut().expect("readback ensured");
-                    sys_frame_prepare(f, cfg_size)?;
+                    sys_frame_prepare(f, cfg_size, o.sw_fmt)?;
                     readback_nv12(rb, &ctx, g, f, cfg_size)?;
                 }
                 (FrameData::Bgra { data, stride }, _) => {
-                    sys_frame_prepare(f, cfg_size)?;
-                    if o.sws.as_ref().is_none_or(|s| s.1 != (frame.width, frame.height)) {
-                        o.sws = Some(make_sws(frame.width, frame.height, cfg_size)?);
+                    sys_frame_prepare(f, cfg_size, o.sw_fmt)?;
+                    if o.sws
+                        .as_ref()
+                        .is_none_or(|s| s.1 != (frame.width, frame.height))
+                    {
+                        o.sws = Some(make_sws(frame.width, frame.height, cfg_size, o.sw_fmt)?);
                     }
                     if data.len() < stride * frame.height as usize {
                         return Err(PlatformError::other("BGRA frame buffer too small"));
                     }
-                    let src = [data.as_ptr(), std::ptr::null(), std::ptr::null(), std::ptr::null()];
+                    let src = [
+                        data.as_ptr(),
+                        std::ptr::null(),
+                        std::ptr::null(),
+                        std::ptr::null(),
+                    ];
                     let src_stride = [*stride as i32, 0, 0, 0];
                     ffi::sws_scale(
                         o.sws.as_ref().expect("sws ensured").0,
@@ -375,7 +464,11 @@ impl VideoEncoder for FfmpegEncoder {
                 }
                 let p = &*o.pkt.0;
                 let data = std::slice::from_raw_parts(p.data, p.size as usize).to_vec();
-                let ts = if p.pts == ffi::AV_NOPTS_VALUE { frame.ts_us } else { p.pts as u64 };
+                let ts = if p.pts == ffi::AV_NOPTS_VALUE {
+                    frame.ts_us
+                } else {
+                    p.pts as u64
+                };
                 out.push(EncodedPacket {
                     data,
                     key: p.flags & ffi::AV_PKT_FLAG_KEY != 0,
@@ -436,7 +529,9 @@ fn open_codec(
     unsafe {
         let codec = ffi::avcodec_find_encoder_by_name(cname.as_ptr());
         if codec.is_null() {
-            return Err(PlatformError::DeviceNotFound(format!("FFmpeg encoder {name}")));
+            return Err(PlatformError::DeviceNotFound(format!(
+                "FFmpeg encoder {name}"
+            )));
         }
         let c = ffi::avcodec_alloc_context3(codec);
         if c.is_null() {
@@ -445,12 +540,25 @@ fn open_codec(
         let ctx = CodecCtx(c);
         (*c).width = cfg.width as i32;
         (*c).height = cfg.height as i32;
-        (*c).time_base = ffi::AVRational { num: 1, den: 1_000_000 };
-        (*c).framerate = ffi::AVRational { num: cfg.fps as i32, den: 1 };
+        (*c).time_base = ffi::AVRational {
+            num: 1,
+            den: 1_000_000,
+        };
+        (*c).framerate = ffi::AVRational {
+            num: cfg.fps as i32,
+            den: 1,
+        };
         let bps = i64::from(kbps) * 1000;
         (*c).bit_rate = bps;
         (*c).rc_max_rate = bps;
-        (*c).rc_buffer_size = ((bps as f64) * f64::from(opts.vbv_frames) / f64::from(cfg.fps)) as i32;
+        (*c).rc_buffer_size =
+            ((bps as f64) * f64::from(opts.vbv_frames) / f64::from(cfg.fps)) as i32;
+        if name.starts_with("lib") {
+            // software test encoders do not accept a one-frame VBV
+            (*c).rc_max_rate = 0;
+            (*c).rc_buffer_size = 0;
+            (*c).bit_rate = 0;
+        }
         (*c).max_b_frames = 0;
         (*c).has_b_frames = 0;
         (*c).flags |= ffi::AV_CODEC_FLAG_LOW_DELAY as i32;
@@ -468,11 +576,16 @@ fn open_codec(
         let mut hw_frames = BufRef::null();
         let mut dev_pair = None;
         let kind;
+        let mut sw_fmt = ffi::AVPixelFormat::AV_PIX_FMT_NV12;
         if zero_copy {
             let dev = device.ok_or_else(|| PlatformError::other("zero-copy needs a device"))?;
-            let immediate = dev.GetImmediateContext().map_err(|e| PlatformError::other(e.to_string()))?;
+            let immediate = dev
+                .GetImmediateContext()
+                .map_err(|e| PlatformError::other(e.to_string()))?;
             enable_multithread_protection(&immediate);
-            hw_device = BufRef(ffi::av_hwdevice_ctx_alloc(ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA));
+            hw_device = BufRef(ffi::av_hwdevice_ctx_alloc(
+                ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA,
+            ));
             if hw_device.is_null() {
                 return Err(PlatformError::other("av_hwdevice_ctx_alloc failed"));
             }
@@ -507,7 +620,12 @@ fn open_codec(
             dev_pair = Some((dev.clone(), immediate));
             kind = Kind::ZeroCopy;
         } else {
-            (*c).pix_fmt = ffi::AVPixelFormat::AV_PIX_FMT_NV12;
+            sw_fmt = if matches!(name, "libsvtav1" | "libaom-av1" | "librav1e") {
+                ffi::AVPixelFormat::AV_PIX_FMT_YUV420P
+            } else {
+                ffi::AVPixelFormat::AV_PIX_FMT_NV12
+            };
+            (*c).pix_fmt = sw_fmt;
             kind = Kind::SystemMemory;
         }
 
@@ -524,6 +642,7 @@ fn open_codec(
         Ok(Open {
             name: name.to_owned(),
             kind,
+            sw_fmt,
             ctx,
             frame: ff::Frame::alloc()?,
             pkt: ff::Packet::alloc()?,
@@ -574,17 +693,23 @@ fn set_family_options(d: &mut Dict, name: &str, opts: &EncoderOptions) {
     } else if name == "libsvtav1" {
         // Software AV1 is only used by the spike to produce a test stream for decode benchmarks.
         d.set("preset", "12");
+        d.set("crf", "36");
         d.set("svtav1-params", "pred-struct=1");
+        d.set("g", "100000");
     } else if name == "libopenh264" {
         d.set("allow_skip_frames", "0");
     }
 }
 
-/// Prepares `f` as a system-memory NV12 picture of `size`.
-unsafe fn sys_frame_prepare(f: *mut ffi::AVFrame, size: (u32, u32)) -> Result<()> {
+/// Prepares `f` as a system-memory picture (NV12 or YUV420P) of `size`.
+unsafe fn sys_frame_prepare(
+    f: *mut ffi::AVFrame,
+    size: (u32, u32),
+    fmt: ffi::AVPixelFormat,
+) -> Result<()> {
     // SAFETY: `f` is a valid, unreferenced frame.
     unsafe {
-        (*f).format = ffi::AVPixelFormat::AV_PIX_FMT_NV12 as i32;
+        (*f).format = fmt as i32;
         (*f).width = size.0 as i32;
         (*f).height = size.1 as i32;
         let r = ffi::av_frame_get_buffer(f, 32);
@@ -595,7 +720,7 @@ unsafe fn sys_frame_prepare(f: *mut ffi::AVFrame, size: (u32, u32)) -> Result<()
     Ok(())
 }
 
-fn make_sws(src_w: u32, src_h: u32, dst: (u32, u32)) -> Result<Sws> {
+fn make_sws(src_w: u32, src_h: u32, dst: (u32, u32), fmt: ffi::AVPixelFormat) -> Result<Sws> {
     // SAFETY: plain swscale setup; coefficient tables are static.
     unsafe {
         let s = ffi::sws_getContext(
@@ -604,7 +729,7 @@ fn make_sws(src_w: u32, src_h: u32, dst: (u32, u32)) -> Result<Sws> {
             ffi::AVPixelFormat::AV_PIX_FMT_BGRA,
             dst.0 as i32,
             dst.1 as i32,
-            ffi::AVPixelFormat::AV_PIX_FMT_NV12,
+            fmt,
             ffi::SwsFlags::SWS_BILINEAR as i32,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
@@ -613,7 +738,7 @@ fn make_sws(src_w: u32, src_h: u32, dst: (u32, u32)) -> Result<Sws> {
         if s.is_null() {
             return Err(PlatformError::other("sws_getContext failed"));
         }
-        let co = ffi::sws_getCoefficients(ffi::SWS_CS_ITU709 as i32);
+        let co = ffi::sws_getCoefficients(ffi::SWS_CS_ITU709);
         // full-range RGB source, limited-range BT.709 destination
         ffi::sws_setColorspaceDetails(s, co, 1, co, 0, 0, 1 << 16, 1 << 16);
         Ok(Sws(s, (src_w, src_h)))
@@ -634,7 +759,10 @@ fn make_readback(
             MipLevels: 1,
             ArraySize: 1,
             Format: DXGI_FORMAT_NV12,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Usage: usage,
             BindFlags: bind,
             CPUAccessFlags: cpu,
@@ -663,8 +791,14 @@ unsafe fn readback_nv12(
     size: (u32, u32),
 ) -> Result<()> {
     rb.vp.blt(&g.texture, g.subresource, &rb.nv12, 0, None)?;
-    let dst: ID3D11Resource = rb.staging.cast().map_err(|e| PlatformError::other(e.to_string()))?;
-    let src: ID3D11Resource = rb.nv12.cast().map_err(|e| PlatformError::other(e.to_string()))?;
+    let dst: ID3D11Resource = rb
+        .staging
+        .cast()
+        .map_err(|e| PlatformError::other(e.to_string()))?;
+    let src: ID3D11Resource = rb
+        .nv12
+        .cast()
+        .map_err(|e| PlatformError::other(e.to_string()))?;
     let mut m = D3D11_MAPPED_SUBRESOURCE::default();
     // SAFETY: the staging texture is CPU-readable; rows are copied within the mapped pitch and
     // within the AVFrame plane sizes (same dimensions).
@@ -676,11 +810,34 @@ unsafe fn readback_nv12(
         let pitch = m.RowPitch as usize;
         let (w, h) = (size.0 as usize, size.1 as usize);
         for y in 0..h {
-            std::ptr::copy_nonoverlapping(base.add(y * pitch), (*f).data[0].add(y * (*f).linesize[0] as usize), w);
+            std::ptr::copy_nonoverlapping(
+                base.add(y * pitch),
+                (*f).data[0].add(y * (*f).linesize[0] as usize),
+                w,
+            );
         }
         let uv = base.add(h * pitch);
-        for y in 0..h / 2 {
-            std::ptr::copy_nonoverlapping(uv.add(y * pitch), (*f).data[1].add(y * (*f).linesize[1] as usize), w);
+        if (*f).format == ffi::AVPixelFormat::AV_PIX_FMT_YUV420P as i32 {
+            // de-interleave UV for planar encoders
+            for y in 0..h / 2 {
+                let row = uv.add(y * pitch);
+                let (du, dv) = (
+                    (*f).data[1].add(y * (*f).linesize[1] as usize),
+                    (*f).data[2].add(y * (*f).linesize[2] as usize),
+                );
+                for x in 0..w / 2 {
+                    *du.add(x) = *row.add(2 * x);
+                    *dv.add(x) = *row.add(2 * x + 1);
+                }
+            }
+        } else {
+            for y in 0..h / 2 {
+                std::ptr::copy_nonoverlapping(
+                    uv.add(y * pitch),
+                    (*f).data[1].add(y * (*f).linesize[1] as usize),
+                    w,
+                );
+            }
         }
         ctx.Unmap(&dst, 0);
     }

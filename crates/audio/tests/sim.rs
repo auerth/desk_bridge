@@ -227,7 +227,7 @@ impl Sim {
                     out.l.push(f[0]);
                     out.r.push(f[1]);
                 }
-                if ren_k % 50 == 0 {
+                if ren_k.is_multiple_of(50) {
                     out.series.push(Series {
                         t: t_ren - t0,
                         stats: out.rx.stats(),

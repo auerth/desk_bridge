@@ -17,7 +17,13 @@ pub enum PresenterMode {
     /// Borderless on a whole monitor (virtual-desktop pixels).
     Fullscreen { x: i32, y: i32, w: u32, h: u32 },
     /// Borderless on part of a monitor (split mode); `appbar` shrinks the work area.
-    Region { x: i32, y: i32, w: u32, h: u32, appbar: bool },
+    Region {
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        appbar: bool,
+    },
     /// Normal resizable window.
     Window { w: u32, h: u32 },
 }
@@ -42,7 +48,11 @@ pub trait VideoBackend: Send + Sync {
     /// `adapter` is `ScreenCapturer::adapter_name()` so the encoder lands on the capture GPU.
     fn create_encoder(&self, cfg: &EncoderConfig, adapter: &str) -> Result<Box<dyn VideoEncoder>>;
     fn create_decoder(&self, cfg: &EncoderConfig) -> Result<Box<dyn VideoDecoder>>;
-    fn create_presenter(&self, mode: PresenterMode, cfg: &EncoderConfig) -> Result<Box<dyn VideoPresenter>>;
+    fn create_presenter(
+        &self,
+        mode: PresenterMode,
+        cfg: &EncoderConfig,
+    ) -> Result<Box<dyn VideoPresenter>>;
 }
 
 /// No video support (platform without a video stack): focus mode is reported unavailable.
@@ -59,19 +69,31 @@ impl VideoBackend for NullVideoBackend {
     }
 
     fn create_capturer(&self) -> Result<Box<dyn ScreenCapturer>> {
-        Err(deskbridge_platform::PlatformError::Unsupported("video capture"))
+        Err(deskbridge_platform::PlatformError::Unsupported(
+            "video capture",
+        ))
     }
 
     fn create_encoder(&self, _: &EncoderConfig, _: &str) -> Result<Box<dyn VideoEncoder>> {
-        Err(deskbridge_platform::PlatformError::Unsupported("video encoder"))
+        Err(deskbridge_platform::PlatformError::Unsupported(
+            "video encoder",
+        ))
     }
 
     fn create_decoder(&self, _: &EncoderConfig) -> Result<Box<dyn VideoDecoder>> {
-        Err(deskbridge_platform::PlatformError::Unsupported("video decoder"))
+        Err(deskbridge_platform::PlatformError::Unsupported(
+            "video decoder",
+        ))
     }
 
-    fn create_presenter(&self, _: PresenterMode, _: &EncoderConfig) -> Result<Box<dyn VideoPresenter>> {
-        Err(deskbridge_platform::PlatformError::Unsupported("video presenter"))
+    fn create_presenter(
+        &self,
+        _: PresenterMode,
+        _: &EncoderConfig,
+    ) -> Result<Box<dyn VideoPresenter>> {
+        Err(deskbridge_platform::PlatformError::Unsupported(
+            "video presenter",
+        ))
     }
 }
 
@@ -80,8 +102,8 @@ pub mod mock {
 
     use super::{PresenterMode, VideoBackend};
     use deskbridge_platform::video::{
-        CaptureOutput, CursorShapeData, CursorState, EncodedPacket, EncoderConfig, Frame, FrameData, ScreenCapturer,
-        VideoDecoder, VideoEncoder, VideoPresenter,
+        CaptureOutput, CursorShapeData, CursorState, EncodedPacket, EncoderConfig, Frame,
+        FrameData, ScreenCapturer, VideoDecoder, VideoEncoder, VideoPresenter,
     };
     use deskbridge_platform::{Result, UnboundedSender};
     use deskbridge_proto::pb;
@@ -116,7 +138,12 @@ pub mod mock {
     impl MockVideoBackend {
         #[must_use]
         pub fn new(size: (u32, u32)) -> Self {
-            Self { stats: Arc::default(), encode: true, decode: true, size }
+            Self {
+                stats: Arc::default(),
+                encode: true,
+                decode: true,
+                size,
+            }
         }
     }
 
@@ -146,22 +173,44 @@ pub mod mock {
         }
 
         fn create_capturer(&self) -> Result<Box<dyn ScreenCapturer>> {
-            Ok(Box::new(MockCapturer { stats: self.stats.clone(), stop: Arc::new(AtomicBool::new(false)), size: self.size }))
+            Ok(Box::new(MockCapturer {
+                stats: self.stats.clone(),
+                stop: Arc::new(AtomicBool::new(false)),
+                size: self.size,
+            }))
         }
 
-        fn create_encoder(&self, cfg: &EncoderConfig, _adapter: &str) -> Result<Box<dyn VideoEncoder>> {
-            self.stats.last_bitrate_kbps.store(u64::from(cfg.bitrate_kbps), Ordering::SeqCst);
-            Ok(Box::new(MockEncoder { stats: self.stats.clone(), first: true }))
+        fn create_encoder(
+            &self,
+            cfg: &EncoderConfig,
+            _adapter: &str,
+        ) -> Result<Box<dyn VideoEncoder>> {
+            self.stats
+                .last_bitrate_kbps
+                .store(u64::from(cfg.bitrate_kbps), Ordering::SeqCst);
+            Ok(Box::new(MockEncoder {
+                stats: self.stats.clone(),
+                first: true,
+            }))
         }
 
         fn create_decoder(&self, _cfg: &EncoderConfig) -> Result<Box<dyn VideoDecoder>> {
-            Ok(Box::new(MockDecoder { stats: self.stats.clone(), have_key: false }))
+            Ok(Box::new(MockDecoder {
+                stats: self.stats.clone(),
+                have_key: false,
+            }))
         }
 
-        fn create_presenter(&self, mode: PresenterMode, _cfg: &EncoderConfig) -> Result<Box<dyn VideoPresenter>> {
+        fn create_presenter(
+            &self,
+            mode: PresenterMode,
+            _cfg: &EncoderConfig,
+        ) -> Result<Box<dyn VideoPresenter>> {
             self.stats.presenter_open.store(true, Ordering::SeqCst);
             self.stats.presenter_modes.lock().push(mode);
-            Ok(Box::new(MockPresenter { stats: self.stats.clone() }))
+            Ok(Box::new(MockPresenter {
+                stats: self.stats.clone(),
+            }))
         }
     }
 
@@ -172,7 +221,12 @@ pub mod mock {
     }
 
     impl ScreenCapturer for MockCapturer {
-        fn start(&mut self, _screen_id: u32, fps: u32, sink: UnboundedSender<CaptureOutput>) -> Result<()> {
+        fn start(
+            &mut self,
+            _screen_id: u32,
+            fps: u32,
+            sink: UnboundedSender<CaptureOutput>,
+        ) -> Result<()> {
             let (stats, stop, (w, h)) = (self.stats.clone(), self.stop.clone(), self.size);
             stop.store(false, Ordering::SeqCst);
             stats.capturer_running.store(true, Ordering::SeqCst);
@@ -184,14 +238,28 @@ pub mod mock {
                     y: 0.5,
                     visible: true,
                     shape_serial: 1,
-                    shape: Some(CursorShapeData { width: 2, height: 2, hot_x: 0, hot_y: 0, rgba: vec![255; 16] }),
+                    shape: Some(CursorShapeData {
+                        width: 2,
+                        height: 2,
+                        hot_x: 0,
+                        hot_y: 0,
+                        rgba: vec![255; 16],
+                    }),
                 }));
                 while !stop.load(Ordering::SeqCst) {
                     let mut data = vec![0u8; (w * h * 4) as usize];
                     for px in data.chunks_exact_mut(4) {
                         px.copy_from_slice(&[(n % 251) as u8, 64, 128, 255]);
                     }
-                    let f = Frame { width: w, height: h, ts_us: n * 1000, data: FrameData::Bgra { data, stride: (w * 4) as usize } };
+                    let f = Frame {
+                        width: w,
+                        height: h,
+                        ts_us: n * 1000,
+                        data: FrameData::Bgra {
+                            data,
+                            stride: (w * 4) as usize,
+                        },
+                    };
                     stats.frames_captured.fetch_add(1, Ordering::SeqCst);
                     if sink.send(CaptureOutput::Frame(f)).is_err() {
                         break;
@@ -220,7 +288,9 @@ pub mod mock {
 
     impl VideoEncoder for MockEncoder {
         fn encode(&mut self, frame: &Frame, force_key: bool) -> Result<Vec<EncodedPacket>> {
-            let FrameData::Bgra { data, .. } = &frame.data else { return Ok(vec![]) };
+            let FrameData::Bgra { data, .. } = &frame.data else {
+                return Ok(vec![]);
+            };
             let key = self.first || force_key;
             self.first = false;
             self.stats.frames_encoded.fetch_add(1, Ordering::SeqCst);
@@ -232,11 +302,18 @@ pub mod mock {
             p.extend_from_slice(&frame.width.to_le_bytes());
             p.extend_from_slice(&frame.height.to_le_bytes());
             p.extend_from_slice(&data[..4]);
-            Ok(vec![EncodedPacket { data: p, key, ts_us: frame.ts_us, encode_us: 100 }])
+            Ok(vec![EncodedPacket {
+                data: p,
+                key,
+                ts_us: frame.ts_us,
+                encode_us: 100,
+            }])
         }
 
         fn set_bitrate(&mut self, kbps: u32) -> Result<()> {
-            self.stats.last_bitrate_kbps.store(u64::from(kbps), Ordering::SeqCst);
+            self.stats
+                .last_bitrate_kbps
+                .store(u64::from(kbps), Ordering::SeqCst);
             Ok(())
         }
 
@@ -262,8 +339,18 @@ pub mod mock {
             let w = u32::from_le_bytes(data[0..4].try_into().unwrap());
             let h = u32::from_le_bytes(data[4..8].try_into().unwrap());
             let px = u32::from_le_bytes(data[8..12].try_into().unwrap());
-            self.stats.last_presented_pixel.store(u64::from(px), Ordering::SeqCst);
-            Ok(Some(Frame { width: w, height: h, ts_us: 0, data: FrameData::Bgra { data: data[8..12].to_vec(), stride: 4 } }))
+            self.stats
+                .last_presented_pixel
+                .store(u64::from(px), Ordering::SeqCst);
+            Ok(Some(Frame {
+                width: w,
+                height: h,
+                ts_us: 0,
+                data: FrameData::Bgra {
+                    data: data[8..12].to_vec(),
+                    stride: 4,
+                },
+            }))
         }
 
         fn name(&self) -> String {

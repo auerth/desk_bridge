@@ -159,7 +159,11 @@ impl BitrateController {
             self.base_rtt_ms = Some(self.base_rtt_ms.map_or(s.rtt_ms, |b| b.min(s.rtt_ms)));
         }
 
-        let budget_ms = if s.fps > 0 { 1000.0 / s.fps as f32 } else { f32::INFINITY };
+        let budget_ms = if s.fps > 0 {
+            1000.0 / s.fps as f32
+        } else {
+            f32::INFINITY
+        };
         let compute_bound = s.encode_ms > budget_ms * 0.95 || s.decode_ms > budget_ms * 0.95;
 
         let rtt_congested = match (self.base_rtt_ms, s.rtt_ms > 0.0) {
@@ -178,8 +182,11 @@ impl BitrateController {
                 .last_decrease_ms
                 .is_none_or(|t| now_ms.saturating_sub(t) >= self.cfg.decrease_cooldown_ms);
             if cooled {
-                let factor =
-                    if heavy { self.cfg.decrease_heavy } else { self.cfg.decrease_mild };
+                let factor = if heavy {
+                    self.cfg.decrease_heavy
+                } else {
+                    self.cfg.decrease_mild
+                };
                 self.kbps = (self.kbps * factor).max(f64::from(self.cfg.min_kbps));
                 self.last_decrease_ms = Some(now_ms);
                 // Hysteresis: be more careful before probing upwards again.
@@ -206,7 +213,10 @@ impl BitrateController {
                 }
                 // A long clean run relaxes the hysteresis again.
                 if self.good_streak >= self.good_needed * 2 {
-                    self.good_needed = self.good_needed.saturating_sub(1).max(self.cfg.good_needed_base);
+                    self.good_needed = self
+                        .good_needed
+                        .saturating_sub(1)
+                        .max(self.cfg.good_needed_base);
                 }
             }
         }
@@ -221,7 +231,12 @@ impl BitrateController {
         };
 
         let bitrate_kbps = self.bitrate_kbps();
-        AbrDecision { bitrate_kbps, changed: bitrate_kbps != before, suggest_fps, reason }
+        AbrDecision {
+            bitrate_kbps,
+            changed: bitrate_kbps != before,
+            suggest_fps,
+            reason,
+        }
     }
 
     /// Sets the bitrate explicitly (e.g. after a negotiated start value or a `BitrateHint`).
@@ -244,24 +259,45 @@ mod tests {
     use super::*;
 
     fn clean(fps: u32) -> AbrSample {
-        AbrSample { loss_pct: 0.0, rtt_ms: 1.0, encode_ms: 3.0, decode_ms: 3.0, fps }
+        AbrSample {
+            loss_pct: 0.0,
+            rtt_ms: 1.0,
+            encode_ms: 3.0,
+            decode_ms: 3.0,
+            fps,
+        }
     }
 
     #[test]
     fn starts_at_configured_value_and_clamps() {
-        assert_eq!(BitrateController::for_link(LinkClass::Wired).bitrate_kbps(), 120_000);
-        assert_eq!(BitrateController::for_link(LinkClass::Wifi).bitrate_kbps(), 40_000);
+        assert_eq!(
+            BitrateController::for_link(LinkClass::Wired).bitrate_kbps(),
+            120_000
+        );
+        assert_eq!(
+            BitrateController::for_link(LinkClass::Wifi).bitrate_kbps(),
+            40_000
+        );
         let mut cfg = AbrConfig::for_link(LinkClass::Wired);
         cfg.start_kbps = 1;
-        assert_eq!(BitrateController::new(cfg.clone()).bitrate_kbps(), cfg.min_kbps);
+        assert_eq!(
+            BitrateController::new(cfg.clone()).bitrate_kbps(),
+            cfg.min_kbps
+        );
         cfg.start_kbps = 9_999_999;
-        assert_eq!(BitrateController::new(cfg.clone()).bitrate_kbps(), cfg.max_kbps);
+        assert_eq!(
+            BitrateController::new(cfg.clone()).bitrate_kbps(),
+            cfg.max_kbps
+        );
     }
 
     #[test]
     fn loss_decreases_multiplicatively_with_cooldown() {
         let mut c = BitrateController::for_link(LinkClass::Wired);
-        let lossy = AbrSample { loss_pct: 1.0, ..clean(120) };
+        let lossy = AbrSample {
+            loss_pct: 1.0,
+            ..clean(120)
+        };
         let d = c.update(1_000, &lossy);
         assert!(d.changed);
         assert_eq!(d.reason, AbrReason::Loss);
@@ -278,7 +314,13 @@ mod tests {
     #[test]
     fn heavy_loss_cuts_harder() {
         let mut c = BitrateController::for_link(LinkClass::Wired);
-        let d = c.update(1_000, &AbrSample { loss_pct: 10.0, ..clean(120) });
+        let d = c.update(
+            1_000,
+            &AbrSample {
+                loss_pct: 10.0,
+                ..clean(120)
+            },
+        );
         assert_eq!(d.reason, AbrReason::HeavyLoss);
         assert_eq!(d.bitrate_kbps, 78_000);
     }
@@ -289,7 +331,13 @@ mod tests {
         let mut t = 0;
         for _ in 0..100 {
             t += 1_100;
-            c.update(t, &AbrSample { loss_pct: 20.0, ..clean(120) });
+            c.update(
+                t,
+                &AbrSample {
+                    loss_pct: 20.0,
+                    ..clean(120)
+                },
+            );
         }
         assert_eq!(c.bitrate_kbps(), 40_000);
         for _ in 0..2_000 {
@@ -321,7 +369,13 @@ mod tests {
     #[test]
     fn hysteresis_requires_longer_streak_after_a_cut() {
         let mut c = BitrateController::for_link(LinkClass::Wired);
-        c.update(1_000, &AbrSample { loss_pct: 2.0, ..clean(120) });
+        c.update(
+            1_000,
+            &AbrSample {
+                loss_pct: 2.0,
+                ..clean(120)
+            },
+        );
         let after_cut = c.bitrate_kbps();
         // good_needed is now 5: four clean seconds are not enough
         let mut t = 1_000;
@@ -342,9 +396,21 @@ mod tests {
         c.update(500, &clean(120));
         assert_eq!(c.base_rtt_ms(), Some(1.0));
         // 4 ms is within 1*1.5 + 4 = 5.5
-        let d = c.update(1_000, &AbrSample { rtt_ms: 4.0, ..clean(120) });
+        let d = c.update(
+            1_000,
+            &AbrSample {
+                rtt_ms: 4.0,
+                ..clean(120)
+            },
+        );
         assert!(!d.changed);
-        let d = c.update(1_600, &AbrSample { rtt_ms: 12.0, ..clean(120) });
+        let d = c.update(
+            1_600,
+            &AbrSample {
+                rtt_ms: 12.0,
+                ..clean(120)
+            },
+        );
         assert!(d.changed);
         assert_eq!(d.reason, AbrReason::RttInflation);
     }
@@ -352,7 +418,13 @@ mod tests {
     #[test]
     fn unknown_rtt_is_ignored() {
         let mut c = BitrateController::for_link(LinkClass::Wired);
-        let d = c.update(1_000, &AbrSample { rtt_ms: 0.0, ..clean(120) });
+        let d = c.update(
+            1_000,
+            &AbrSample {
+                rtt_ms: 0.0,
+                ..clean(120)
+            },
+        );
         assert!(!d.changed);
         assert_eq!(c.base_rtt_ms(), None);
     }
@@ -362,7 +434,10 @@ mod tests {
         let mut c = BitrateController::for_link(LinkClass::Wired);
         c.set_bitrate_kbps(100_000);
         // encode 9 ms > 8.33 ms budget at 120 fps
-        let slow = AbrSample { encode_ms: 9.0, ..clean(120) };
+        let slow = AbrSample {
+            encode_ms: 9.0,
+            ..clean(120)
+        };
         let mut t = 0;
         let mut suggested = None;
         for _ in 0..10 {
@@ -373,14 +448,26 @@ mod tests {
         }
         assert_eq!(suggested, Some(60));
         // at 60 fps the budget is 16.6 ms: fine
-        let d = c.update(t + 1_000, &AbrSample { encode_ms: 9.0, ..clean(60) });
+        let d = c.update(
+            t + 1_000,
+            &AbrSample {
+                encode_ms: 9.0,
+                ..clean(60)
+            },
+        );
         assert_eq!(d.suggest_fps, None);
     }
 
     #[test]
     fn decode_time_counts_too() {
         let mut c = BitrateController::for_link(LinkClass::Wired);
-        let d = c.update(1_000, &AbrSample { decode_ms: 12.0, ..clean(120) });
+        let d = c.update(
+            1_000,
+            &AbrSample {
+                decode_ms: 12.0,
+                ..clean(120)
+            },
+        );
         assert_eq!(d.suggest_fps, Some(60));
         assert_eq!(d.reason, AbrReason::ComputeBound);
     }
@@ -396,7 +483,13 @@ mod tests {
         assert_eq!(c.bitrate_kbps(), 80_000);
         for _ in 0..100 {
             t += 1_100;
-            c.update(t, &AbrSample { loss_pct: 30.0, ..clean(60) });
+            c.update(
+                t,
+                &AbrSample {
+                    loss_pct: 30.0,
+                    ..clean(60)
+                },
+            );
         }
         assert_eq!(c.bitrate_kbps(), 8_000);
     }
@@ -410,7 +503,14 @@ mod tests {
         while t < 120_000 {
             t += 500;
             let lossy = (20_000..25_000).contains(&t);
-            let s = if lossy { AbrSample { loss_pct: 2.0, ..clean(120) } } else { clean(120) };
+            let s = if lossy {
+                AbrSample {
+                    loss_pct: 2.0,
+                    ..clean(120)
+                }
+            } else {
+                clean(120)
+            };
             c.update(t, &s);
             series.push((t, c.bitrate_kbps()));
         }
@@ -418,7 +518,11 @@ mod tests {
         assert!(at(19_500) > at(25_000), "loss reduced the rate");
         assert!(at(120_000) > at(25_000), "rate recovered afterwards");
         // After the loss window only increases (no sawtooth without congestion).
-        let post: Vec<u32> = series.iter().filter(|(t, _)| *t > 25_000).map(|(_, k)| *k).collect();
+        let post: Vec<u32> = series
+            .iter()
+            .filter(|(t, _)| *t > 25_000)
+            .map(|(_, k)| *k)
+            .collect();
         assert!(post.windows(2).all(|w| w[1] >= w[0]));
         // During the 5 s window the number of cuts is bounded by the cooldown (1/s).
         let cuts = series

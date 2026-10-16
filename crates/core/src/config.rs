@@ -103,7 +103,10 @@ pub struct NetworkConfig {
 
 impl Default for NetworkConfig {
     fn default() -> Self {
-        Self { port: deskbridge_proto::DEFAULT_PORT, manual_hosts: Vec::new() }
+        Self {
+            port: deskbridge_proto::DEFAULT_PORT,
+            manual_hosts: Vec::new(),
+        }
     }
 }
 
@@ -175,7 +178,10 @@ pub struct FilesConfig {
 
 impl Default for FilesConfig {
     fn default() -> Self {
-        Self { target_dir: String::new(), parallel_streams: 4 }
+        Self {
+            target_dir: String::new(),
+            parallel_streams: 4,
+        }
     }
 }
 
@@ -309,7 +315,10 @@ pub struct UpdateConfig {
 
 impl Default for UpdateConfig {
     fn default() -> Self {
-        Self { check_automatically: true, offer_partner_update: true }
+        Self {
+            check_automatically: true,
+            offer_partner_update: true,
+        }
     }
 }
 
@@ -330,7 +339,8 @@ impl Config {
             return Ok(Self::default());
         }
         let text = std::fs::read_to_string(path)?;
-        let mut value: toml::Value = toml::from_str(&text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let mut value: toml::Value =
+            toml::from_str(&text).map_err(|e| ConfigError::Parse(e.to_string()))?;
         let found = value
             .get("schema_version")
             .and_then(toml::Value::as_integer)
@@ -339,7 +349,9 @@ impl Config {
             return Err(ConfigError::TooNew { found });
         }
         migrate(&mut value, found);
-        value.try_into::<Self>().map_err(|e| ConfigError::Parse(e.to_string()))
+        value
+            .try_into::<Self>()
+            .map_err(|e| ConfigError::Parse(e.to_string()))
     }
 
     /// Atomically writes the file.
@@ -359,7 +371,8 @@ impl Config {
         self.input.switch_delay_ms = self.input.switch_delay_ms.min(500);
         self.input.corner_margin_px = self.input.corner_margin_px.clamp(0, 200);
         self.audio.laptop_to_pc.volume = self.audio.laptop_to_pc.volume.clamp(0.0, 1.5);
-        self.audio.laptop_to_pc.opus_bitrate_kbps = self.audio.laptop_to_pc.opus_bitrate_kbps.clamp(32, 510);
+        self.audio.laptop_to_pc.opus_bitrate_kbps =
+            self.audio.laptop_to_pc.opus_bitrate_kbps.clamp(32, 510);
         self.focus.split_percent = self.focus.split_percent.clamp(20, 80);
         self.focus.bitrate_kbps = self.focus.bitrate_kbps.clamp(5_000, 400_000);
         self.files.parallel_streams = self.files.parallel_streams.clamp(1, 8);
@@ -397,7 +410,10 @@ mod tests {
     #[test]
     fn missing_file_is_default() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(Config::load(&dir.path().join("nope.toml")).unwrap(), Config::default());
+        assert_eq!(
+            Config::load(&dir.path().join("nope.toml")).unwrap(),
+            Config::default()
+        );
     }
 
     #[test]
@@ -425,7 +441,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("c.toml");
         std::fs::write(&p, "schema_version = 99\n").unwrap();
-        assert!(matches!(Config::load(&p), Err(ConfigError::TooNew { found: 99 })));
+        assert!(matches!(
+            Config::load(&p),
+            Err(ConfigError::TooNew { found: 99 })
+        ));
     }
 
     #[test]

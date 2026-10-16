@@ -18,12 +18,21 @@ impl AppPaths {
         match dirs {
             Some(d) => Self {
                 // ProjectDirs on Windows yields ...\softwelop\DeskBridge\config and ...\data.
-                config_dir: d.config_dir().parent().map_or_else(|| d.config_dir().to_path_buf(), Path::to_path_buf),
-                data_dir: d.data_local_dir().parent().map_or_else(|| d.data_local_dir().to_path_buf(), Path::to_path_buf),
+                config_dir: d
+                    .config_dir()
+                    .parent()
+                    .map_or_else(|| d.config_dir().to_path_buf(), Path::to_path_buf),
+                data_dir: d
+                    .data_local_dir()
+                    .parent()
+                    .map_or_else(|| d.data_local_dir().to_path_buf(), Path::to_path_buf),
             },
             None => {
                 let base = std::env::temp_dir().join("softwelop").join("DeskBridge");
-                Self { config_dir: base.clone(), data_dir: base }
+                Self {
+                    config_dir: base.clone(),
+                    data_dir: base,
+                }
             }
         }
     }
@@ -31,7 +40,10 @@ impl AppPaths {
     /// Everything below one directory (tests, `dev-two-instances.ps1`).
     #[must_use]
     pub fn under(root: &Path) -> Self {
-        Self { config_dir: root.join("config"), data_dir: root.join("data") }
+        Self {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+        }
     }
 
     #[must_use]

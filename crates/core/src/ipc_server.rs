@@ -28,7 +28,11 @@ where
 
     // initial state
     let state = engine.state().await;
-    let first = ServerMessage::Push { push: crate::ipc::Push::State { state: Box::new(state) } };
+    let first = ServerMessage::Push {
+        push: crate::ipc::Push::State {
+            state: Box::new(state),
+        },
+    };
     let _ = out_tx.send(serde_json::to_string(&first).unwrap_or_default());
 
     // push forwarder
@@ -37,7 +41,8 @@ where
         loop {
             match pushes.recv().await {
                 Ok(p) => {
-                    let line = serde_json::to_string(&ServerMessage::Push { push: p }).unwrap_or_default();
+                    let line =
+                        serde_json::to_string(&ServerMessage::Push { push: p }).unwrap_or_default();
                     if push_out.send(line).is_err() {
                         break;
                     }
@@ -63,10 +68,21 @@ where
         let out = out_tx.clone();
         tokio::spawn(async move {
             let reply = match engine.request(env.req).await {
-                Ok(data) => ReplyEnvelope { id: env.id, ok: true, data: Some(data), error: None },
-                Err(error) => ReplyEnvelope { id: env.id, ok: false, data: None, error: Some(error) },
+                Ok(data) => ReplyEnvelope {
+                    id: env.id,
+                    ok: true,
+                    data: Some(data),
+                    error: None,
+                },
+                Err(error) => ReplyEnvelope {
+                    id: env.id,
+                    ok: false,
+                    data: None,
+                    error: Some(error),
+                },
             };
-            let _ = out.send(serde_json::to_string(&ServerMessage::Reply(reply)).unwrap_or_default());
+            let _ =
+                out.send(serde_json::to_string(&ServerMessage::Reply(reply)).unwrap_or_default());
         });
     }
     forwarder.abort();

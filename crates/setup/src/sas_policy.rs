@@ -11,7 +11,10 @@ const KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Syst
 const VALUE: &str = "SoftwareSASGeneration";
 
 fn reg(args: &[&str]) -> Result<std::process::Output> {
-    Command::new("reg.exe").args(args).output().context("running reg.exe")
+    Command::new("reg.exe")
+        .args(args)
+        .output()
+        .context("running reg.exe")
 }
 
 /// Current value, `None` if not configured.
@@ -43,7 +46,10 @@ pub fn enable_if_unset() -> Result<bool> {
     }
     let out = reg(&["add", KEY, "/v", VALUE, "/t", "REG_DWORD", "/d", "1", "/f"])?;
     if !out.status.success() {
-        bail!("reg add failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        bail!(
+            "reg add failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(true)
 }
@@ -52,7 +58,10 @@ pub fn enable_if_unset() -> Result<bool> {
 pub fn remove() -> Result<()> {
     let out = reg(&["delete", KEY, "/v", VALUE, "/f"])?;
     if !out.status.success() && current()?.is_some() {
-        bail!("reg delete failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        bail!(
+            "reg delete failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(())
 }
@@ -63,9 +72,13 @@ mod tests {
 
     #[test]
     fn parses_reg_output() {
-        let t = "\r\nHKEY_LOCAL_MACHINE (key)\r\n    SoftwareSASGeneration    REG_DWORD    0x1\r\n\r\n";
+        let t =
+            "\r\nHKEY_LOCAL_MACHINE (key)\r\n    SoftwareSASGeneration    REG_DWORD    0x1\r\n\r\n";
         assert_eq!(parse_query(t), Some(1));
-        assert_eq!(parse_query("    SoftwareSASGeneration    REG_DWORD    0x3"), Some(3));
+        assert_eq!(
+            parse_query("    SoftwareSASGeneration    REG_DWORD    0x3"),
+            Some(3)
+        );
         assert_eq!(parse_query("nothing"), None);
     }
 }

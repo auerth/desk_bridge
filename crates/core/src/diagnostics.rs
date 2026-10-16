@@ -6,14 +6,20 @@ use crate::zipwriter::ZipWriter;
 use std::path::{Path, PathBuf};
 
 /// Builds the diagnostics archive. `system_info` is a human readable text block.
-pub fn export(paths: &AppPaths, target: Option<&Path>, system_info: &str) -> std::io::Result<PathBuf> {
+pub fn export(
+    paths: &AppPaths,
+    target: Option<&Path>,
+    system_info: &str,
+) -> std::io::Result<PathBuf> {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let out = match target {
         Some(p) if p.extension().is_some() => p.to_path_buf(),
         Some(dir) => dir.join(format!("deskbridge-diagnostics-{ts}.zip")),
-        None => paths.data_dir.join(format!("deskbridge-diagnostics-{ts}.zip")),
+        None => paths
+            .data_dir
+            .join(format!("deskbridge-diagnostics-{ts}.zip")),
     };
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)?;
@@ -32,10 +38,11 @@ pub fn export(paths: &AppPaths, target: Option<&Path>, system_info: &str) -> std
     if let Ok(rd) = std::fs::read_dir(paths.logs_dir()) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if e.metadata().is_ok_and(|m| m.is_file() && m.len() < 32 * 1024 * 1024) {
-                if let Ok(data) = std::fs::read(e.path()) {
-                    zip.add(&format!("logs/{name}"), &data)?;
-                }
+            if e.metadata()
+                .is_ok_and(|m| m.is_file() && m.len() < 32 * 1024 * 1024)
+                && let Ok(data) = std::fs::read(e.path())
+            {
+                zip.add(&format!("logs/{name}"), &data)?;
             }
         }
     }

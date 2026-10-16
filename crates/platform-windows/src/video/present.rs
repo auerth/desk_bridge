@@ -21,23 +21,23 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use deskbridge_platform::video::{CursorShapeData, CursorState, Frame, FrameData, VideoPresenter};
-use deskbridge_platform::{PlatformError, Result, UnboundedReceiver, UnboundedSender, unbounded_channel};
+use deskbridge_platform::{
+    PlatformError, Result, UnboundedReceiver, UnboundedSender, unbounded_channel,
+};
 use parking_lot::Mutex;
 use windows::Win32::Foundation::{
-    BOOL, ERROR_CLASS_ALREADY_EXISTS, GetLastError, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
-    RECT, WPARAM,
+    BOOL, ERROR_CLASS_ALREADY_EXISTS, GetLastError, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT,
+    POINT, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Direct3D::Fxc::{D3DCOMPILE_OPTIMIZATION_LEVEL3, D3DCompile};
-use windows::Win32::Graphics::Direct3D::{
-    D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP, ID3DBlob,
-};
+use windows::Win32::Graphics::Direct3D::{D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP, ID3DBlob};
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE,
     D3D11_BLEND_DESC, D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD,
     D3D11_BLEND_ZERO, D3D11_BUFFER_DESC, D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_COMPARISON_NEVER,
     D3D11_CULL_NONE, D3D11_FILL_SOLID, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_RASTERIZER_DESC,
     D3D11_RENDER_TARGET_BLEND_DESC, D3D11_SAMPLER_DESC, D3D11_SUBRESOURCE_DATA,
-    D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
+    D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
     ID3D11BlendState, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
     ID3D11RasterizerState, ID3D11RenderTargetView, ID3D11Resource, ID3D11SamplerState,
     ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
@@ -46,34 +46,35 @@ use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
-    DXGI_MWA_NO_ALT_ENTER, DXGI_MWA_NO_WINDOW_CHANGES, DXGI_PRESENT_ALLOW_TEARING,
-    DXGI_SCALING_NONE, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
+    DXGI_FEATURE_PRESENT_ALLOW_TEARING, DXGI_MWA_NO_ALT_ENTER, DXGI_MWA_NO_WINDOW_CHANGES,
+    DXGI_PRESENT_ALLOW_TEARING, DXGI_SCALING_NONE, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
     DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING, DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT,
     DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIDevice, IDXGIFactory2,
-    IDXGIFactory5, IDXGISwapChain1, IDXGISwapChain2, DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+    IDXGIFactory5, IDXGISwapChain1, IDXGISwapChain2,
 };
 use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateDIBSection,
-    CreateFontW, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_CALCRECT, DT_LEFT, DT_NOPREFIX, DT_TOP,
-    DeleteDC, DeleteObject, DrawTextW, FF_DONTCARE, FIXED_PITCH, FW_NORMAL, GetMonitorInfoW, HBITMAP,
-    HGDIOBJ, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect, OUT_DEFAULT_PRECIS,
-    SelectObject, SetBkMode, SetTextColor, TRANSPARENT, ValidateRect, ANTIALIASED_QUALITY,
+    ANTIALIASED_QUALITY, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CLIP_DEFAULT_PRECIS,
+    CreateCompatibleDC, CreateDIBSection, CreateFontW, DEFAULT_CHARSET, DIB_RGB_COLORS,
+    DT_CALCRECT, DT_LEFT, DT_NOPREFIX, DT_TOP, DeleteDC, DeleteObject, DrawTextW, FF_DONTCARE,
+    FIXED_PITCH, FW_NORMAL, GetMonitorInfoW, HBITMAP, HGDIOBJ, MONITOR_DEFAULTTONEAREST,
+    MONITORINFO, MonitorFromRect, OUT_DEFAULT_PRECIS, SelectObject, SetBkMode, SetTextColor,
+    TRANSPARENT, ValidateRect,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
+use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
 use windows::Win32::UI::Shell::{
     ABE_LEFT, ABE_RIGHT, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA, SHAppBarMessage,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GWLP_USERDATA, GetClientRect, GetMessageW, HTCLIENT, MA_NOACTIVATE, MSG, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SIZE_MINIMIZED, SW_SHOW, SW_SHOWNOACTIVATE, SetCursor,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    WM_APP, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_ERASEBKGND, WM_MOUSEACTIVATE,
-    WM_MOUSEMOVE, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW,
-    WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_POPUP,
-    HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, CREATESTRUCTW,
+    AdjustWindowRectEx, CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow,
+    DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW, HTCLIENT, HWND_TOPMOST,
+    MA_NOACTIVATE, MSG, PostMessageW, PostQuitMessage, RegisterClassExW, SIZE_MINIMIZED, SW_SHOW,
+    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SetCursor, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, TranslateMessage, WM_APP, WM_CLOSE, WM_CREATE, WM_DESTROY,
+    WM_ERASEBKGND, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
+    WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_OVERLAPPEDWINDOW, WS_POPUP,
 };
 use windows::core::{Interface, PCSTR, PCWSTR};
 
@@ -105,7 +106,12 @@ impl PxRect {
     }
 
     fn to_rect(self) -> RECT {
-        RECT { left: self.x, top: self.y, right: self.x + self.w as i32, bottom: self.y + self.h as i32 }
+        RECT {
+            left: self.x,
+            top: self.y,
+            right: self.x + self.w as i32,
+            bottom: self.y + self.h as i32,
+        }
     }
 }
 
@@ -193,7 +199,11 @@ impl D3dPresenter {
             client_rect: Mutex::new(PxRect::default()),
             pointer: Mutex::new(None),
             remote: Mutex::new(RemoteCursor::default()),
-            overlay: Mutex::new(Overlay { enabled: false, text: String::new(), dirty: false }),
+            overlay: Mutex::new(Overlay {
+                enabled: false,
+                text: String::new(),
+                dirty: false,
+            }),
             render: Mutex::new(None),
             events: events_tx,
             mode,
@@ -214,7 +224,13 @@ impl D3dPresenter {
                     .lock()
                     .as_ref()
                     .map_or(HANDLE::default(), |r| r.waitable);
-                Ok(Self { shared, thread: Some(thread), device, events: Some(events_rx), waitable })
+                Ok(Self {
+                    shared,
+                    thread: Some(thread),
+                    device,
+                    events: Some(events_rx),
+                    waitable,
+                })
             }
             Ok(Err(msg)) => {
                 let _ = thread.join();
@@ -222,7 +238,9 @@ impl D3dPresenter {
             }
             Err(_) => {
                 let _ = thread.join();
-                Err(PlatformError::other("video window thread died during setup"))
+                Err(PlatformError::other(
+                    "video window thread died during setup",
+                ))
             }
         }
     }
@@ -308,7 +326,9 @@ impl VideoPresenter for D3dPresenter {
             }
         }
         let mut guard = self.shared.render.lock();
-        let r = guard.as_mut().ok_or_else(|| PlatformError::other("renderer not ready"))?;
+        let r = guard
+            .as_mut()
+            .ok_or_else(|| PlatformError::other("renderer not ready"))?;
         r.update_scene(frame)?;
         let draw = DrawInput::collect(&self.shared, r);
         r.compose_and_present(&draw)
@@ -338,7 +358,12 @@ impl VideoPresenter for D3dPresenter {
         }
         let client = self.window_rect();
         // The picture is letterboxed inside the client area; report the picture itself.
-        let scene = self.shared.render.lock().as_ref().and_then(|r| r.scene_size());
+        let scene = self
+            .shared
+            .render
+            .lock()
+            .as_ref()
+            .and_then(|r| r.scene_size());
         let (cx, cy, cw, ch) = (client.x, client.y, client.w, client.h);
         if cw == 0 || ch == 0 {
             return None;
@@ -346,8 +371,16 @@ impl VideoPresenter for D3dPresenter {
         match scene {
             Some((sw, sh)) if sw > 0 && sh > 0 => {
                 let scale = (cw as f32 / sw as f32).min(ch as f32 / sh as f32);
-                let (dw, dh) = ((sw as f32 * scale).round() as u32, (sh as f32 * scale).round() as u32);
-                Some((cx + ((cw - dw) / 2) as i32, cy + ((ch - dh) / 2) as i32, dw, dh))
+                let (dw, dh) = (
+                    (sw as f32 * scale).round() as u32,
+                    (sh as f32 * scale).round() as u32,
+                );
+                Some((
+                    cx + ((cw - dw) / 2) as i32,
+                    cy + ((ch - dh) / 2) as i32,
+                    dw,
+                    dh,
+                ))
             }
             _ => Some((cx, cy, cw, ch)),
         }
@@ -400,7 +433,11 @@ impl DrawInput {
                 Some(o.text.clone())
             }
         };
-        Self { pointer, remote, overlay }
+        Self {
+            pointer,
+            remote,
+            overlay,
+        }
     }
 }
 
@@ -520,7 +557,9 @@ fn compile(entry: &str, target: &str) -> Result<ID3DBlob> {
                 }
             })
             .unwrap_or_default();
-        return Err(PlatformError::other(format!("D3DCompile {entry}: {e} {msg}")));
+        return Err(PlatformError::other(format!(
+            "D3DCompile {entry}: {e} {msg}"
+        )));
     }
     code.ok_or_else(|| PlatformError::other("D3DCompile returned no code"))
 }
@@ -538,8 +577,9 @@ impl Renderer {
         let (swap, waitable, tearing, flags) = unsafe {
             let dxgi: IDXGIDevice = device.cast().map_err(|e| os_err("IDXGIDevice", &e))?;
             let adapter = dxgi.GetAdapter().map_err(|e| os_err("GetAdapter", &e))?;
-            let factory: IDXGIFactory2 =
-                adapter.GetParent().map_err(|e| os_err("adapter parent factory", &e))?;
+            let factory: IDXGIFactory2 = adapter
+                .GetParent()
+                .map_err(|e| os_err("adapter parent factory", &e))?;
             let mut allow = BOOL(0);
             if let Ok(f5) = factory.cast::<IDXGIFactory5>() {
                 let _ = f5.CheckFeatureSupport(
@@ -559,7 +599,10 @@ impl Renderer {
                 Height: h.max(1),
                 Format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 Stereo: BOOL(0),
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
                 BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
                 BufferCount: 2,
                 Scaling: DXGI_SCALING_NONE,
@@ -570,7 +613,8 @@ impl Renderer {
             let swap = factory
                 .CreateSwapChainForHwnd(&device, hwnd, &desc, None, None)
                 .map_err(|e| os_err("CreateSwapChainForHwnd", &e))?;
-            let _ = factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER | DXGI_MWA_NO_WINDOW_CHANGES);
+            let _ = factory
+                .MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER | DXGI_MWA_NO_WINDOW_CHANGES);
             let s2: IDXGISwapChain2 = swap.cast().map_err(|e| os_err("IDXGISwapChain2", &e))?;
             let _ = s2.SetMaximumFrameLatency(1);
             let waitable = s2.GetFrameLatencyWaitableObject();
@@ -604,22 +648,35 @@ impl Renderer {
                 MaxLOD: f32::MAX,
                 ..Default::default()
             };
-            device.CreateSamplerState(&sd, Some(&mut sampler)).map_err(|e| os_err("CreateSamplerState", &e))?;
+            device
+                .CreateSamplerState(&sd, Some(&mut sampler))
+                .map_err(|e| os_err("CreateSamplerState", &e))?;
             let mk_blend = |on: bool| {
                 let mut rt = D3D11_RENDER_TARGET_BLEND_DESC {
                     BlendEnable: BOOL(i32::from(on)),
                     SrcBlend: D3D11_BLEND_ONE,
-                    DestBlend: if on { D3D11_BLEND_INV_SRC_ALPHA } else { D3D11_BLEND_ZERO },
+                    DestBlend: if on {
+                        D3D11_BLEND_INV_SRC_ALPHA
+                    } else {
+                        D3D11_BLEND_ZERO
+                    },
                     BlendOp: D3D11_BLEND_OP_ADD,
                     SrcBlendAlpha: D3D11_BLEND_ONE,
-                    DestBlendAlpha: if on { D3D11_BLEND_INV_SRC_ALPHA } else { D3D11_BLEND_ZERO },
+                    DestBlendAlpha: if on {
+                        D3D11_BLEND_INV_SRC_ALPHA
+                    } else {
+                        D3D11_BLEND_ZERO
+                    },
                     BlendOpAlpha: D3D11_BLEND_OP_ADD,
                     RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8,
                 };
                 if !on {
                     rt.BlendEnable = BOOL(0);
                 }
-                D3D11_BLEND_DESC { RenderTarget: [rt; 8], ..Default::default() }
+                D3D11_BLEND_DESC {
+                    RenderTarget: [rt; 8],
+                    ..Default::default()
+                }
             };
             device
                 .CreateBlendState(&mk_blend(true), Some(&mut blend_alpha))
@@ -633,14 +690,18 @@ impl Renderer {
                 DepthClipEnable: BOOL(1),
                 ..Default::default()
             };
-            device.CreateRasterizerState(&rd, Some(&mut raster)).map_err(|e| os_err("CreateRasterizerState", &e))?;
+            device
+                .CreateRasterizerState(&rd, Some(&mut raster))
+                .map_err(|e| os_err("CreateRasterizerState", &e))?;
             let bd = D3D11_BUFFER_DESC {
                 ByteWidth: size_of::<Params>() as u32,
                 Usage: D3D11_USAGE_DEFAULT,
                 BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
                 ..Default::default()
             };
-            device.CreateBuffer(&bd, None, Some(&mut cb)).map_err(|e| os_err("CreateBuffer", &e))?;
+            device
+                .CreateBuffer(&bd, None, Some(&mut cb))
+                .map_err(|e| os_err("CreateBuffer", &e))?;
         }
         let none = || PlatformError::other("D3D11 object creation returned null");
         let mut r = Self {
@@ -671,7 +732,10 @@ impl Renderer {
     fn create_rtv(&mut self) -> Result<()> {
         // SAFETY: plain COM calls.
         unsafe {
-            let back: ID3D11Texture2D = self.swap.GetBuffer(0).map_err(|e| os_err("GetBuffer", &e))?;
+            let back: ID3D11Texture2D = self
+                .swap
+                .GetBuffer(0)
+                .map_err(|e| os_err("GetBuffer", &e))?;
             let mut rtv: Option<ID3D11RenderTargetView> = None;
             self.device
                 .CreateRenderTargetView(&back, None, Some(&mut rtv))
@@ -716,7 +780,10 @@ impl Renderer {
             MipLevels: 1,
             ArraySize: 1,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
             ..Default::default()
@@ -725,8 +792,12 @@ impl Renderer {
         let mut srv: Option<ID3D11ShaderResourceView> = None;
         // SAFETY: valid descriptor and out pointers.
         unsafe {
-            self.device.CreateTexture2D(&desc, None, Some(&mut tex)).map_err(|e| os_err("CreateTexture2D(scene)", &e))?;
-            let t = tex.as_ref().ok_or_else(|| PlatformError::other("null scene texture"))?;
+            self.device
+                .CreateTexture2D(&desc, None, Some(&mut tex))
+                .map_err(|e| os_err("CreateTexture2D(scene)", &e))?;
+            let t = tex
+                .as_ref()
+                .ok_or_else(|| PlatformError::other("null scene texture"))?;
             self.device
                 .CreateShaderResourceView(t, None, Some(&mut srv))
                 .map_err(|e| os_err("CreateShaderResourceView(scene)", &e))?;
@@ -753,7 +824,14 @@ impl Renderer {
                 }
                 // SAFETY: `data` holds at least stride*height bytes.
                 unsafe {
-                    self.context.UpdateSubresource(&res, 0, None, data.as_ptr().cast(), *stride as u32, 0);
+                    self.context.UpdateSubresource(
+                        &res,
+                        0,
+                        None,
+                        data.as_ptr().cast(),
+                        *stride as u32,
+                        0,
+                    );
                 }
                 Ok(())
             }
@@ -768,7 +846,11 @@ impl Renderer {
                 self.ensure_scene(g.width, g.height)?;
                 let (scene_tex, ..) = self.scene.clone().expect("scene just created");
                 if g.format == DXGI_FORMAT_NV12 {
-                    if self.nv12.as_ref().is_none_or(|c| c.in_size() != (g.width, g.height)) {
+                    if self
+                        .nv12
+                        .as_ref()
+                        .is_none_or(|c| c.in_size() != (g.width, g.height))
+                    {
                         self.nv12 = Some(VpConverter::new(
                             &self.device,
                             &self.context,
@@ -777,20 +859,37 @@ impl Renderer {
                             (g.width, g.height),
                         )?);
                     }
-                    self.nv12
-                        .as_mut()
-                        .expect("converter just created")
-                        .blt(&g.texture, g.subresource, &scene_tex, 0, None)
+                    self.nv12.as_mut().expect("converter just created").blt(
+                        &g.texture,
+                        g.subresource,
+                        &scene_tex,
+                        0,
+                        None,
+                    )
                 } else if g.format == DXGI_FORMAT_B8G8R8A8_UNORM {
-                    let src: ID3D11Resource = g.texture.cast().map_err(|e| os_err("src resource", &e))?;
-                    let dst: ID3D11Resource = scene_tex.cast().map_err(|e| os_err("scene resource", &e))?;
+                    let src: ID3D11Resource =
+                        g.texture.cast().map_err(|e| os_err("src resource", &e))?;
+                    let dst: ID3D11Resource =
+                        scene_tex.cast().map_err(|e| os_err("scene resource", &e))?;
                     // SAFETY: same device, same format and size (scene sized from the frame).
                     unsafe {
-                        self.context.CopySubresourceRegion(&dst, 0, 0, 0, 0, &src, g.subresource, None);
+                        self.context.CopySubresourceRegion(
+                            &dst,
+                            0,
+                            0,
+                            0,
+                            0,
+                            &src,
+                            g.subresource,
+                            None,
+                        );
                     }
                     Ok(())
                 } else {
-                    Err(PlatformError::other(format!("unsupported GPU frame format {:?}", g.format)))
+                    Err(PlatformError::other(format!(
+                        "unsupported GPU frame format {:?}",
+                        g.format
+                    )))
                 }
             }
         }
@@ -816,7 +915,13 @@ impl Renderer {
         }
     }
 
-    fn make_sprite_from_rgba(&self, w: u32, h: u32, rgba: &[u8], hot: (i32, i32)) -> Result<Sprite> {
+    fn make_sprite_from_rgba(
+        &self,
+        w: u32,
+        h: u32,
+        rgba: &[u8],
+        hot: (i32, i32),
+    ) -> Result<Sprite> {
         if w == 0 || h == 0 || rgba.len() < (w * h * 4) as usize {
             return Err(PlatformError::other("bad cursor shape"));
         }
@@ -833,19 +938,32 @@ impl Renderer {
         self.make_sprite_bgra_premul(w, h, &bgra, hot)
     }
 
-    fn make_sprite_bgra_premul(&self, w: u32, h: u32, bgra: &[u8], hot: (i32, i32)) -> Result<Sprite> {
+    fn make_sprite_bgra_premul(
+        &self,
+        w: u32,
+        h: u32,
+        bgra: &[u8],
+        hot: (i32, i32),
+    ) -> Result<Sprite> {
         let desc = D3D11_TEXTURE2D_DESC {
             Width: w,
             Height: h,
             MipLevels: 1,
             ArraySize: 1,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
             ..Default::default()
         };
-        let init = D3D11_SUBRESOURCE_DATA { pSysMem: bgra.as_ptr().cast(), SysMemPitch: w * 4, SysMemSlicePitch: 0 };
+        let init = D3D11_SUBRESOURCE_DATA {
+            pSysMem: bgra.as_ptr().cast(),
+            SysMemPitch: w * 4,
+            SysMemSlicePitch: 0,
+        };
         let mut tex: Option<ID3D11Texture2D> = None;
         let mut srv: Option<ID3D11ShaderResourceView> = None;
         // SAFETY: `bgra` holds w*h*4 bytes; descriptors and out pointers are valid.
@@ -853,7 +971,9 @@ impl Renderer {
             self.device
                 .CreateTexture2D(&desc, Some(&init), Some(&mut tex))
                 .map_err(|e| os_err("CreateTexture2D(sprite)", &e))?;
-            let t = tex.as_ref().ok_or_else(|| PlatformError::other("null sprite texture"))?;
+            let t = tex
+                .as_ref()
+                .ok_or_else(|| PlatformError::other("null sprite texture"))?;
             self.device
                 .CreateShaderResourceView(t, None, Some(&mut srv))
                 .map_err(|e| os_err("CreateShaderResourceView(sprite)", &e))?;
@@ -868,29 +988,48 @@ impl Renderer {
 
     /// Letterboxed destination rectangle of the scene inside the client area (pixels).
     fn letterbox(&self, sw: u32, sh: u32) -> (f32, f32, f32, f32) {
-        let (cw, ch) = (self.size.0 as f32, self.size.1 as f32);
-        let scale = (cw / sw as f32).min(ch / sh as f32);
-        let (dw, dh) = ((sw as f32 * scale).round(), (sh as f32 * scale).round());
-        (((cw - dw) / 2.0).floor(), ((ch - dh) / 2.0).floor(), dw, dh)
+        letterbox_rect(self.size, (sw, sh))
     }
 
-    fn draw_quad(&self, rect_px: (f32, f32, f32, f32), srv: &ID3D11ShaderResourceView, alpha: bool) {
+    fn draw_quad(
+        &self,
+        rect_px: (f32, f32, f32, f32),
+        srv: &ID3D11ShaderResourceView,
+        alpha: bool,
+    ) {
         let (cw, ch) = (self.size.0 as f32, self.size.1 as f32);
         let (x, y, w, h) = rect_px;
         let params = Params {
-            rect: [x / cw * 2.0 - 1.0, 1.0 - y / ch * 2.0, (x + w) / cw * 2.0 - 1.0, 1.0 - (y + h) / ch * 2.0],
+            rect: [
+                x / cw * 2.0 - 1.0,
+                1.0 - y / ch * 2.0,
+                (x + w) / cw * 2.0 - 1.0,
+                1.0 - (y + h) / ch * 2.0,
+            ],
             uv: [0.0, 0.0, 1.0, 1.0],
         };
         // SAFETY: plain COM calls; `params` is a plain-old-data constant buffer image.
         unsafe {
-            self.context.UpdateSubresource(&self.cb, 0, None, (&params as *const Params).cast::<c_void>(), 0, 0);
+            self.context.UpdateSubresource(
+                &self.cb,
+                0,
+                None,
+                (&params as *const Params).cast::<c_void>(),
+                0,
+                0,
+            );
             let bf = [0.0f32; 4];
             self.context.OMSetBlendState(
-                if alpha { &self.blend_alpha } else { &self.blend_opaque },
+                if alpha {
+                    &self.blend_alpha
+                } else {
+                    &self.blend_opaque
+                },
                 Some(&bf),
                 0xFFFF_FFFF,
             );
-            self.context.PSSetShaderResources(0, Some(&[Some(srv.clone())]));
+            self.context
+                .PSSetShaderResources(0, Some(&[Some(srv.clone())]));
             self.context.Draw(4, 0);
         }
     }
@@ -952,7 +1091,11 @@ impl Renderer {
         }
         // SAFETY: plain COM call.
         let r = unsafe {
-            let flags = if self.tearing { DXGI_PRESENT_ALLOW_TEARING } else { windows::Win32::Graphics::Dxgi::DXGI_PRESENT(0) };
+            let flags = if self.tearing {
+                DXGI_PRESENT_ALLOW_TEARING
+            } else {
+                windows::Win32::Graphics::Dxgi::DXGI_PRESENT(0)
+            };
             self.swap.Present(0, flags)
         };
         // SAFETY: unbind the back buffer so the next ResizeBuffers cannot be blocked by references.
@@ -964,6 +1107,17 @@ impl Renderer {
         }
         Ok(())
     }
+}
+
+/// Largest rectangle with the aspect ratio of `src` that fits `client`, centred (x, y, w, h).
+fn letterbox_rect(client: (u32, u32), src: (u32, u32)) -> (f32, f32, f32, f32) {
+    let (cw, ch) = (client.0 as f32, client.1 as f32);
+    let scale = (cw / src.0 as f32).min(ch / src.1 as f32);
+    let (dw, dh) = (
+        (src.0 as f32 * scale).round(),
+        (src.1 as f32 * scale).round(),
+    );
+    (((cw - dw) / 2.0).floor(), ((ch - dh) / 2.0).floor(), dw, dh)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -982,15 +1136,35 @@ fn render_text_bgra(text: &str) -> Option<(u32, u32, Vec<u8>)> {
             return None;
         }
         let font = CreateFontW(
-            -16, 0, 0, 0, FW_NORMAL.0 as i32, 0, 0, 0, u32::from(DEFAULT_CHARSET.0),
-            u32::from(OUT_DEFAULT_PRECIS.0), u32::from(CLIP_DEFAULT_PRECIS.0),
-            u32::from(ANTIALIASED_QUALITY.0), (FIXED_PITCH.0 | FF_DONTCARE.0) as u32,
+            -16,
+            0,
+            0,
+            0,
+            FW_NORMAL.0 as i32,
+            0,
+            0,
+            0,
+            u32::from(DEFAULT_CHARSET.0),
+            u32::from(OUT_DEFAULT_PRECIS.0),
+            u32::from(CLIP_DEFAULT_PRECIS.0),
+            u32::from(ANTIALIASED_QUALITY.0),
+            (FIXED_PITCH.0 | FF_DONTCARE.0) as u32,
             PCWSTR(face.as_ptr()),
         );
         let old_font = SelectObject(dc, HGDIOBJ(font.0));
-        let mut measure = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        let mut measure = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
         let mut buf = wide.clone();
-        DrawTextW(dc, &mut buf, &mut measure, DT_CALCRECT | DT_LEFT | DT_TOP | DT_NOPREFIX);
+        DrawTextW(
+            dc,
+            &mut buf,
+            &mut measure,
+            DT_CALCRECT | DT_LEFT | DT_TOP | DT_NOPREFIX,
+        );
         const PAD: i32 = 6;
         let w = (measure.right - measure.left + 2 * PAD).clamp(8, 2048);
         let h = (measure.bottom - measure.top + 2 * PAD).clamp(8, 2048);
@@ -1026,7 +1200,12 @@ fn render_text_bgra(text: &str) -> Option<(u32, u32, Vec<u8>)> {
         }
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, windows::Win32::Foundation::COLORREF(0x00FF_FFFF));
-        let mut r = RECT { left: PAD, top: PAD, right: w - PAD, bottom: h - PAD };
+        let mut r = RECT {
+            left: PAD,
+            top: PAD,
+            right: w - PAD,
+            bottom: h - PAD,
+        };
         let mut buf = wide.clone();
         DrawTextW(dc, &mut buf, &mut r, DT_LEFT | DT_TOP | DT_NOPREFIX);
         // GDI leaves the alpha byte untouched on text pixels: restore opacity where colour changed.
@@ -1067,7 +1246,10 @@ impl AppBarGuard {
         // SAFETY: plain shell/GDI calls with valid structures.
         unsafe {
             let hmon = MonitorFromRect(&want, MONITOR_DEFAULTTONEAREST);
-            let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+            let mut mi = MONITORINFO {
+                cbSize: size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
             if !GetMonitorInfoW(hmon, &mut mi).as_bool() {
                 return Err(PlatformError::other("GetMonitorInfo failed"));
             }
@@ -1077,7 +1259,9 @@ impl AppBarGuard {
             } else if want.right >= m.right - 1 && want.left > m.left + 1 {
                 ABE_RIGHT
             } else {
-                return Err(PlatformError::other("region does not touch exactly one side of the monitor"));
+                return Err(PlatformError::other(
+                    "region does not touch exactly one side of the monitor",
+                ));
             };
             let mut abd = APPBARDATA {
                 cbSize: size_of::<APPBARDATA>() as u32,
@@ -1152,8 +1336,16 @@ fn update_client_rect(hwnd: HWND, shared: &Shared) -> (u32, u32) {
         let _ = GetClientRect(hwnd, &mut rc);
         let _ = windows::Win32::Graphics::Gdi::ClientToScreen(hwnd, &mut pt);
     }
-    let (w, h) = ((rc.right - rc.left).max(0) as u32, (rc.bottom - rc.top).max(0) as u32);
-    *shared.client_rect.lock() = PxRect { x: pt.x, y: pt.y, w, h };
+    let (w, h) = (
+        (rc.right - rc.left).max(0) as u32,
+        (rc.bottom - rc.top).max(0) as u32,
+    );
+    *shared.client_rect.lock() = PxRect {
+        x: pt.x,
+        y: pt.y,
+        w,
+        h,
+    };
     (w, h)
 }
 
@@ -1200,14 +1392,30 @@ fn window_thread(
     let _ = shared.events.send(PresenterEvent::Closed);
 }
 
-fn setup_window(shared: &Arc<Shared>, device_in: Option<ID3D11Device>) -> Result<(HWND, D3dDevice)> {
+fn setup_window(
+    shared: &Arc<Shared>,
+    device_in: Option<ID3D11Device>,
+) -> Result<(HWND, D3dDevice)> {
     let (style, ex_style, rect, show) = match shared.mode {
-        PresentMode::Fullscreen { monitor_rect } => {
-            (WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW, monitor_rect, SW_SHOWNOACTIVATE)
-        }
-        PresentMode::Region { rect, .. } => (WS_POPUP, WS_EX_TOPMOST | WS_EX_TOOLWINDOW, rect, SW_SHOWNOACTIVATE),
+        PresentMode::Fullscreen { monitor_rect } => (
+            WS_POPUP,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            monitor_rect,
+            SW_SHOWNOACTIVATE,
+        ),
+        PresentMode::Region { rect, .. } => (
+            WS_POPUP,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            rect,
+            SW_SHOWNOACTIVATE,
+        ),
         PresentMode::Window { width, height } => {
-            let mut rc = RECT { left: 0, top: 0, right: width as i32, bottom: height as i32 };
+            let mut rc = RECT {
+                left: 0,
+                top: 0,
+                right: width as i32,
+                bottom: height as i32,
+            };
             // SAFETY: valid rect pointer.
             unsafe {
                 let _ = AdjustWindowRectEx(&mut rc, WS_OVERLAPPEDWINDOW, false, WS_EX_APPWINDOW);
@@ -1230,9 +1438,15 @@ fn setup_window(shared: &Arc<Shared>, device_in: Option<ID3D11Device>) -> Result
     let dev = if let Some(d) = device_in {
         let (luid, name) = device_adapter_info(&d);
         // SAFETY: plain COM call.
-        let ctx = unsafe { d.GetImmediateContext() }.map_err(|e| os_err("GetImmediateContext", &e))?;
+        let ctx =
+            unsafe { d.GetImmediateContext() }.map_err(|e| os_err("GetImmediateContext", &e))?;
         super::common::enable_multithread_protection(&ctx);
-        D3dDevice { device: d, context: ctx, adapter_luid: luid, adapter_name: name }
+        D3dDevice {
+            device: d,
+            context: ctx,
+            adapter_luid: luid,
+            adapter_name: name,
+        }
     } else {
         let adapter = list_outputs()
             .ok()
@@ -1243,11 +1457,16 @@ fn setup_window(shared: &Arc<Shared>, device_in: Option<ID3D11Device>) -> Result
 
     let class = utf16z(CLASS_NAME);
     let title = utf16z("Desk Bridge");
-    let ctx = Box::into_raw(Box::new(WindowCtx { shared: shared.clone(), tracking_mouse: AtomicBool::new(false) }));
+    let ctx = Box::into_raw(Box::new(WindowCtx {
+        shared: shared.clone(),
+        tracking_mouse: AtomicBool::new(false),
+    }));
     // SAFETY: plain Win32 calls; `class`/`title` outlive them; `ctx` is freed in WM_NCDESTROY
     // handling below (or here if creation fails).
     let hwnd = unsafe {
-        let hinst: HINSTANCE = GetModuleHandleW(None).map_err(|e| os_err("GetModuleHandle", &e))?.into();
+        let hinst: HINSTANCE = GetModuleHandleW(None)
+            .map_err(|e| os_err("GetModuleHandle", &e))?
+            .into();
         let wc = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(wndproc),
@@ -1257,7 +1476,10 @@ fn setup_window(shared: &Arc<Shared>, device_in: Option<ID3D11Device>) -> Result
         };
         if RegisterClassExW(&wc) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS {
             drop(Box::from_raw(ctx));
-            return Err(os_err("RegisterClassExW", &windows::core::Error::from_win32()));
+            return Err(os_err(
+                "RegisterClassExW",
+                &windows::core::Error::from_win32(),
+            ));
         }
         match CreateWindowExW(
             ex_style,
@@ -1300,7 +1522,9 @@ fn setup_window(shared: &Arc<Shared>, device_in: Option<ID3D11Device>) -> Result
                 }
                 *shared.appbar.lock() = Some(guard);
             }
-            Err(e) => tracing::warn!("AppBar registration failed, using a plain topmost window: {e}"),
+            Err(e) => {
+                tracing::warn!("AppBar registration failed, using a plain topmost window: {e}")
+            }
         }
     }
 
@@ -1310,7 +1534,18 @@ fn setup_window(shared: &Arc<Shared>, device_in: Option<ID3D11Device>) -> Result
     // SAFETY: our window.
     unsafe {
         let _ = ShowWindow(hwnd, show);
-        let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE);
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE
+                | SWP_NOZORDER
+                | windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE,
+        );
     }
     let _ = update_client_rect(hwnd, shared);
     Ok((hwnd, dev))
@@ -1319,16 +1554,19 @@ fn setup_window(shared: &Arc<Shared>, device_in: Option<ID3D11Device>) -> Result
 unsafe fn ctx_of(hwnd: HWND) -> Option<&'static WindowCtx> {
     // SAFETY: GWLP_USERDATA holds the pointer stored in WM_NCCREATE (null before / after).
     unsafe {
-        let p = windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const WindowCtx;
+        let p = windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA)
+            as *const WindowCtx;
         p.as_ref()
     }
 }
 
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // Never unwind into the OS.
-    catch_unwind(AssertUnwindSafe(|| wndproc_inner(hwnd, msg, wparam, lparam)))
-        // SAFETY: plain default handling.
-        .unwrap_or_else(|_| unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) })
+    catch_unwind(AssertUnwindSafe(|| {
+        wndproc_inner(hwnd, msg, wparam, lparam)
+    }))
+    // SAFETY: plain default handling.
+    .unwrap_or_else(|_| unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) })
 }
 
 fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -1365,7 +1603,10 @@ fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESUL
                         {
                             tracing::warn!("swap chain resize failed: {e}");
                         }
-                        let _ = shared.events.send(PresenterEvent::Resized { width: w, height: h });
+                        let _ = shared.events.send(PresenterEvent::Resized {
+                            width: w,
+                            height: h,
+                        });
                         redraw_now(shared, true);
                     }
                 }
@@ -1415,7 +1656,10 @@ fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESUL
                         if let Some(g) = guard.as_ref() {
                             let (hmon, mut mi) = (
                                 MonitorFromRect(&rect.to_rect(), MONITOR_DEFAULTTONEAREST),
-                                MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() },
+                                MONITORINFO {
+                                    cbSize: size_of::<MONITORINFO>() as u32,
+                                    ..Default::default()
+                                },
                             );
                             if GetMonitorInfoW(hmon, &mut mi).as_bool() {
                                 let mut abd = APPBARDATA {
@@ -1460,5 +1704,40 @@ fn wndproc_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESUL
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn letterbox_fits_and_centres() {
+        // same aspect: fills
+        assert_eq!(
+            letterbox_rect((2560, 720), (5120, 1440)),
+            (0.0, 0.0, 2560.0, 720.0)
+        );
+        // 16:9 into 32:9: pillarbox
+        assert_eq!(
+            letterbox_rect((5120, 1440), (2560, 1440)),
+            (1280.0, 0.0, 2560.0, 1440.0)
+        );
+        // 32:9 into 16:9: letterbox
+        let (x, y, w, h) = letterbox_rect((1920, 1080), (5120, 1440));
+        assert_eq!((x, w), (0.0, 1920.0));
+        assert_eq!(h, 540.0);
+        assert_eq!(y, 270.0);
+        // 1:1
+        assert_eq!(
+            letterbox_rect((100, 100), (100, 100)),
+            (0.0, 0.0, 100.0, 100.0)
+        );
+    }
+
+    #[test]
+    fn px_rect_conversion() {
+        let r = PxRect::new(10, 20, 30, 40).to_rect();
+        assert_eq!((r.left, r.top, r.right, r.bottom), (10, 20, 40, 60));
     }
 }

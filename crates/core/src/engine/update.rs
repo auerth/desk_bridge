@@ -32,32 +32,60 @@ pub(crate) fn sha256_file(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
 
 impl Engine {
     /// UI: offer the installer at `path` (version `version`) to the connected partner.
-    pub(crate) fn offer_partner_update(&mut self, path: String, version: String) -> Result<Value, String> {
-        let Some(s) = &self.session else { return Err("Nicht verbunden".into()) };
+    pub(crate) fn offer_partner_update(
+        &mut self,
+        path: String,
+        version: String,
+    ) -> Result<Value, String> {
+        let Some(s) = &self.session else {
+            return Err("Nicht verbunden".into());
+        };
         if !self.cfg.update.offer_partner_update {
             return Err("Partner-Update ist in den Einstellungen deaktiviert".into());
         }
         let path = PathBuf::from(path);
-        let size = std::fs::metadata(&path).map_err(|e| format!("Installer nicht lesbar: {e}"))?.len();
+        let size = std::fs::metadata(&path)
+            .map_err(|e| format!("Installer nicht lesbar: {e}"))?
+            .len();
         let sha = sha256_file(&path).map_err(|e| format!("Installer nicht lesbar: {e}"))?;
-        s.link.send_control(pb::control::Msg::UpdateOffer(pb::UpdateOffer { version: version.clone(), size, sha256: sha.clone() }));
-        self.update_out = Some(OutgoingUpdate { path, version, sha256: sha });
+        s.link
+            .send_control(pb::control::Msg::UpdateOffer(pb::UpdateOffer {
+                version: version.clone(),
+                size,
+                sha256: sha.clone(),
+            }));
+        self.update_out = Some(OutgoingUpdate {
+            path,
+            version,
+            sha256: sha,
+        });
         Ok(json!({ "offered": true }))
     }
 
     pub(crate) fn on_update_offer(&mut self, o: pb::UpdateOffer) {
-        let from = self.session.as_ref().map(|s| s.link.peer.name.clone()).unwrap_or_default();
-        self.emit(UiEvent::PartnerUpdateOffered { version: o.version.clone(), size: o.size, from });
+        let from = self
+            .session
+            .as_ref()
+            .map(|s| s.link.peer.name.clone())
+            .unwrap_or_default();
+        self.emit(UiEvent::PartnerUpdateOffered {
+            version: o.version.clone(),
+            size: o.size,
+            from,
+        });
         self.update_in = Some(o);
     }
 
     /// UI: accept or decline the partner's offer.
     pub(crate) fn answer_partner_update(&mut self, accept: bool) -> Result<Value, String> {
-        let Some(s) = &self.session else { return Err("Nicht verbunden".into()) };
+        let Some(s) = &self.session else {
+            return Err("Nicht verbunden".into());
+        };
         if self.update_in.is_none() {
             return Err("Kein Update-Angebot vorhanden".into());
         }
-        s.link.send_control(pb::control::Msg::UpdateAnswer(pb::UpdateAnswer { accept }));
+        s.link
+            .send_control(pb::control::Msg::UpdateAnswer(pb::UpdateAnswer { accept }));
         if !accept {
             self.update_in = None;
         }
@@ -65,14 +93,28 @@ impl Engine {
     }
 
     pub(crate) fn on_update_answer(&mut self, a: pb::UpdateAnswer) {
-        let Some(out) = self.update_out.take() else { return };
+        let Some(out) = self.update_out.take() else {
+            return;
+        };
         if !a.accept {
-            self.emit(UiEvent::Notification { level: "info".into(), text: "Der Partner hat das Update abgelehnt.".into() });
+            self.emit(UiEvent::Notification {
+                level: "info".into(),
+                text: "Der Partner hat das Update abgelehnt.".into(),
+            });
             return;
         }
-        let hint = format!("update:{}:{}", out.version, deskbridge_net::hex(&out.sha256));
-        if let Err(e) = self.send_files_with_hint(vec![out.path.to_string_lossy().into_owned()], hint) {
-            self.emit(UiEvent::Notification { level: "error".into(), text: e });
+        let hint = format!(
+            "update:{}:{}",
+            out.version,
+            deskbridge_net::hex(&out.sha256)
+        );
+        if let Err(e) =
+            self.send_files_with_hint(vec![out.path.to_string_lossy().into_owned()], hint)
+        {
+            self.emit(UiEvent::Notification {
+                level: "error".into(),
+                text: e,
+            });
         }
     }
 
@@ -83,6 +125,9 @@ impl Engine {
         let sha = deskbridge_net::unhex(sha_hex)?;
         // Only accept what we agreed to.
         let offer = self.update_in.as_ref()?;
-        (offer.version == version && offer.sha256 == sha).then(|| UpdateMeta { version: version.to_string(), sha256: sha })
+        (offer.version == version && offer.sha256 == sha).then(|| UpdateMeta {
+            version: version.to_string(),
+            sha256: sha,
+        })
     }
 }

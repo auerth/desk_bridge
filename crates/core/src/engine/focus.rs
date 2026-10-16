@@ -7,13 +7,15 @@
 
 use super::Engine;
 use super::session::{PeerLink, uni};
-use crate::ipc::{FocusDto, FeaturesDto, Live, StreamStatsDto, UiEvent};
-use deskbridge_display::{FocusDisplaySession, FocusLayout, FocusOptions, PlanOptions, Side, SplitShare, plan_focus};
+use crate::ipc::{FeaturesDto, FocusDto, Live, StreamStatsDto, UiEvent};
+use deskbridge_display::{
+    FocusDisplaySession, FocusLayout, FocusOptions, PlanOptions, Side, SplitShare, plan_focus,
+};
 use deskbridge_input::router::AbsRegion;
 use deskbridge_platform::display::Mode;
 use deskbridge_platform::video::{
-    CaptureOutput, CursorState, EncoderConfig, Frame, ScreenCapturer, VideoCodec, VideoDecoder, VideoEncoder,
-    VideoPresenter,
+    CaptureOutput, CursorState, EncoderConfig, Frame, ScreenCapturer, VideoCodec, VideoDecoder,
+    VideoEncoder, VideoPresenter,
 };
 use deskbridge_proto::media::VideoHeader;
 use deskbridge_proto::pb;
@@ -21,13 +23,17 @@ use deskbridge_video::abr::{AbrSample, BitrateController, LinkClass};
 use deskbridge_video::backend::PresenterMode;
 use deskbridge_video::negotiate::{WantedStream, codec_from_pb, codec_to_pb, negotiate};
 use deskbridge_video::pacing::{IdrThrottle, KeepAlive};
-use deskbridge_video::stream::{LateFrameFilter, Verdict, frame_header, keepalive_header, read_frame, write_frame};
+use deskbridge_video::stream::{
+    LateFrameFilter, Verdict, frame_header, keepalive_header, read_frame, write_frame,
+};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc as std_mpsc};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::unbounded_channel;
+
+type CaptureSetup = (Box<dyn ScreenCapturer>, Box<dyn VideoEncoder>);
 
 const START_TIMEOUT: Duration = Duration::from_secs(25);
 /// Frames in flight on the sender before it drops (and requests an IDR later).
@@ -39,6 +45,8 @@ pub(crate) enum Phase {
     Off,
     Preparing,
     Streaming,
+    /// Reserved: the UI protocol knows a "stopping" phase; teardown is currently instantaneous.
+    #[allow(dead_code)]
     Stopping,
 }
 
@@ -137,8 +145,13 @@ impl Drop for Source {
 fn layout_of(cfg: &crate::config::Config) -> (FocusLayout, &'static str) {
     match cfg.focus.mode.as_str() {
         "split" => {
-            let side = if cfg.focus.split_side == "left" { Side::Left } else { Side::Right };
-            let share = SplitShare::from_percent(cfg.focus.split_percent).unwrap_or(SplitShare::Half);
+            let side = if cfg.focus.split_side == "left" {
+                Side::Left
+            } else {
+                Side::Right
+            };
+            let share =
+                SplitShare::from_percent(cfg.focus.split_percent).unwrap_or(SplitShare::Half);
             (FocusLayout::Split { side, share }, "split")
         }
         "window" => (FocusLayout::Full, "window"),
@@ -183,7 +196,11 @@ impl Engine {
                 let _ = self.set_focus("cycle");
             }
             H::FocusSplit => {
-                let m = if self.focus.phase != Phase::Off && self.focus.mode == "split" { "off" } else { "split" };
+                let m = if self.focus.phase != Phase::Off && self.focus.mode == "split" {
+                    "off"
+                } else {
+                    "split"
+                };
                 let _ = self.set_focus(m);
             }
             H::StatsOverlay => {
@@ -201,7 +218,10 @@ impl Engine {
             return;
         }
         if let Some(s) = &self.session {
-            s.link.send_control(pb::control::Msg::FocusRequest(pb::FocusRequest { start: closed }));
+            s.link
+                .send_control(pb::control::Msg::FocusRequest(pb::FocusRequest {
+                    start: closed,
+                }));
         }
     }
 
@@ -212,14 +232,25 @@ impl Engine {
             }
             if let Some(s) = &self.session {
                 let caps = &s.link.hello.caps;
-                if !caps.iter().any(|c| c.name == deskbridge_proto::caps::FOCUS_SOURCE) {
+                if !caps
+                    .iter()
+                    .any(|c| c.name == deskbridge_proto::caps::FOCUS_SOURCE)
+                {
                     return Some("Das Partnergerät unterstützt den Fokusmodus nicht.".into());
                 }
-                if s.link.hello.video.as_ref().is_none_or(|v| v.encode.is_empty()) {
+                if s.link
+                    .hello
+                    .video
+                    .as_ref()
+                    .is_none_or(|v| v.encode.is_empty())
+                {
                     return Some("Der Laptop hat keinen Hardware-Video-Encoder (NVENC, Quick Sync oder AMF).".into());
                 }
                 if !caps.iter().any(|c| c.name == "focus.vdisplay") {
-                    return Some("Der virtuelle Monitor-Treiber ist auf dem Laptop nicht installiert.".into());
+                    return Some(
+                        "Der virtuelle Monitor-Treiber ist auf dem Laptop nicht installiert."
+                            .into(),
+                    );
                 }
             }
         }
@@ -234,7 +265,9 @@ impl Engine {
         if !self.cfg.device.input_source {
             return Err("Der Fokusmodus wird am PC mit Maus und Tastatur gestartet.".into());
         }
-        let Some(s) = &self.session else { return Err("Nicht verbunden".into()) };
+        let Some(s) = &self.session else {
+            return Err("Nicht verbunden".into());
+        };
         if let Some(r) = self.unavailable_reason() {
             return Err(r);
         }
@@ -256,10 +289,23 @@ impl Engine {
             .clone();
         let hz = (mon.refresh_mhz / 1000).max(30);
         let (layout, mode_name) = layout_of(&self.cfg);
-        let plan = plan_focus(Mode { width: mon.w, height: mon.h, hz }, layout, PlanOptions::default())
-            .map_err(|e| format!("Monitormodus nicht nutzbar: {e}"))?;
-        let want_fps = if self.cfg.focus.fps == 0 { plan.virtual_mode.hz } else { self.cfg.focus.fps };
-        let mut want = WantedStream::new(plan.virtual_mode.width, plan.virtual_mode.height, want_fps);
+        let plan = plan_focus(
+            Mode {
+                width: mon.w,
+                height: mon.h,
+                hz,
+            },
+            layout,
+            PlanOptions::default(),
+        )
+        .map_err(|e| format!("Monitormodus nicht nutzbar: {e}"))?;
+        let want_fps = if self.cfg.focus.fps == 0 {
+            plan.virtual_mode.hz
+        } else {
+            self.cfg.focus.fps
+        };
+        let mut want =
+            WantedStream::new(plan.virtual_mode.width, plan.virtual_mode.height, want_fps);
         want.prefer = match self.cfg.focus.codec.as_str() {
             "hevc" => Some(VideoCodec::Hevc),
             "av1" => Some(VideoCodec::Av1),
@@ -271,8 +317,12 @@ impl Engine {
             want.bitrate_kbps = Some(self.cfg.focus.bitrate_kbps);
         }
         let neg = negotiate(&peer_video, &own_decoder, &want).map_err(|e| match e {
-            deskbridge_video::NegotiateError::NoEncoder => "Der Laptop hat keinen Hardware-Video-Encoder.".to_string(),
-            deskbridge_video::NegotiateError::NoDecoder => "Dieser PC kann kein Video decodieren.".to_string(),
+            deskbridge_video::NegotiateError::NoEncoder => {
+                "Der Laptop hat keinen Hardware-Video-Encoder.".to_string()
+            }
+            deskbridge_video::NegotiateError::NoDecoder => {
+                "Dieser PC kann kein Video decodieren.".to_string()
+            }
             other => format!("Keine gemeinsame Video-Einstellung: {other}"),
         })?;
         for n in &neg.notes {
@@ -281,9 +331,23 @@ impl Engine {
 
         let rect = plan.viewer_rect_on(mon.x, mon.y);
         let presenter_mode = match (mode_name, plan.pc_region) {
-            ("window", _) => PresenterMode::Window { w: (mon.w * 2 / 3).max(640), h: (mon.h * 2 / 3).max(360) },
-            (_, Some(_)) => PresenterMode::Region { x: rect.x, y: rect.y, w: rect.w, h: rect.h, appbar: true },
-            _ => PresenterMode::Fullscreen { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
+            ("window", _) => PresenterMode::Window {
+                w: (mon.w * 2 / 3).max(640),
+                h: (mon.h * 2 / 3).max(360),
+            },
+            (_, Some(_)) => PresenterMode::Region {
+                x: rect.x,
+                y: rect.y,
+                w: rect.w,
+                h: rect.h,
+                appbar: true,
+            },
+            _ => PresenterMode::Fullscreen {
+                x: rect.x,
+                y: rect.y,
+                w: rect.w,
+                h: rect.h,
+            },
         };
         let cfg = EncoderConfig {
             codec: neg.codec,
@@ -303,8 +367,12 @@ impl Engine {
             layout: match layout {
                 FocusLayout::Full if mode_name == "window" => pb::FocusLayout::Window as i32,
                 FocusLayout::Full => pb::FocusLayout::Full as i32,
-                FocusLayout::Split { side: Side::Left, .. } => pb::FocusLayout::SplitLeft as i32,
-                FocusLayout::Split { side: Side::Right, .. } => pb::FocusLayout::SplitRight as i32,
+                FocusLayout::Split {
+                    side: Side::Left, ..
+                } => pb::FocusLayout::SplitLeft as i32,
+                FocusLayout::Split {
+                    side: Side::Right, ..
+                } => pb::FocusLayout::SplitRight as i32,
             },
             disable_internal_display: self.cfg.focus.disable_internal_display,
         }));
@@ -316,8 +384,14 @@ impl Engine {
         self.focus.fps = neg.fps;
         self.focus.bitrate_kbps = neg.bitrate_kbps;
         self.focus.codec = codec_name(neg.codec).into();
-        self.focus.plan = Some(ViewerPlan { presenter: presenter_mode, cfg });
-        self.emit(UiEvent::Osd { icon: "monitor".into(), text: "Fokusmodus startet …".into() });
+        self.focus.plan = Some(ViewerPlan {
+            presenter: presenter_mode,
+            cfg,
+        });
+        self.emit(UiEvent::Osd {
+            icon: "monitor".into(),
+            text: "Fokusmodus startet …".into(),
+        });
         self.dirty = true;
         Ok(json!({ "ok": true }))
     }
@@ -326,12 +400,18 @@ impl Engine {
         if self.focus.phase != Phase::Preparing {
             return;
         }
-        let Some(plan) = self.focus.plan.take() else { return };
+        let Some(plan) = self.focus.plan.take() else {
+            return;
+        };
         let Some(s) = &self.session else { return };
         let link = s.link.clone();
         self.focus.encoder = r.encoder.clone();
         self.focus.screen_id = r.screen_id;
-        let presenter = match self.platform.video.create_presenter(plan.presenter, &plan.cfg) {
+        let presenter = match self
+            .platform
+            .video
+            .create_presenter(plan.presenter, &plan.cfg)
+        {
             Ok(p) => p,
             Err(e) => {
                 tracing::error!("presenter failed: {e}");
@@ -348,7 +428,9 @@ impl Engine {
             }
         };
         let shared = Arc::new(ViewerShared::default());
-        shared.clock_offset_us.store(self.clock.offset_us().unwrap_or(0), Ordering::Relaxed);
+        shared
+            .clock_offset_us
+            .store(self.clock.offset_us().unwrap_or(0), Ordering::Relaxed);
         let (cmd_tx_plain, cmd_rx_plain) = std_mpsc::channel::<ViewerCmd>();
         let sh = shared.clone();
         let link_t = link.clone();
@@ -395,11 +477,18 @@ impl Engine {
         }));
         self.exec_actions(actions, true);
 
-        self.focus.viewer = Some(Viewer { cmd: cmd_tx_plain, shared, _thread: thread });
+        self.focus.viewer = Some(Viewer {
+            cmd: cmd_tx_plain,
+            shared,
+            _thread: thread,
+        });
         self.focus.phase = Phase::Streaming;
         self.focus.deadline = None;
         self.platform.power.set_keep_awake(true);
-        self.emit(UiEvent::Osd { icon: "monitor".into(), text: "Fokusmodus".into() });
+        self.emit(UiEvent::Osd {
+            icon: "monitor".into(),
+            text: "Fokusmodus".into(),
+        });
         self.dirty = true;
     }
 
@@ -412,7 +501,10 @@ impl Engine {
     fn abort_focus(&mut self, reason: &str) {
         let had_peer = self.session.is_some();
         self.stop_focus_inner(had_peer);
-        self.emit(UiEvent::Notification { level: "error".into(), text: format!("Fokusmodus: {reason}") });
+        self.emit(UiEvent::Notification {
+            level: "error".into(),
+            text: format!("Fokusmodus: {reason}"),
+        });
     }
 
     /// Viewer cursor updates from the source.
@@ -430,18 +522,28 @@ impl Engine {
         let Some(s) = &self.session else { return };
         let link = s.link.clone();
         if !self.cfg.device.stream_source {
-            link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed { reason: "Dieses Gerät ist keine Stream-Quelle.".into() }));
+            link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
+                reason: "Dieses Gerät ist keine Stream-Quelle.".into(),
+            }));
             return;
         }
         if self.focus.phase != Phase::Off {
             self.stop_focus("", false);
         }
         let Some(codec) = codec_from_pb(fs.codec) else {
-            link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed { reason: "Unbekannter Codec".into() }));
+            link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
+                reason: "Unbekannter Codec".into(),
+            }));
             return;
         };
         self.focus.phase = Phase::Preparing;
-        self.focus.mode = if fs.layout == pb::FocusLayout::Full as i32 { "full".into() } else if fs.layout == pb::FocusLayout::Window as i32 { "window".into() } else { "split".into() };
+        self.focus.mode = if fs.layout == pb::FocusLayout::Full as i32 {
+            "full".into()
+        } else if fs.layout == pb::FocusLayout::Window as i32 {
+            "window".into()
+        } else {
+            "split".into()
+        };
         self.focus.width = fs.width;
         self.focus.height = fs.height;
         self.focus.fps = fs.fps;
@@ -454,7 +556,10 @@ impl Engine {
         self.focus.display = Some(session.clone());
         let video = self.platform.video.clone();
         let tx = self.msg_tx.clone();
-        let opts = FocusOptions { disable_internal: fs.disable_internal_display, render_adapter_hint: None };
+        let opts = FocusOptions {
+            disable_internal: fs.disable_internal_display,
+            render_adapter_hint: None,
+        };
         if self.cfg.focus.lid_do_nothing {
             let _ = self.platform.power.set_lid_action_do_nothing(true);
         }
@@ -468,28 +573,46 @@ impl Engine {
             yuv444: fs.yuv444,
         };
         tokio::spawn(async move {
-            let mode = Mode { width: fs.width, height: fs.height, hz: fs.fps };
+            let mode = Mode {
+                width: fs.width,
+                height: fs.height,
+                hz: fs.fps,
+            };
             let s2 = session.clone();
             let began = tokio::task::spawn_blocking(move || s2.begin(mode, &opts)).await;
             let screen_id = match began {
                 Ok(Ok(id)) => id,
                 Ok(Err(e)) => {
-                    let _ = tx.send(super::Msg::FocusSourceFailed { reason: format!("Virtueller Monitor nicht verfügbar: {e}") });
+                    let _ = tx.send(super::Msg::FocusSourceFailed {
+                        reason: format!("Virtueller Monitor nicht verfügbar: {e}"),
+                    });
                     return;
                 }
                 Err(e) => {
-                    let _ = tx.send(super::Msg::FocusSourceFailed { reason: format!("Intern: {e}") });
+                    let _ = tx.send(super::Msg::FocusSourceFailed {
+                        reason: format!("Intern: {e}"),
+                    });
                     return;
                 }
             };
-            let setup = (|| -> Result<(Box<dyn ScreenCapturer>, Box<dyn VideoEncoder>), String> {
-                let capturer = video.create_capturer().map_err(|e| format!("Bildschirmaufnahme nicht möglich: {e}"))?;
-                let encoder = video.create_encoder(&cfg, &capturer.adapter_name()).map_err(|e| format!("Video-Encoder nicht verfügbar: {e}"))?;
+            let setup = (|| -> Result<CaptureSetup, String> {
+                let capturer = video
+                    .create_capturer()
+                    .map_err(|e| format!("Bildschirmaufnahme nicht möglich: {e}"))?;
+                let encoder = video
+                    .create_encoder(&cfg, &capturer.adapter_name())
+                    .map_err(|e| format!("Video-Encoder nicht verfügbar: {e}"))?;
                 Ok((capturer, encoder))
             })();
             match setup {
                 Ok((capturer, encoder)) => {
-                    let _ = tx.send(super::Msg::FocusSourceUp { screen_id, capturer, encoder, cfg, link });
+                    let _ = tx.send(super::Msg::FocusSourceUp {
+                        screen_id,
+                        capturer,
+                        encoder,
+                        cfg,
+                        link,
+                    });
                 }
                 Err(reason) => {
                     let _ = tx.send(super::Msg::FocusSourceFailed { reason });
@@ -522,8 +645,22 @@ impl Engine {
         let feedback = Arc::new(Mutex::new(None));
         let capturer_slot = Arc::new(Mutex::new(Some(capturer)));
         let encoder_name = encoder.name();
-        let task = tokio::spawn(run_source(link.clone(), rx, encoder, cfg.clone(), stop.clone(), force_key.clone(), feedback.clone()));
-        self.focus.source = Some(Source { stop, force_key, feedback, task, capturer_stop: capturer_slot });
+        let task = tokio::spawn(run_source(
+            link.clone(),
+            rx,
+            encoder,
+            cfg.clone(),
+            stop.clone(),
+            force_key.clone(),
+            feedback.clone(),
+        ));
+        self.focus.source = Some(Source {
+            stop,
+            force_key,
+            feedback,
+            task,
+            capturer_stop: capturer_slot,
+        });
         self.focus.encoder = encoder_name.clone();
         self.focus.phase = Phase::Streaming;
         link.send_control(pb::control::Msg::FocusReady(pb::FocusReady {
@@ -540,7 +677,10 @@ impl Engine {
 
     pub(crate) fn on_focus_source_failed(&mut self, reason: &str) {
         if let Some(s) = &self.session {
-            s.link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed { reason: reason.to_string() }));
+            s.link
+                .send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
+                    reason: reason.to_string(),
+                }));
         }
         self.stop_focus_inner(false);
     }
@@ -557,7 +697,9 @@ impl Engine {
                     tracing::error!("restoring the display failed: {e}");
                     let _ = tx.send(super::Msg::Warn {
                         code: "display_restore".into(),
-                        message: format!("Die Bildschirmanordnung konnte nicht wiederhergestellt werden: {e}"),
+                        message: format!(
+                            "Die Bildschirmanordnung konnte nicht wiederhergestellt werden: {e}"
+                        ),
                     });
                 }
             });
@@ -575,15 +717,17 @@ impl Engine {
         }
         self.stop_focus_inner(notify_peer);
         if !osd.is_empty() {
-            self.emit(UiEvent::Osd { icon: "monitor".into(), text: osd.into() });
+            self.emit(UiEvent::Osd {
+                icon: "monitor".into(),
+                text: osd.into(),
+            });
         }
     }
 
     fn stop_focus_inner(&mut self, notify_peer: bool) {
-        if notify_peer {
-            if let Some(s) = &self.session {
-                s.link.send_control(pb::control::Msg::FocusStop(pb::FocusStop {}));
-            }
+        if notify_peer && let Some(s) = &self.session {
+            s.link
+                .send_control(pb::control::Msg::FocusStop(pb::FocusStop {}));
         }
         // viewer
         if self.focus.viewer.is_some() || self.focus.plan.is_some() {
@@ -627,11 +771,11 @@ impl Engine {
     pub(crate) fn focus_control(&mut self, msg: &pb::control::Msg) -> bool {
         use pb::control::Msg as M;
         match msg {
-            M::FocusStart(fs) => self.on_focus_start(fs.clone()),
+            M::FocusStart(fs) => self.on_focus_start(*fs),
             M::FocusReady(r) => self.on_focus_ready(r.clone()),
             M::FocusFailed(f) => self.on_focus_failed(&f.reason),
             M::FocusStop(_) => self.on_focus_stop_msg(),
-            M::FocusRequest(r) => self.on_focus_request(r.clone()),
+            M::FocusRequest(r) => self.on_focus_request(*r),
             M::KeyframeRequest(_) => {
                 if let Some(s) = &self.focus.source {
                     s.force_key.store(true, Ordering::SeqCst);
@@ -639,7 +783,7 @@ impl Engine {
             }
             M::StreamStats(st) => {
                 if let Some(s) = &self.focus.source {
-                    *s.feedback.lock() = Some(st.clone());
+                    *s.feedback.lock() = Some(*st);
                 }
             }
             M::CursorShape(c) => {
@@ -658,7 +802,11 @@ impl Engine {
                     y: p.y,
                     visible: p.visible,
                     shape_serial: p.serial,
-                    shape: if p.serial == self.cursor_shape_serial { self.cursor_shape.clone() } else { None },
+                    shape: if p.serial == self.cursor_shape_serial {
+                        self.cursor_shape.clone()
+                    } else {
+                        None
+                    },
                 };
                 self.on_focus_cursor(state);
             }
@@ -670,16 +818,18 @@ impl Engine {
 
     /// 250 ms tick: start timeout, window-mode pointer region, stats.
     pub(crate) fn tick_focus(&mut self) {
-        if let Some(d) = self.focus.deadline {
-            if Instant::now() > d {
-                tracing::warn!("focus mode start timed out");
-                self.abort_focus("Zeitüberschreitung beim Start");
-                return;
-            }
+        if let Some(d) = self.focus.deadline
+            && Instant::now() > d
+        {
+            tracing::warn!("focus mode start timed out");
+            self.abort_focus("Zeitüberschreitung beim Start");
+            return;
         }
         let Some(v) = &self.focus.viewer else { return };
-        v.shared.clock_offset_us.store(self.clock.offset_us().unwrap_or(0), Ordering::Relaxed);
-        if self.tick_count % 4 != 0 {
+        v.shared
+            .clock_offset_us
+            .store(self.clock.offset_us().unwrap_or(0), Ordering::Relaxed);
+        if !self.tick_count.is_multiple_of(4) {
             return;
         }
         // 1 s statistics
@@ -722,18 +872,18 @@ impl Engine {
             s.link.send_control(pb::control::Msg::StreamStats(st));
         }
         // window mode: the window can be moved
-        if self.focus.mode == "window" {
-            if let (Some(rect), Some(s)) = (*sh.rect.lock(), &self.session) {
-                let actions = self.router.set_region(Some(AbsRegion {
-                    device: s.link.peer.id,
-                    screen: self.focus.screen_id,
-                    x: rect.0,
-                    y: rect.1,
-                    w: rect.2 as i32,
-                    h: rect.3 as i32,
-                }));
-                let _ = actions; // region update only; no enter/leave side effects while unchanged
-            }
+        if self.focus.mode == "window"
+            && let (Some(rect), Some(s)) = (*sh.rect.lock(), &self.session)
+        {
+            let actions = self.router.set_region(Some(AbsRegion {
+                device: s.link.peer.id,
+                screen: self.focus.screen_id,
+                x: rect.0,
+                y: rect.1,
+                w: rect.2 as i32,
+                h: rect.3 as i32,
+            }));
+            let _ = actions; // region update only; no enter/leave side effects while unchanged
         }
     }
 
@@ -747,10 +897,10 @@ impl Engine {
         let display = self.focus.display.take();
         self.focus.source = None;
         self.focus.viewer = None;
-        if let Some(d) = display {
-            if let Err(e) = d.end() {
-                tracing::error!("restoring the display at shutdown failed: {e}");
-            }
+        if let Some(d) = display
+            && let Err(e) = d.end()
+        {
+            tracing::error!("restoring the display at shutdown failed: {e}");
         }
         self.focus.phase = Phase::Off;
     }
@@ -760,7 +910,11 @@ impl Engine {
         let mut d = FocusDto::default();
         d.base.enabled = true;
         d.phase = self.focus.phase.as_str().into();
-        d.mode = if self.focus.mode.is_empty() { self.cfg.focus.mode.clone() } else { self.focus.mode.clone() };
+        d.mode = if self.focus.mode.is_empty() {
+            self.cfg.focus.mode.clone()
+        } else {
+            self.focus.mode.clone()
+        };
         d.width = self.focus.width;
         d.height = self.focus.height;
         d.fps = self.focus.fps;
@@ -807,47 +961,65 @@ fn viewer_thread(
     let epoch = Instant::now();
     let mut filter = LateFrameFilter::new();
     let mut interval = Instant::now();
-    while let Ok(cmd) = rx.recv() {
-        match cmd {
-            ViewerCmd::Stop => break,
-            ViewerCmd::Cursor(c) => presenter.set_cursor(&c),
-            ViewerCmd::Overlay(on) => {
-                let text = sh.last_text.lock().clone();
-                presenter.set_stats_overlay(on, &text);
-            }
-            ViewerCmd::Frame(h, payload, arrived) => {
-                let now_ms = epoch.elapsed().as_millis() as u64;
-                let offset = sh.clock_offset_us.load(Ordering::Relaxed);
-                let local_ts = (h.ts_us as i64 - offset).max(0) as u64;
-                let now_us = crate::clock::now_us();
-                let age = now_us.saturating_sub(local_ts);
-                let outcome = filter.on_frame(&h, now_ms, Some(age));
-                if outcome.request_keyframe {
-                    link.send_control(pb::control::Msg::KeyframeRequest(pb::KeyframeRequest {}));
+    // Every frame must be decoded (P-frames depend on each other) but only the newest one of a
+    // backlog is presented, so a stall never turns into seconds of latency.
+    'outer: while let Ok(first) = rx.recv() {
+        let mut batch = vec![first];
+        batch.extend(rx.try_iter());
+        let last_frame = batch
+            .iter()
+            .rposition(|c| matches!(c, ViewerCmd::Frame(..)));
+        for (idx, cmd) in batch.into_iter().enumerate() {
+            let present_now = Some(idx) == last_frame;
+            match cmd {
+                ViewerCmd::Stop => break 'outer,
+                ViewerCmd::Cursor(c) => presenter.set_cursor(&c),
+                ViewerCmd::Overlay(on) => {
+                    let text = sh.last_text.lock().clone();
+                    presenter.set_stats_overlay(on, &text);
                 }
-                if outcome.verdict != Verdict::Accept || h.is_keepalive() {
-                    continue;
-                }
-                let t0 = Instant::now();
-                match decoder.decode(&payload, h.is_key()) {
-                    Ok(Some(frame)) => {
-                        let dec_us = t0.elapsed().as_micros() as u64;
-                        let frame: Frame = frame;
-                        if presenter.present(&frame).is_ok() {
-                            sh.presented.fetch_add(1, Ordering::Relaxed);
-                            sh.bytes.fetch_add(payload.len() as u64, Ordering::Relaxed);
-                            sh.decode_us_sum.fetch_add(dec_us, Ordering::Relaxed);
-                            sh.decode_n.fetch_add(1, Ordering::Relaxed);
-                            let total = crate::clock::now_us().saturating_sub(local_ts);
-                            sh.total_us_sum.fetch_add(total, Ordering::Relaxed);
-                            sh.network_us_sum.fetch_add(age.saturating_sub(arrived.elapsed().as_micros() as u64), Ordering::Relaxed);
-                        }
+                ViewerCmd::Frame(h, payload, arrived) => {
+                    let now_ms = epoch.elapsed().as_millis() as u64;
+                    let offset = sh.clock_offset_us.load(Ordering::Relaxed);
+                    let local_ts = (h.ts_us as i64 - offset).max(0) as u64;
+                    let now_us = crate::clock::now_us();
+                    let age = now_us.saturating_sub(local_ts);
+                    let outcome = filter.on_frame(&h, now_ms, Some(age));
+                    if outcome.request_keyframe {
+                        link.send_control(pb::control::Msg::KeyframeRequest(
+                            pb::KeyframeRequest {},
+                        ));
                     }
-                    Ok(None) => {}
-                    Err(e) => {
-                        tracing::debug!("decode error: {e}");
-                        if filter.on_decode_error(now_ms) {
-                            link.send_control(pb::control::Msg::KeyframeRequest(pb::KeyframeRequest {}));
+                    if outcome.verdict != Verdict::Accept || h.is_keepalive() {
+                        continue;
+                    }
+                    let t0 = Instant::now();
+                    match decoder.decode(&payload, h.is_key()) {
+                        Ok(Some(frame)) => {
+                            let dec_us = t0.elapsed().as_micros() as u64;
+                            let frame: Frame = frame;
+                            let shown = !present_now || presenter.present(&frame).is_ok();
+                            if shown {
+                                sh.presented.fetch_add(1, Ordering::Relaxed);
+                                sh.bytes.fetch_add(payload.len() as u64, Ordering::Relaxed);
+                                sh.decode_us_sum.fetch_add(dec_us, Ordering::Relaxed);
+                                sh.decode_n.fetch_add(1, Ordering::Relaxed);
+                                let total = crate::clock::now_us().saturating_sub(local_ts);
+                                sh.total_us_sum.fetch_add(total, Ordering::Relaxed);
+                                sh.network_us_sum.fetch_add(
+                                    age.saturating_sub(arrived.elapsed().as_micros() as u64),
+                                    Ordering::Relaxed,
+                                );
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::debug!("decode error: {e}");
+                            if filter.on_decode_error(now_ms) {
+                                link.send_control(pb::control::Msg::KeyframeRequest(
+                                    pb::KeyframeRequest {},
+                                ));
+                            }
                         }
                     }
                 }
@@ -855,7 +1027,10 @@ fn viewer_thread(
         }
         if interval.elapsed() > Duration::from_millis(500) {
             interval = Instant::now();
-            sh.loss_permille.store((filter.take_interval_loss_pct() * 10.0) as u32, Ordering::Relaxed);
+            sh.loss_permille.store(
+                (filter.take_interval_loss_pct() * 10.0) as u32,
+                Ordering::Relaxed,
+            );
             *sh.rect.lock() = presenter.window_rect();
             if filter.poll_retry(epoch.elapsed().as_millis() as u64) {
                 link.send_control(pb::control::Msg::KeyframeRequest(pb::KeyframeRequest {}));
@@ -895,7 +1070,7 @@ async fn run_source(
                     CaptureOutput::Frame(frame) => {
                         let now_ms = epoch.elapsed().as_millis() as u64;
                         let want_key = force_key.swap(false, Ordering::SeqCst);
-                        let key = if want_key { idr.request(now_ms) || true } else { false };
+                        let key = want_key && idr.request(now_ms);
                         let t0 = Instant::now();
                         let enc = &mut encoder;
                         let packets = tokio::task::block_in_place(|| enc.encode(&frame, key));
@@ -925,18 +1100,17 @@ async fn run_source(
                             };
                             let link = link.clone();
                             tokio::spawn(async move {
-                                if let Ok(mut s) = link.open_uni(uni::VIDEO).await {
-                                    if write_frame(&mut s, &h, &p.data).await.is_ok() {
+                                if let Ok(mut s) = link.open_uni(uni::VIDEO).await
+                                    && write_frame(&mut s, &h, &p.data).await.is_ok() {
                                         let _ = s.finish();
                                     }
-                                }
                                 drop(permit);
                             });
                         }
                     }
                     CaptureOutput::Cursor(c) => {
-                        if let Some(shape) = &c.shape {
-                            if c.shape_serial != last_shape_serial {
+                        if let Some(shape) = &c.shape
+                            && c.shape_serial != last_shape_serial {
                                 last_shape_serial = c.shape_serial;
                                 link.send_control(pb::control::Msg::CursorShape(pb::CursorShape {
                                     serial: c.shape_serial,
@@ -947,7 +1121,6 @@ async fn run_source(
                                     rgba: shape.rgba.clone(),
                                 }));
                             }
-                        }
                         link.send_control(pb::control::Msg::CursorPos(pb::CursorPos { x: c.x, y: c.y, visible: c.visible, serial: c.shape_serial }));
                     }
                 }
@@ -960,11 +1133,10 @@ async fn run_source(
                     frame_id = frame_id.wrapping_add(1);
                     let link = link.clone();
                     tokio::spawn(async move {
-                        if let Ok(mut s) = link.open_uni(uni::VIDEO).await {
-                            if write_frame(&mut s, &h, &[]).await.is_ok() {
+                        if let Ok(mut s) = link.open_uni(uni::VIDEO).await
+                            && write_frame(&mut s, &h, &[]).await.is_ok() {
                                 let _ = s.finish();
                             }
-                        }
                     });
                 }
                 if idr.poll(now_ms) {
@@ -973,7 +1145,7 @@ async fn run_source(
                 if last_abr.elapsed() >= Duration::from_millis(500) {
                     let secs = last_abr.elapsed().as_secs_f32().max(0.001);
                     last_abr = Instant::now();
-                    let fb = feedback.lock().clone();
+                    let fb = *feedback.lock();
                     let sample = AbrSample {
                         loss_pct: fb.as_ref().map_or(0.0, |f| f.loss_pct),
                         rtt_ms: link.conn.rtt().as_secs_f32() * 1000.0,
@@ -993,9 +1165,21 @@ async fn run_source(
 }
 
 /// Needed by the actor for `Hello`: the pair of video capabilities.
-pub(crate) fn hello_video_caps(backend: &dyn deskbridge_video::backend::VideoBackend, encoder_side: bool, viewer_side: bool) -> pb::VideoCaps {
-    let e = if encoder_side { backend.encoder_caps() } else { pb::VideoCaps::default() };
-    let d = if viewer_side { backend.decoder_caps() } else { pb::VideoCaps::default() };
+pub(crate) fn hello_video_caps(
+    backend: &dyn deskbridge_video::backend::VideoBackend,
+    encoder_side: bool,
+    viewer_side: bool,
+) -> pb::VideoCaps {
+    let e = if encoder_side {
+        backend.encoder_caps()
+    } else {
+        pb::VideoCaps::default()
+    };
+    let d = if viewer_side {
+        backend.decoder_caps()
+    } else {
+        pb::VideoCaps::default()
+    };
     pb::VideoCaps {
         encode: e.encode,
         decode: d.decode,

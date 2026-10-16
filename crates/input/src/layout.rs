@@ -124,7 +124,10 @@ impl Layout {
         let mut prim = None;
         for s in &local.1 {
             let (w, h) = layout_size(s);
-            let (x, y) = (f64::from(s.x) * 96.0 / f64::from(s.dpi.max(48)), f64::from(s.y) * 96.0 / f64::from(s.dpi.max(48)));
+            let (x, y) = (
+                f64::from(s.x) * 96.0 / f64::from(s.dpi.max(48)),
+                f64::from(s.y) * 96.0 / f64::from(s.dpi.max(48)),
+            );
             out.push(Placement {
                 device_id: local.0.to_string(),
                 screen_id: s.id,
@@ -162,7 +165,9 @@ impl Layout {
 
     #[must_use]
     pub fn find(&self, device: Uuid, screen: u32) -> Option<&LScreen> {
-        self.screens.iter().find(|s| s.device == device && s.screen == screen)
+        self.screens
+            .iter()
+            .find(|s| s.device == device && s.screen == screen)
     }
 
     /// Looks for a screen touching the given edge of `from` at relative position `rel` (0…1 along
@@ -184,10 +189,38 @@ impl Layout {
                 continue;
             }
             let (touch, lo, hi, start, len, entry) = match edge {
-                Edge::Right => ((t.x - src.right()).abs() <= TOUCH_EPS, t.y, t.bottom(), t.y, t.h, Edge::Left),
-                Edge::Left => ((t.right() - src.x).abs() <= TOUCH_EPS, t.y, t.bottom(), t.y, t.h, Edge::Right),
-                Edge::Bottom => ((t.y - src.bottom()).abs() <= TOUCH_EPS, t.x, t.right(), t.x, t.w, Edge::Top),
-                Edge::Top => ((t.bottom() - src.y).abs() <= TOUCH_EPS, t.x, t.right(), t.x, t.w, Edge::Bottom),
+                Edge::Right => (
+                    (t.x - src.right()).abs() <= TOUCH_EPS,
+                    t.y,
+                    t.bottom(),
+                    t.y,
+                    t.h,
+                    Edge::Left,
+                ),
+                Edge::Left => (
+                    (t.right() - src.x).abs() <= TOUCH_EPS,
+                    t.y,
+                    t.bottom(),
+                    t.y,
+                    t.h,
+                    Edge::Right,
+                ),
+                Edge::Bottom => (
+                    (t.y - src.bottom()).abs() <= TOUCH_EPS,
+                    t.x,
+                    t.right(),
+                    t.x,
+                    t.w,
+                    Edge::Top,
+                ),
+                Edge::Top => (
+                    (t.bottom() - src.y).abs() <= TOUCH_EPS,
+                    t.x,
+                    t.right(),
+                    t.x,
+                    t.w,
+                    Edge::Bottom,
+                ),
                 Edge::Unspecified => return None,
             };
             if !touch {
@@ -199,7 +232,12 @@ impl Layout {
             };
             if along >= lo && along <= hi {
                 let rel_t = ((along - start) / len).clamp(0.0, 1.0);
-                return Some(Hit { device: t.device, screen: t.screen, rel: rel_t, entry_edge: entry });
+                return Some(Hit {
+                    device: t.device,
+                    screen: t.screen,
+                    rel: rel_t,
+                    entry_edge: entry,
+                });
             }
         }
         None
@@ -221,7 +259,10 @@ impl Layout {
 
     #[must_use]
     pub fn to_update(&self) -> pb::LayoutUpdate {
-        pb::LayoutUpdate { placements: self.to_placements(), revision: self.revision }
+        pb::LayoutUpdate {
+            placements: self.to_placements(),
+            revision: self.revision,
+        }
     }
 }
 

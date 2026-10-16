@@ -19,11 +19,16 @@ pub struct IdrThrottle {
 impl IdrThrottle {
     #[must_use]
     pub fn new(min_interval_ms: u64) -> Self {
-        Self { min_interval_ms, last_idr_ms: None, pending: false }
+        Self {
+            min_interval_ms,
+            last_idr_ms: None,
+            pending: false,
+        }
     }
 
     fn may_send(&self, now_ms: u64) -> bool {
-        self.last_idr_ms.is_none_or(|t| now_ms.saturating_sub(t) >= self.min_interval_ms)
+        self.last_idr_ms
+            .is_none_or(|t| now_ms.saturating_sub(t) >= self.min_interval_ms)
     }
 
     /// A receiver asked for a keyframe. Returns true if an IDR should be produced right now;
@@ -80,7 +85,11 @@ pub struct KeepAlive {
 impl KeepAlive {
     #[must_use]
     pub fn new(timeout_ms: u64) -> Self {
-        Self { timeout_ms, last_sent_ms: None, idr: IdrThrottle::default() }
+        Self {
+            timeout_ms,
+            last_sent_ms: None,
+            idr: IdrThrottle::default(),
+        }
     }
 
     /// Any frame (real or keep-alive) went out.
@@ -92,13 +101,15 @@ impl KeepAlive {
     /// calls [`KeepAlive::note_sent`]. Before the first frame nothing is due.
     #[must_use]
     pub fn keepalive_due(&self, now_ms: u64) -> bool {
-        self.last_sent_ms.is_some_and(|t| now_ms.saturating_sub(t) >= self.timeout_ms)
+        self.last_sent_ms
+            .is_some_and(|t| now_ms.saturating_sub(t) >= self.timeout_ms)
     }
 
     /// Milliseconds until the next keep-alive is due (for a timer), `None` before the first frame.
     #[must_use]
     pub fn next_due_in_ms(&self, now_ms: u64) -> Option<u64> {
-        self.last_sent_ms.map(|t| (t + self.timeout_ms).saturating_sub(now_ms))
+        self.last_sent_ms
+            .map(|t| (t + self.timeout_ms).saturating_sub(now_ms))
     }
 }
 
@@ -115,7 +126,10 @@ mod tests {
     #[test]
     fn keepalive_fires_after_500ms_of_silence() {
         let mut k = KeepAlive::default();
-        assert!(!k.keepalive_due(10_000), "nothing due before the first frame");
+        assert!(
+            !k.keepalive_due(10_000),
+            "nothing due before the first frame"
+        );
         k.note_sent(1_000);
         assert!(!k.keepalive_due(1_499));
         assert!(k.keepalive_due(1_500));
@@ -143,7 +157,10 @@ mod tests {
         assert!(!t.request(1_200));
         assert!(t.has_pending());
         assert!(!t.poll(1_249));
-        assert!(t.poll(1_250), "deferred request is granted when the interval is over");
+        assert!(
+            t.poll(1_250),
+            "deferred request is granted when the interval is over"
+        );
         assert!(!t.has_pending());
         assert!(!t.poll(1_300));
         // a request after a long pause is immediate again

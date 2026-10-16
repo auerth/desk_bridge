@@ -16,9 +16,9 @@ use windows::Win32::Graphics::Direct3D::Fxc::{D3DCOMPILE_OPTIMIZATION_LEVEL3, D3
 use windows::Win32::Graphics::Direct3D::{D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, ID3DBlob};
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE,
-    D3D11_BUFFER_DESC, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT, ID3D11Buffer,
-    ID3D11PixelShader, ID3D11RasterizerState, ID3D11RenderTargetView, ID3D11Texture2D,
-    ID3D11VertexShader, D3D11_CULL_NONE, D3D11_FILL_SOLID, D3D11_RASTERIZER_DESC,
+    D3D11_BUFFER_DESC, D3D11_CULL_NONE, D3D11_FILL_SOLID, D3D11_RASTERIZER_DESC,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT, ID3D11Buffer, ID3D11PixelShader,
+    ID3D11RasterizerState, ID3D11RenderTargetView, ID3D11Texture2D, ID3D11VertexShader,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::core::{Interface, PCSTR};
@@ -76,8 +76,11 @@ fn compile(entry: &str, target: &str) -> Result<ID3DBlob> {
     if let Err(e) = r {
         let msg = err
             .map(|b| unsafe {
-                String::from_utf8_lossy(std::slice::from_raw_parts(b.GetBufferPointer().cast::<u8>(), b.GetBufferSize()))
-                    .into_owned()
+                String::from_utf8_lossy(std::slice::from_raw_parts(
+                    b.GetBufferPointer().cast::<u8>(),
+                    b.GetBufferSize(),
+                ))
+                .into_owned()
             })
             .unwrap_or_default();
         return Err(anyhow!("D3DCompile: {e} {msg}"));
@@ -124,7 +127,10 @@ impl SynthSource {
             MipLevels: 1,
             ArraySize: 1,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
             ..Default::default()
@@ -137,7 +143,8 @@ impl SynthSource {
             unsafe {
                 dev.device.CreateTexture2D(&desc, None, Some(&mut t))?;
                 let tex = t.context("null texture")?;
-                dev.device.CreateRenderTargetView(&tex, None, Some(&mut rtv))?;
+                dev.device
+                    .CreateRenderTargetView(&tex, None, Some(&mut rtv))?;
                 v.push((tex, rtv.context("null rtv")?));
             }
         }
@@ -146,9 +153,13 @@ impl SynthSource {
         let (mut vs, mut ps, mut cb, mut raster) = (None, None, None, None);
         // SAFETY: bytecode slices are valid for the calls.
         unsafe {
-            let bytes = |b: &ID3DBlob| std::slice::from_raw_parts(b.GetBufferPointer().cast::<u8>(), b.GetBufferSize());
-            dev.device.CreateVertexShader(bytes(&vsb), None, Some(&mut vs))?;
-            dev.device.CreatePixelShader(bytes(&psb), None, Some(&mut ps))?;
+            let bytes = |b: &ID3DBlob| {
+                std::slice::from_raw_parts(b.GetBufferPointer().cast::<u8>(), b.GetBufferSize())
+            };
+            dev.device
+                .CreateVertexShader(bytes(&vsb), None, Some(&mut vs))?;
+            dev.device
+                .CreatePixelShader(bytes(&psb), None, Some(&mut ps))?;
             let bd = D3D11_BUFFER_DESC {
                 ByteWidth: 16,
                 Usage: D3D11_USAGE_DEFAULT,
@@ -156,14 +167,21 @@ impl SynthSource {
                 ..Default::default()
             };
             dev.device.CreateBuffer(&bd, None, Some(&mut cb))?;
-            let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: true.into(), ..Default::default() };
+            let rd = D3D11_RASTERIZER_DESC {
+                FillMode: D3D11_FILL_SOLID,
+                CullMode: D3D11_CULL_NONE,
+                DepthClipEnable: true.into(),
+                ..Default::default()
+            };
             dev.device.CreateRasterizerState(&rd, Some(&mut raster))?;
         }
         Ok(Self {
             dev,
             width,
             height,
-            pool: Arc::new(Pool { free: Mutex::new(v) }),
+            pool: Arc::new(Pool {
+                free: Mutex::new(v),
+            }),
             vs: vs.context("vs")?,
             ps: ps.context("ps")?,
             cb: cb.context("cb")?,
@@ -174,7 +192,10 @@ impl SynthSource {
     /// Renders picture number `n` at animation time `t` seconds. `None` = all pool textures busy.
     pub fn render(&self, t: f32) -> Option<Frame> {
         let item = self.pool.free.lock().ok()?.pop()?;
-        let slot = Slot { item: Some(item), pool: self.pool.clone() };
+        let slot = Slot {
+            item: Some(item),
+            pool: self.pool.clone(),
+        };
         let (tex, rtv) = slot.item.as_ref().expect("just set").clone();
         let ctx = &self.dev.context;
         let params = [t, self.width as f32, self.height as f32, 0.0f32];

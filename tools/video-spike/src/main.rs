@@ -40,9 +40,27 @@ fn probe() {
             a.adapter_index, a.adapter_name, a.encoders, a.max_size.0, a.max_size.1
         );
     }
+    println!("== DXGI outputs ==");
+    for o in deskbridge_platform_windows::video::list_outputs().unwrap_or_default() {
+        println!(
+            "adapter #{} output #{} {} {}x{} at {},{} attached={} on {}",
+            o.adapter_index,
+            o.output_index,
+            o.device_name,
+            o.w,
+            o.h,
+            o.x,
+            o.y,
+            o.attached,
+            o.adapter_name
+        );
+    }
     println!("== decoder probe (D3D11 video device) ==");
     for a in probe_decoders_detailed(None) {
-        println!("adapter #{} {}: {:?}  HEVC RExt 4:4:4 profile exposed: {}", a.adapter_index, a.adapter_name, a.codecs, a.hevc_rext_444_profile);
+        println!(
+            "adapter #{} {}: {:?}  HEVC RExt 4:4:4 profile exposed: {}",
+            a.adapter_index, a.adapter_name, a.codecs, a.hevc_rext_444_profile
+        );
         println!("  all decoder profiles: {}", a.all_profiles.len());
     }
     let (e, d) = (probe_encoders(), probe_decoders(None));
@@ -54,7 +72,9 @@ fn probe() {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut cfg = RunConfig {
         source: Source::Synthetic,
@@ -76,12 +96,18 @@ fn main() -> Result<()> {
     let mut i = 0;
     let val = |i: &mut usize| -> Result<String> {
         *i += 1;
-        args.get(*i).cloned().ok_or_else(|| anyhow::anyhow!("missing value for {}", args[*i - 1]))
+        args.get(*i)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("missing value for {}", args[*i - 1]))
     };
     while i < args.len() {
         let a = args[i].clone();
         match a.as_str() {
             "--probe" => do_probe = true,
+            "--present-bench" => {
+                present_bench()?;
+                return Ok(());
+            }
             "--nv12-test" => {
                 nv12_test()?;
                 return Ok(());
@@ -95,7 +121,9 @@ fn main() -> Result<()> {
             "--height" => cfg.height = val(&mut i)?.parse()?,
             "--seconds" => cfg.seconds = val(&mut i)?.parse()?,
             "--present" => cfg.present_secs = 5.0,
-            s if s.starts_with("--present=") => cfg.present_secs = s["--present=".len()..].parse()?,
+            s if s.starts_with("--present=") => {
+                cfg.present_secs = s["--present=".len()..].parse()?
+            }
             "--verify" => cfg.verify = true,
             "--present-mode" => {
                 cfg.present_mode = match val(&mut i)?.as_str() {
@@ -115,11 +143,20 @@ fn main() -> Result<()> {
             "--decode-bench" => bench = Some(val(&mut i)?.parse()?),
             "--bitrate-step" => {
                 let v = val(&mut i)?;
-                let (at, mbit) = v.split_once(':').ok_or_else(|| anyhow::anyhow!("--bitrate-step AT:MBIT"))?;
+                let (at, mbit) = v
+                    .split_once(':')
+                    .ok_or_else(|| anyhow::anyhow!("--bitrate-step AT:MBIT"))?;
                 cfg.bitrate_step = Some((at.parse()?, (mbit.parse::<f64>()? * 1000.0) as u32));
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().take(11).collect::<Vec<_>>().join("\n"));
+                println!(
+                    "{}",
+                    include_str!("main.rs")
+                        .lines()
+                        .take(11)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
                 return Ok(());
             }
             other => bail!("unknown argument {other}"),
@@ -146,7 +183,10 @@ fn nv12_test() -> Result<()> {
     use deskbridge_platform_windows::video::{adapter_by_index, create_device};
     use windows::Win32::Graphics::Direct3D11::*;
     use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
-    let dev = create_device(Some(&adapter_by_index(0).map_err(|e| anyhow::anyhow!("{e}"))?)).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let dev = create_device(Some(
+        &adapter_by_index(0).map_err(|e| anyhow::anyhow!("{e}"))?,
+    ))
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!("device on {}", dev.adapter_name);
     // SAFETY: plain COM calls.
     let fs = unsafe { dev.device.CheckFormatSupport(DXGI_FORMAT_NV12)? };
@@ -155,20 +195,87 @@ fn nv12_test() -> Result<()> {
         ("none", 0u32),
         ("SRV", D3D11_BIND_SHADER_RESOURCE.0 as u32),
         ("RTV", D3D11_BIND_RENDER_TARGET.0 as u32),
-        ("RTV|SRV", (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32),
+        (
+            "RTV|SRV",
+            (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+        ),
         ("DECODER", D3D11_BIND_DECODER.0 as u32),
-        ("DECODER|SRV", (D3D11_BIND_DECODER.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32),
+        (
+            "DECODER|SRV",
+            (D3D11_BIND_DECODER.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+        ),
     ] {
         for arr in [1u32, 8] {
             let d = D3D11_TEXTURE2D_DESC {
-                Width: 1280, Height: 720, MipLevels: 1, ArraySize: arr, Format: DXGI_FORMAT_NV12,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: bind, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: 1280,
+                Height: 720,
+                MipLevels: 1,
+                ArraySize: arr,
+                Format: DXGI_FORMAT_NV12,
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: bind,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
             let mut t = None;
             let r = unsafe { dev.device.CreateTexture2D(&d, None, Some(&mut t)) };
-            println!("bind {name:<12} array {arr}: {}", match r { Ok(()) => "ok".to_string(), Err(e) => e.to_string() });
+            println!(
+                "bind {name:<12} array {arr}: {}",
+                match r {
+                    Ok(()) => "ok".to_string(),
+                    Err(e) => e.to_string(),
+                }
+            );
         }
     }
+    Ok(())
+}
+
+/// Diagnostic: pure presenter throughput with a static synthetic BGRA frame (no codec).
+fn present_bench() -> Result<()> {
+    use deskbridge_platform::video::VideoPresenter;
+    use deskbridge_platform_windows::video::{
+        D3dPresenter, PresentMode, adapter_by_index, create_device, now_us,
+    };
+    let dev = create_device(Some(
+        &adapter_by_index(0).map_err(|e| anyhow::anyhow!("{e}"))?,
+    ))
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let synth = synthetic::SynthSource::new(dev.clone(), 5120, 1440)?;
+    let mut p = D3dPresenter::new(
+        PresentMode::Window {
+            width: 1280,
+            height: 360,
+        },
+        Some(&dev.device),
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let sync = pipeline::GpuSync::new(&dev)?;
+    let mut intervals = stats::Hist::default();
+    let mut gpu = stats::Hist::default();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    let mut n = 0.0f32;
+    let mut last = now_us();
+    while std::time::Instant::now() < end {
+        let Some(f) = synth.render(n / 120.0) else {
+            continue;
+        };
+        n += 1.0;
+        let t0 = now_us();
+        p.present(&f).map_err(|e| anyhow::anyhow!("{e}"))?;
+        sync.wait();
+        let t1 = now_us();
+        gpu.push(t1 - t0);
+        intervals.push(t1 - last);
+        last = t1;
+    }
+    println!("{}", stats::table_header());
+    println!("{}", stats::table_row("present+gpu", &gpu));
+    println!("{}", stats::table_row("loop interval", &intervals));
+    p.close();
     Ok(())
 }

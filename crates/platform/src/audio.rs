@@ -24,8 +24,13 @@ pub struct AudioDeviceInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceEvent {
     Added(AudioDeviceInfo),
-    Removed { id: String },
-    DefaultChanged { kind: DeviceKind, id: Option<String> },
+    Removed {
+        id: String,
+    },
+    DefaultChanged {
+        kind: DeviceKind,
+        id: Option<String>,
+    },
 }
 
 pub trait AudioDevices: Send + Sync {
@@ -69,14 +74,21 @@ pub trait PullSource: Send + Sync {
 }
 
 pub trait AudioPlayback: Send + Sync {
-    fn start(&self, device_id: Option<&str>, source: Arc<dyn PullSource>) -> Result<Box<dyn StreamHandle>>;
+    fn start(
+        &self,
+        device_id: Option<&str>,
+        source: Arc<dyn PullSource>,
+    ) -> Result<Box<dyn StreamHandle>>;
 }
 
 /// Virtual speaker + microphone of the bundled driver (M3b).
 pub trait VirtualAudio: Send + Sync {
     fn available(&self) -> bool;
     /// Frames played by apps into "Desk Bridge Lautsprecher".
-    fn start_speaker_capture(&self, sink: UnboundedSender<AudioFrame>) -> Result<Box<dyn StreamHandle>>;
+    fn start_speaker_capture(
+        &self,
+        sink: UnboundedSender<AudioFrame>,
+    ) -> Result<Box<dyn StreamHandle>>;
     /// Writes audio into "Desk Bridge Mikrofon".
     fn write_mic(&self, frames: &[f32]);
     fn mic_in_use(&self) -> bool;

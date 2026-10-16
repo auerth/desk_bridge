@@ -243,12 +243,11 @@ pub async fn receive_file<R: AsyncRead + Unpin>(
     match res {
         Ok(v) => Ok(v),
         Err(e) => {
-            if e.is_corrupt() {
-                if let Err(rm) = tokio::fs::remove_file(&part).await {
-                    if rm.kind() != std::io::ErrorKind::NotFound {
-                        tracing::warn!("konnte {} nicht entfernen: {rm}", part.display());
-                    }
-                }
+            if e.is_corrupt()
+                && let Err(rm) = tokio::fs::remove_file(&part).await
+                && rm.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!("konnte {} nicht entfernen: {rm}", part.display());
             }
             Err(e)
         }
@@ -375,10 +374,10 @@ async fn receive_body<R: AsyncRead + Unpin>(
     let part_owned = part.to_path_buf();
     let target_owned = target.to_path_buf();
     let final_path = tokio::task::spawn_blocking(move || -> std::io::Result<PathBuf> {
-        if let Some(t) = mtime {
-            if let Err(e) = std_file.set_modified(t) {
-                tracing::warn!("mtime konnte nicht gesetzt werden: {e}");
-            }
+        if let Some(t) = mtime
+            && let Err(e) = std_file.set_modified(t)
+        {
+            tracing::warn!("mtime konnte nicht gesetzt werden: {e}");
         }
         drop(std_file);
         finalize_rename(&part_owned, &target_owned)

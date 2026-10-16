@@ -63,7 +63,13 @@ impl AudioPacket {
         let flags = data.get_u8();
         let seq = data.get_u16_le();
         let ts_us = data.get_u64_le();
-        Ok(Self { stream_id, flags, seq, ts_us, payload: data })
+        Ok(Self {
+            stream_id,
+            flags,
+            seq,
+            ts_us,
+            payload: data,
+        })
     }
 
     #[must_use]
@@ -138,12 +144,21 @@ mod tests {
         let enc = p.encode();
         assert_eq!(enc.len(), AUDIO_HEADER_LEN + 3);
         assert_eq!(AudioPacket::decode(enc).unwrap(), p);
-        assert_eq!(AudioPacket::decode(Bytes::from_static(b"x")), Err(MediaError::TooShort));
+        assert_eq!(
+            AudioPacket::decode(Bytes::from_static(b"x")),
+            Err(MediaError::TooShort)
+        );
     }
 
     #[test]
     fn video_roundtrip() {
-        let h = VideoHeader { frame_id: 9, flags: video_flags::KEY, width: 5120, height: 1440, ts_us: 77 };
+        let h = VideoHeader {
+            frame_id: 9,
+            flags: video_flags::KEY,
+            width: 5120,
+            height: 1440,
+            ts_us: 77,
+        };
         assert_eq!(VideoHeader::decode(&h.encode()).unwrap(), h);
         assert!(h.is_key());
     }

@@ -19,15 +19,18 @@
 //! sent to the headset), `audio-detect` on the PC while recording the headset path, then compare.
 
 #[cfg(windows)]
-mod ipc;
-#[cfg(windows)]
 mod audio;
+#[cfg(windows)]
+mod ipc;
 
 #[cfg(windows)]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(String::as_str).unwrap_or("help");
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
     let code = rt.block_on(async {
         match cmd {
             "input" => ipc::input(&args[1..]).await,

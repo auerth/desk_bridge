@@ -26,7 +26,9 @@ impl Engine {
         if self.cfg.general.paused || self.connecting.is_some() || self.session.is_some() {
             return;
         }
-        let Some(peer) = self.peers.all().into_iter().next() else { return };
+        let Some(peer) = self.peers.all().into_iter().next() else {
+            return;
+        };
         let now = Instant::now();
         if !self.grace_applied {
             self.grace_applied = true;
@@ -60,11 +62,17 @@ impl Engine {
                         let _ = tx.send(Msg::SessionReady(link));
                     }
                     Err(e) => {
-                        let _ = tx.send(Msg::ConnectFailed { peer: peer.id, error: e.to_string() });
+                        let _ = tx.send(Msg::ConnectFailed {
+                            peer: peer.id,
+                            error: e.to_string(),
+                        });
                     }
                 },
                 Err(e) => {
-                    let _ = tx.send(Msg::ConnectFailed { peer: peer.id, error: e.to_string() });
+                    let _ = tx.send(Msg::ConnectFailed {
+                        peer: peer.id,
+                        error: e.to_string(),
+                    });
                 }
             }
         });
@@ -78,12 +86,15 @@ impl Engine {
                 out.push(Candidate::Addr(a));
             }
         }
-        if let (Some(ip), Some(port)) = (&peer.last_ip, peer.last_port) {
-            if let Ok(ip) = ip.parse() {
-                let a = SocketAddr::new(ip, port);
-                if !out.iter().any(|c| matches!(c, Candidate::Addr(x) if *x == a)) {
-                    out.push(Candidate::Addr(a));
-                }
+        if let (Some(ip), Some(port)) = (&peer.last_ip, peer.last_port)
+            && let Ok(ip) = ip.parse()
+        {
+            let a = SocketAddr::new(ip, port);
+            if !out
+                .iter()
+                .any(|c| matches!(c, Candidate::Addr(x) if *x == a))
+            {
+                out.push(Candidate::Addr(a));
             }
         }
         for h in &self.cfg.network.manual_hosts {
@@ -92,7 +103,11 @@ impl Engine {
             } else if let Ok(ip) = h.parse::<std::net::IpAddr>() {
                 out.push(Candidate::Addr(SocketAddr::new(ip, port_default)));
             } else {
-                let host = if h.contains(':') { h.clone() } else { format!("{h}:{port_default}") };
+                let host = if h.contains(':') {
+                    h.clone()
+                } else {
+                    format!("{h}:{port_default}")
+                };
                 out.push(Candidate::Host(host));
             }
         }
@@ -104,7 +119,11 @@ impl Engine {
         self.connecting = None;
         self.last_error = Some(error.to_string());
         if matches!(self.conn_state, ConnState::Connecting) {
-            self.conn_state = if self.had_session { ConnState::Reconnecting } else { ConnState::Discovering };
+            self.conn_state = if self.had_session {
+                ConnState::Reconnecting
+            } else {
+                ConnState::Discovering
+            };
         }
         if error.contains("incompatible protocol") {
             self.version_mismatch = true;
@@ -134,7 +153,10 @@ impl Engine {
                         Err(e) => {
                             tracing::debug!("incoming session handshake failed: {e}");
                             if matches!(e, NetError::IncompatibleVersion { .. }) {
-                                let _ = tx.send(Msg::ConnectFailed { peer, error: e.to_string() });
+                                let _ = tx.send(Msg::ConnectFailed {
+                                    peer,
+                                    error: e.to_string(),
+                                });
                             }
                         }
                     }
@@ -146,8 +168,16 @@ impl Engine {
     pub(crate) fn on_session_ready(&mut self, link: PeerLink) {
         self.connecting = None;
         let own = self.own_id();
-        let initiator_id = if link.conn.is_initiator() { own } else { link.peer.id };
-        let other_id = if link.conn.is_initiator() { link.peer.id } else { own };
+        let initiator_id = if link.conn.is_initiator() {
+            own
+        } else {
+            link.peer.id
+        };
+        let other_id = if link.conn.is_initiator() {
+            link.peer.id
+        } else {
+            own
+        };
         let preferred = initiator_id > other_id;
 
         if let Some(existing) = &self.session {
@@ -163,9 +193,13 @@ impl Engine {
         tracing::info!(peer = %link.peer.name, addr = %link.conn.remote_address(), "session up");
         if link.conn.is_initiator() {
             let a = link.conn.remote_address();
-            let _ = self.peers.update_address(link.peer.id, a.ip().to_string(), a.port());
+            let _ = self
+                .peers
+                .update_address(link.peer.id, a.ip().to_string(), a.port());
         }
-        if self.peers.by_id(link.peer.id).map(|p| p.name) != Some(link.hello.name.clone()) && !link.hello.name.is_empty() {
+        if self.peers.by_id(link.peer.id).map(|p| p.name) != Some(link.hello.name.clone())
+            && !link.hello.name.is_empty()
+        {
             let _ = self.peers.rename(link.peer.id, link.hello.name.clone());
         }
         self.version_mismatch = false;
@@ -175,7 +209,12 @@ impl Engine {
         self.backoff.reset();
         self.clock.reset();
         self.rtt_history.clear();
-        let remote_screens = link.hello.screens.iter().map(super::screen_from_pb).collect();
+        let remote_screens = link
+            .hello
+            .screens
+            .iter()
+            .map(super::screen_from_pb)
+            .collect();
         self.session = Some(ActiveSession {
             link: link.clone(),
             since_unix_ms: since_unix_ms(),
@@ -184,14 +223,19 @@ impl Engine {
             initiated_by_preferred: preferred,
         });
         self.conn_state = ConnState::Connected;
-        link.send_control(pb::control::Msg::Ping(pb::Ping { t0_us: crate::clock::now_us() }));
+        link.send_control(pb::control::Msg::Ping(pb::Ping {
+            t0_us: crate::clock::now_us(),
+        }));
         self.start_roles();
         self.on_session_up_features();
         self.dirty = true;
     }
 
     pub(crate) fn on_session_closed(&mut self, session_id: u64, reason: &str) {
-        let matches = self.session.as_ref().is_some_and(|s| s.link.session_id == session_id);
+        let matches = self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.link.session_id == session_id);
         if matches {
             tracing::info!(reason, "session closed");
             self.teardown_session(reason);
@@ -201,7 +245,9 @@ impl Engine {
     /// Gracefully ends the current session.
     pub(crate) fn close_session(&mut self, reason: &str) {
         if let Some(s) = &self.session {
-            s.link.send_control(pb::control::Msg::Goodbye(pb::Goodbye { reason: reason.to_string() }));
+            s.link.send_control(pb::control::Msg::Goodbye(pb::Goodbye {
+                reason: reason.to_string(),
+            }));
             s.link.close(close::NORMAL, reason);
         }
         self.teardown_session(reason);
@@ -213,11 +259,18 @@ impl Engine {
         self.stop_roles();
         self.on_session_down_features();
         if was_remote {
-            self.emit(UiEvent::Osd { icon: "alert".into(), text: "Verbindung verloren – Eingabe zurück am PC".into() });
+            self.emit(UiEvent::Osd {
+                icon: "alert".into(),
+                text: "Verbindung verloren – Eingabe zurück am PC".into(),
+            });
         }
         drop(s);
         self.last_error = Some(reason.to_string());
-        self.conn_state = if self.cfg.general.paused { ConnState::Paused } else { ConnState::Reconnecting };
+        self.conn_state = if self.cfg.general.paused {
+            ConnState::Paused
+        } else {
+            ConnState::Reconnecting
+        };
         self.next_attempt = Instant::now() + self.backoff.next_delay();
         self.dirty = true;
     }
@@ -236,7 +289,10 @@ async fn dial(
         set.spawn(async move {
             let addrs: Vec<SocketAddr> = match c {
                 Candidate::Addr(a) => vec![a],
-                Candidate::Host(h) => tokio::net::lookup_host(h).await.map(Iterator::collect).unwrap_or_default(),
+                Candidate::Host(h) => tokio::net::lookup_host(h)
+                    .await
+                    .map(Iterator::collect)
+                    .unwrap_or_default(),
             };
             let mut last = NetError::Protocol("no address".into());
             for a in addrs {

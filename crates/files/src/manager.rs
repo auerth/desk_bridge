@@ -90,21 +90,21 @@ impl TransferManager {
     pub fn new(state_dir: Option<PathBuf>) -> Self {
         let file = state_dir.map(|d| d.join(HISTORY_FILE));
         let mut state = State::default();
-        if let Some(f) = &file {
-            if let Ok(bytes) = std::fs::read(f) {
-                match serde_json::from_slice::<Vec<TransferInfo>>(&bytes) {
-                    Ok(mut items) => {
-                        for it in &mut items {
-                            if it.status == "running" {
-                                it.status = "failed".into();
-                                it.error = Some("Unterbrochen".into());
-                            }
-                            it.speed_bps = 0;
+        if let Some(f) = &file
+            && let Ok(bytes) = std::fs::read(f)
+        {
+            match serde_json::from_slice::<Vec<TransferInfo>>(&bytes) {
+                Ok(mut items) => {
+                    for it in &mut items {
+                        if it.status == "running" {
+                            it.status = "failed".into();
+                            it.error = Some("Unterbrochen".into());
                         }
-                        state.items = items;
+                        it.speed_bps = 0;
                     }
-                    Err(e) => tracing::warn!("transfers.json unlesbar: {e}"),
+                    state.items = items;
                 }
+                Err(e) => tracing::warn!("transfers.json unlesbar: {e}"),
             }
         }
         Self {

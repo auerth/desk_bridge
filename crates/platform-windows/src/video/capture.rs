@@ -80,7 +80,13 @@ impl DxgiCapturer {
     /// `screen_id` argument of `start` is ignored.
     #[must_use]
     pub fn for_output(adapter_index: u32, output_index: u32) -> Self {
-        Self::with_target(None, Target::Output { adapter: adapter_index, output: output_index })
+        Self::with_target(
+            None,
+            Target::Output {
+                adapter: adapter_index,
+                output: output_index,
+            },
+        )
     }
 
     fn with_target(resolver: Option<Arc<dyn ScreenProvider>>, target: Target) -> Self {
@@ -108,10 +114,9 @@ impl DxgiCapturer {
                 .find(|o| o.adapter_index == *adapter && o.output_index == *output)
                 .ok_or_else(|| PlatformError::DeviceNotFound(format!("output {adapter}/{output}"))),
             Target::ScreenId => {
-                let resolver = self
-                    .resolver
-                    .as_ref()
-                    .ok_or_else(|| PlatformError::other("no screen provider to resolve screen ids"))?;
+                let resolver = self.resolver.as_ref().ok_or_else(|| {
+                    PlatformError::other("no screen provider to resolve screen ids")
+                })?;
                 let screens = resolver.screens();
                 let s = screens
                     .iter()
@@ -131,12 +136,19 @@ impl DxgiCapturer {
 }
 
 impl ScreenCapturer for DxgiCapturer {
-    fn start(&mut self, screen_id: u32, fps: u32, sink: UnboundedSender<CaptureOutput>) -> Result<()> {
+    fn start(
+        &mut self,
+        screen_id: u32,
+        fps: u32,
+        sink: UnboundedSender<CaptureOutput>,
+    ) -> Result<()> {
         self.stop();
         crate::input::init_dpi_awareness();
         let out = self.resolve(screen_id)?;
         if out.software {
-            return Err(PlatformError::Unsupported("software adapter cannot be captured"));
+            return Err(PlatformError::Unsupported(
+                "software adapter cannot be captured",
+            ));
         }
         *self.adapter_name.lock().expect("adapter name lock") = out.adapter_name.clone();
         self.stop = Arc::new(AtomicBool::new(false));
@@ -212,7 +224,10 @@ impl Pool {
             MipLevels: 1,
             ArraySize: 1,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
             CPUAccessFlags: 0,
@@ -226,12 +241,18 @@ impl Pool {
                 .map_err(|e| os_err("CreateTexture2D (pool)", &e))?;
             v.push(t.ok_or_else(|| PlatformError::other("CreateTexture2D returned null"))?);
         }
-        Ok(Arc::new(Self { free: Mutex::new(v), size: (w, h) }))
+        Ok(Arc::new(Self {
+            free: Mutex::new(v),
+            size: (w, h),
+        }))
     }
 
     fn take(self: &Arc<Self>) -> Option<PoolSlot> {
         let tex = self.free.lock().ok()?.pop()?;
-        Some(PoolSlot { tex, pool: self.clone() })
+        Some(PoolSlot {
+            tex,
+            pool: self.clone(),
+        })
     }
 }
 
@@ -268,7 +289,11 @@ fn open_session(out: &OutputInfo) -> Result<Session> {
     Ok(Session {
         device: dev.device,
         context: dev.context,
-        luid: if dev.adapter_luid != 0 { dev.adapter_luid } else { luid_to_i64_from(&adapter) },
+        luid: if dev.adapter_luid != 0 {
+            dev.adapter_luid
+        } else {
+            luid_to_i64_from(&adapter)
+        },
         dup,
         pool,
         width,
@@ -278,7 +303,11 @@ fn open_session(out: &OutputInfo) -> Result<Session> {
 
 fn luid_to_i64_from(a: &IDXGIAdapter1) -> i64 {
     // SAFETY: plain COM call.
-    unsafe { a.GetDesc1().map(|d| luid_to_i64(d.AdapterLuid)).unwrap_or(0) }
+    unsafe {
+        a.GetDesc1()
+            .map(|d| luid_to_i64(d.AdapterLuid))
+            .unwrap_or(0)
+    }
 }
 
 /// Pointer state tracked across frames.
@@ -339,7 +368,13 @@ impl CursorTracker {
         } else {
             None
         };
-        Some(CursorState { x, y, visible, shape_serial: self.serial, shape })
+        Some(CursorState {
+            x,
+            y,
+            visible,
+            shape_serial: self.serial,
+            shape,
+        })
     }
 }
 
@@ -350,7 +385,10 @@ impl CursorTracker {
 ///   XOR colour is drawn opaque when non-black, transparent otherwise).
 /// * `MONOCHROME`: AND mask + XOR mask (1 bpp, height doubled). Pixels that would invert the
 ///   screen are drawn mid-grey (readable on both light and dark backgrounds).
-fn convert_pointer_shape(buf: &[u8], si: &DXGI_OUTDUPL_POINTER_SHAPE_INFO) -> Option<CursorShapeData> {
+fn convert_pointer_shape(
+    buf: &[u8],
+    si: &DXGI_OUTDUPL_POINTER_SHAPE_INFO,
+) -> Option<CursorShapeData> {
     let w = si.Width as usize;
     let pitch = si.Pitch as usize;
     let hot = (si.HotSpot.x, si.HotSpot.y);
@@ -373,14 +411,22 @@ fn convert_pointer_shape(buf: &[u8], si: &DXGI_OUTDUPL_POINTER_SHAPE_INFO) -> Op
                     }
                 }
             }
-            Some(CursorShapeData { width: w as u32, height: h as u32, hot_x: hot.0, hot_y: hot.1, rgba })
+            Some(CursorShapeData {
+                width: w as u32,
+                height: h as u32,
+                hot_x: hot.0,
+                hot_y: hot.1,
+                rgba,
+            })
         }
         SHAPE_MONOCHROME => {
             let h = (si.Height / 2) as usize;
             if w == 0 || h == 0 || buf.len() < pitch * h * 2 {
                 return None;
             }
-            let bit = |row: usize, x: usize| -> bool { buf[row * pitch + x / 8] & (0x80 >> (x % 8)) != 0 };
+            let bit = |row: usize, x: usize| -> bool {
+                buf[row * pitch + x / 8] & (0x80 >> (x % 8)) != 0
+            };
             let mut rgba = vec![0u8; w * h * 4];
             for y in 0..h {
                 for x in 0..w {
@@ -396,7 +442,13 @@ fn convert_pointer_shape(buf: &[u8], si: &DXGI_OUTDUPL_POINTER_SHAPE_INFO) -> Op
                     rgba[o..o + 4].copy_from_slice(&px);
                 }
             }
-            Some(CursorShapeData { width: w as u32, height: h as u32, hot_x: hot.0, hot_y: hot.1, rgba })
+            Some(CursorShapeData {
+                width: w as u32,
+                height: h as u32,
+                hot_x: hot.0,
+                hot_y: hot.1,
+                rgba,
+            })
         }
         _ => None,
     }
@@ -460,7 +512,10 @@ fn capture_thread(
                         Ok(Some(slot)) => {
                             let ts = qpc_to_us(info.LastPresentTime);
                             // A newer picture replaces an older deferred one.
-                            pending = Some(Pending { slot, ts_us: if ts == 0 { now_us() } else { ts } });
+                            pending = Some(Pending {
+                                slot,
+                                ts_us: if ts == 0 { now_us() } else { ts },
+                            });
                         }
                         Ok(None) => {
                             drops.fetch_add(1, Ordering::Relaxed);
@@ -540,12 +595,17 @@ fn capture_thread(
 /// Copies the acquired desktop image into a pool texture. `Ok(None)` = pool exhausted.
 fn copy_frame(sess: &Session, res: Option<&IDXGIResource>) -> Result<Option<PoolSlot>> {
     let res = res.ok_or_else(|| PlatformError::other("AcquireNextFrame returned no resource"))?;
-    let src: ID3D11Texture2D = res.cast().map_err(|e| os_err("desktop resource -> texture", &e))?;
+    let src: ID3D11Texture2D = res
+        .cast()
+        .map_err(|e| os_err("desktop resource -> texture", &e))?;
     let Some(slot) = sess.pool.take() else {
         return Ok(None);
     };
     let src_res: ID3D11Resource = src.cast().map_err(|e| os_err("texture -> resource", &e))?;
-    let dst_res: ID3D11Resource = slot.tex.cast().map_err(|e| os_err("texture -> resource", &e))?;
+    let dst_res: ID3D11Resource = slot
+        .tex
+        .cast()
+        .map_err(|e| os_err("texture -> resource", &e))?;
     // SAFETY: both resources live on `sess.device`; same size and format (pool created from the
     // duplication description).
     unsafe { sess.context.CopyResource(&dst_res, &src_res) };
@@ -559,7 +619,13 @@ mod tests {
     use windows::Win32::Foundation::POINT;
 
     fn si(ty: u32, w: u32, h: u32, pitch: u32) -> DXGI_OUTDUPL_POINTER_SHAPE_INFO {
-        DXGI_OUTDUPL_POINTER_SHAPE_INFO { Type: ty, Width: w, Height: h, Pitch: pitch, HotSpot: POINT { x: 1, y: 2 } }
+        DXGI_OUTDUPL_POINTER_SHAPE_INFO {
+            Type: ty,
+            Width: w,
+            Height: h,
+            Pitch: pitch,
+            HotSpot: POINT { x: 1, y: 2 },
+        }
     }
 
     #[test]

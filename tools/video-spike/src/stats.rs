@@ -47,7 +47,15 @@ pub fn table_header() -> &'static str {
 
 pub fn table_row(name: &str, h: &Hist) -> String {
     let s = h.summary();
-    format!("| {name} | {} | {} | {} | {} | {} | {} |", s.n, ms(s.mean), ms(s.p50), ms(s.p95), ms(s.p99), ms(s.max))
+    format!(
+        "| {name} | {} | {} | {} | {} | {} | {} |",
+        s.n,
+        ms(s.mean),
+        ms(s.p50),
+        ms(s.p95),
+        ms(s.p99),
+        ms(s.max)
+    )
 }
 
 #[cfg(test)]

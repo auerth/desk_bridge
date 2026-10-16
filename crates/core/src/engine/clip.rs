@@ -56,10 +56,11 @@ impl Fetcher for PeerFetcher {
         let (tx, rx) = std_mpsc::sync_channel(1);
         let key = (offer_id, mime.to_string());
         self.waiters.lock().insert(key.clone(), tx);
-        self.link.send_control(pb::control::Msg::ClipboardRequest(pb::ClipboardRequest {
-            id: offer_id,
-            mime: mime.to_string(),
-        }));
+        self.link
+            .send_control(pb::control::Msg::ClipboardRequest(pb::ClipboardRequest {
+                id: offer_id,
+                mime: mime.to_string(),
+            }));
         let res = rx.recv_timeout(timeout);
         self.waiters.lock().remove(&key);
         match res {
@@ -89,8 +90,15 @@ impl Engine {
         let Some(s) = &self.session else { return };
         let link = s.link.clone();
         let waiters: Waiters = Arc::default();
-        let fetcher = Arc::new(PeerFetcher { link: link.clone(), waiters: waiters.clone() });
-        let sync = Arc::new(ClipboardSync::new(self.platform.clipboard.clone(), fetcher, sync_config(&self.cfg)));
+        let fetcher = Arc::new(PeerFetcher {
+            link: link.clone(),
+            waiters: waiters.clone(),
+        });
+        let sync = Arc::new(ClipboardSync::new(
+            self.platform.clipboard.clone(),
+            fetcher,
+            sync_config(&self.cfg),
+        ));
         sync.set_file_source(self.transfer_file_source(link.clone()));
 
         // inbound clipboard data streams
@@ -101,7 +109,9 @@ impl Engine {
             while let Some(mut r) = urx.recv().await {
                 let w = w.clone();
                 tokio::spawn(async move {
-                    let Ok(h) = read_msg::<_, pb::ClipboardDataHeader>(&mut r).await else { return };
+                    let Ok(h) = read_msg::<_, pb::ClipboardDataHeader>(&mut r).await else {
+                        return;
+                    };
                     let key = (h.id, h.mime.clone());
                     let result = if h.found {
                         let mut data = Vec::with_capacity(h.size.min(64 * 1024 * 1024) as usize);
@@ -151,7 +161,9 @@ impl Engine {
                                     };
                                     write_msg(&mut s, &header).await?;
                                     if let Some(d) = &data {
-                                        s.write_all(d).await.map_err(|e| deskbridge_net::NetError::Io(e.into()))?;
+                                        s.write_all(d)
+                                            .await
+                                            .map_err(|e| deskbridge_net::NetError::Io(e.into()))?;
                                     }
                                     let _ = s.finish();
                                     Ok(())
@@ -201,7 +213,12 @@ impl Engine {
 
     pub(crate) fn on_clipboard_control(&mut self, msg: pb::control::Msg) -> bool {
         use pb::control::Msg as M;
-        let Some(c) = &self.clip else { return matches!(msg, M::ClipboardOffer(_) | M::ClipboardRequest(_) | M::ClipboardClear(_)) };
+        let Some(c) = &self.clip else {
+            return matches!(
+                msg,
+                M::ClipboardOffer(_) | M::ClipboardRequest(_) | M::ClipboardClear(_)
+            );
+        };
         match msg {
             M::ClipboardOffer(o) => c.job(ClipJob::Remote(o)),
             M::ClipboardRequest(r) => c.job(ClipJob::Request(r)),

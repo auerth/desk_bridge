@@ -56,7 +56,9 @@ impl WindowsVideoBackend {
         }
         let outputs = list_outputs()?;
         let target = rect
-            .and_then(|(x, y, w, h)| deskbridge_platform_windows::video::find_output_by_rect(&outputs, x, y, w, h))
+            .and_then(|(x, y, w, h)| {
+                deskbridge_platform_windows::video::find_output_by_rect(&outputs, x, y, w, h)
+            })
             .or_else(|| outputs.iter().find(|o| o.attached && !o.software));
         let adapter = match target {
             Some(o) => Some(adapter_by_index(o.adapter_index)?),
@@ -76,11 +78,17 @@ impl Default for WindowsVideoBackend {
 
 impl VideoBackend for WindowsVideoBackend {
     fn encoder_caps(&self) -> pb::VideoCaps {
-        self.enc_caps.lock().get_or_insert_with(probe_encoders).clone()
+        self.enc_caps
+            .lock()
+            .get_or_insert_with(probe_encoders)
+            .clone()
     }
 
     fn decoder_caps(&self) -> pb::VideoCaps {
-        self.dec_caps.lock().get_or_insert_with(|| probe_decoders(None)).clone()
+        self.dec_caps
+            .lock()
+            .get_or_insert_with(|| probe_decoders(None))
+            .clone()
     }
 
     fn create_capturer(&self) -> Result<Box<dyn ScreenCapturer>> {
@@ -88,7 +96,10 @@ impl VideoBackend for WindowsVideoBackend {
     }
 
     fn create_encoder(&self, cfg: &EncoderConfig, adapter: &str) -> Result<Box<dyn VideoEncoder>> {
-        tracing::info!("creating {:?} encoder for capture adapter '{adapter}'", cfg.codec);
+        tracing::info!(
+            "creating {:?} encoder for capture adapter '{adapter}'",
+            cfg.codec
+        );
         // Opened on the first frame, on the capturer's own device (zero-copy requires it).
         Ok(Box::new(FfmpegEncoder::new(cfg.clone(), None)?))
     }
@@ -98,7 +109,11 @@ impl VideoBackend for WindowsVideoBackend {
         Ok(Box::new(FfmpegDecoder::new(cfg.codec, Some(&dev.device))?))
     }
 
-    fn create_presenter(&self, mode: PresenterMode, _cfg: &EncoderConfig) -> Result<Box<dyn VideoPresenter>> {
+    fn create_presenter(
+        &self,
+        mode: PresenterMode,
+        _cfg: &EncoderConfig,
+    ) -> Result<Box<dyn VideoPresenter>> {
         let (x, y, w, h) = mode.rect();
         let rect = match mode {
             PresenterMode::Window { .. } => None,
@@ -106,11 +121,20 @@ impl VideoBackend for WindowsVideoBackend {
         };
         let dev = self.view_device(rect)?;
         let pm = match mode {
-            PresenterMode::Fullscreen { x, y, w, h } => PresentMode::Fullscreen { monitor_rect: PxRect::new(x, y, w, h) },
-            PresenterMode::Region { x, y, w, h, appbar } => PresentMode::Region { rect: PxRect::new(x, y, w, h), appbar },
-            PresenterMode::Window { w, h } => PresentMode::Window { width: w, height: h },
+            PresenterMode::Fullscreen { x, y, w, h } => PresentMode::Fullscreen {
+                monitor_rect: PxRect::new(x, y, w, h),
+            },
+            PresenterMode::Region { x, y, w, h, appbar } => PresentMode::Region {
+                rect: PxRect::new(x, y, w, h),
+                appbar,
+            },
+            PresenterMode::Window { w, h } => PresentMode::Window {
+                width: w,
+                height: h,
+            },
         };
-        let p = D3dPresenter::new(pm, Some(&dev.device)).map_err(|e| PlatformError::other(format!("video window: {e}")))?;
+        let p = D3dPresenter::new(pm, Some(&dev.device))
+            .map_err(|e| PlatformError::other(format!("video window: {e}")))?;
         Ok(Box::new(p))
     }
 }

@@ -2,8 +2,9 @@
 
 use super::Engine;
 use crate::ipc::{
-    AppState, AudioFeatureDto, ConnState, ConnectionDto, DeviceDto, DiscoveredDto, FeatureDto, FeaturesDto,
-    FocusDto, Live, MetricsDto, PairingDto, PeerDto, PlacementDto, ScreenDto, ScreensDto, UpdateDto,
+    AppState, AudioFeatureDto, ConnState, ConnectionDto, DeviceDto, DiscoveredDto, FeatureDto,
+    FeaturesDto, FocusDto, Live, MetricsDto, PairingDto, PeerDto, PlacementDto, ScreenDto,
+    ScreensDto, UpdateDto,
 };
 use deskbridge_net::peers::Peer;
 use deskbridge_net::short_fp;
@@ -28,7 +29,12 @@ impl Engine {
             .peers
             .all()
             .iter()
-            .map(|p| peer_dto(p, connected_peer == Some(p.id) || self.discovered.contains_key(&p.id)))
+            .map(|p| {
+                peer_dto(
+                    p,
+                    connected_peer == Some(p.id) || self.discovered.contains_key(&p.id),
+                )
+            })
             .collect();
         let discovered: Vec<DiscoveredDto> = self
             .discovered
@@ -52,30 +58,51 @@ impl Engine {
         let connection = ConnectionDto {
             state: self.conn_state,
             peer: self.session.as_ref().map(|s| peer_dto(&s.link.peer, true)),
-            rtt_us: self.clock.rtt_us().map(|v| v.min(u64::from(u32::MAX)) as u32).filter(|_| self.session.is_some()),
+            rtt_us: self
+                .clock
+                .rtt_us()
+                .map(|v| v.min(u64::from(u32::MAX)) as u32)
+                .filter(|_| self.session.is_some()),
             clock_offset_us: self.clock.offset_us().filter(|_| self.session.is_some()),
             link: "unknown".into(),
             since_unix_ms: self.session.as_ref().map(|s| s.since_unix_ms),
-            error: if self.session.is_none() { self.last_error.clone() } else { None },
+            error: if self.session.is_none() {
+                self.last_error.clone()
+            } else {
+                None
+            },
             version_mismatch: self.version_mismatch,
-            peer_version: self.session.as_ref().map(|s| s.link.hello.app_version.clone()),
+            peer_version: self
+                .session
+                .as_ref()
+                .map(|s| s.link.hello.app_version.clone()),
         };
 
         let connected = matches!(self.conn_state, ConnState::Connected | ConnState::Degraded);
         let input_state = if !self.cfg.input.enabled {
             Live::Off
-        } else if connected && (self.router.is_remote() || self.receiver.as_ref().is_some_and(|r| r.is_active())) {
+        } else if connected
+            && (self.router.is_remote() || self.receiver.as_ref().is_some_and(|r| r.is_active()))
+        {
             Live::Live
         } else {
             Live::Ready
         };
         let mut features = FeaturesDto {
-            input: FeatureDto { enabled: self.cfg.input.enabled, state: input_state, detail: None },
+            input: FeatureDto {
+                enabled: self.cfg.input.enabled,
+                state: input_state,
+                detail: None,
+            },
             laptop_audio: AudioFeatureDto::default(),
             mic: AudioFeatureDto::default(),
             clipboard: FeatureDto {
                 enabled: self.cfg.clipboard.send || self.cfg.clipboard.receive,
-                state: if self.cfg.clipboard.send || self.cfg.clipboard.receive { Live::Ready } else { Live::Off },
+                state: if self.cfg.clipboard.send || self.cfg.clipboard.receive {
+                    Live::Ready
+                } else {
+                    Live::Off
+                },
                 detail: None,
             },
             focus: FocusDto::default(),
@@ -116,11 +143,20 @@ impl Engine {
             .layout
             .to_placements()
             .into_iter()
-            .map(|p| PlacementDto { device_id: p.device_id, screen_id: p.screen_id, x: p.x, y: p.y })
+            .map(|p| PlacementDto {
+                device_id: p.device_id,
+                screen_id: p.screen_id,
+                x: p.x,
+                y: p.y,
+            })
             .collect();
 
         let location = if d.input_source {
-            if self.router.is_remote() { "remote" } else { "local" }
+            if self.router.is_remote() {
+                "remote"
+            } else {
+                "local"
+            }
         } else if self.receiver.as_ref().is_some_and(|r| r.is_active()) {
             "local"
         } else {
@@ -146,12 +182,20 @@ impl Engine {
                 seconds_left: w.seconds_left().min(u64::from(u32::MAX)) as u32,
             }),
             features,
-            screens: ScreensDto { screens, placements, revision: self.layout.revision },
+            screens: ScreensDto {
+                screens,
+                placements,
+                revision: self.layout.revision,
+            },
             location: location.into(),
             cursor_locked: self.cursor_locked,
             warnings: self.warnings.clone(),
             transfers: self.transfers_snapshot(),
-            update: UpdateDto { current: crate::brand::VERSION.into(), available: None, checking: false },
+            update: UpdateDto {
+                current: crate::brand::VERSION.into(),
+                available: None,
+                checking: false,
+            },
             metrics: MetricsDto {
                 rtt_history_us: self.rtt_history.iter().copied().collect(),
                 input_latency_p50_us: self.input_latency_percentiles().0,

@@ -75,7 +75,10 @@ pub fn err_str(code: c_int) -> String {
     // SAFETY: buffer size is passed along; av_strerror always NUL-terminates.
     unsafe {
         ffi::av_strerror(code, buf.as_mut_ptr(), buf.len());
-        format!("{} ({code})", CStr::from_ptr(buf.as_ptr()).to_string_lossy())
+        format!(
+            "{} ({code})",
+            CStr::from_ptr(buf.as_ptr()).to_string_lossy()
+        )
     }
 }
 
@@ -194,13 +197,22 @@ impl Drop for CodecCtx {
 /// Owned `AVDictionary` used to pass private options to `avcodec_open2`.
 pub struct Dict(pub *mut ffi::AVDictionary);
 
+impl Default for Dict {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Dict {
     pub fn new() -> Self {
         Self(std::ptr::null_mut())
     }
 
     pub fn set(&mut self, key: &str, value: &str) {
-        let (k, v) = (CString::new(key).expect("no NUL"), CString::new(value).expect("no NUL"));
+        let (k, v) = (
+            CString::new(key).expect("no NUL"),
+            CString::new(value).expect("no NUL"),
+        );
         // SAFETY: valid C strings; the dictionary copies them.
         unsafe { ffi::av_dict_set(&mut self.0, k.as_ptr(), v.as_ptr(), 0) };
     }
@@ -217,7 +229,11 @@ impl Dict {
                 break;
             }
             // SAFETY: entries hold valid C strings.
-            out.push(unsafe { CStr::from_ptr((*e).key) }.to_string_lossy().into_owned());
+            out.push(
+                unsafe { CStr::from_ptr((*e).key) }
+                    .to_string_lossy()
+                    .into_owned(),
+            );
         }
         let _ = empty;
         out

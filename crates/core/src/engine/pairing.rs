@@ -37,8 +37,18 @@ impl Engine {
         tokio::spawn(async move {
             let res = pairing::serve(&conn, &identity, &name, &window).await;
             let msg = match res {
-                Ok(p) => Msg::PairingFinished { ok: true, message: "Gekoppelt".into(), peer: Some(p), addr: None },
-                Err(e) => Msg::PairingFinished { ok: false, message: e.to_string(), peer: None, addr: None },
+                Ok(p) => Msg::PairingFinished {
+                    ok: true,
+                    message: "Gekoppelt".into(),
+                    peer: Some(p),
+                    addr: None,
+                },
+                Err(e) => Msg::PairingFinished {
+                    ok: false,
+                    message: e.to_string(),
+                    peer: None,
+                    addr: None,
+                },
             };
             // Give the final stream data a moment to flush before closing.
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -55,21 +65,31 @@ impl Engine {
     ) -> Result<Value, String> {
         let mut addr: Option<SocketAddr> = None;
         let mut host: Option<String> = None;
-        if let Some(id) = device_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
-            if let Some(e) = self.discovered.get(&id) {
-                addr = e.d.socket_addrs().into_iter().find(SocketAddr::is_ipv4).or_else(|| e.d.socket_addrs().into_iter().next());
-            }
+        if let Some(id) = device_id
+            .as_deref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            && let Some(e) = self.discovered.get(&id)
+        {
+            addr =
+                e.d.socket_addrs()
+                    .into_iter()
+                    .find(SocketAddr::is_ipv4)
+                    .or_else(|| e.d.socket_addrs().into_iter().next());
         }
-        if addr.is_none() {
-            if let Some(a) = address {
-                let a = a.trim().to_string();
-                if let Ok(sa) = a.parse::<SocketAddr>() {
-                    addr = Some(sa);
-                } else if let Ok(ip) = a.parse::<std::net::IpAddr>() {
-                    addr = Some(SocketAddr::new(ip, self.cfg.network.port));
-                } else if !a.is_empty() {
-                    host = Some(if a.contains(':') { a } else { format!("{a}:{}", self.cfg.network.port) });
-                }
+        if addr.is_none()
+            && let Some(a) = address
+        {
+            let a = a.trim().to_string();
+            if let Ok(sa) = a.parse::<SocketAddr>() {
+                addr = Some(sa);
+            } else if let Ok(ip) = a.parse::<std::net::IpAddr>() {
+                addr = Some(SocketAddr::new(ip, self.cfg.network.port));
+            } else if !a.is_empty() {
+                host = Some(if a.contains(':') {
+                    a
+                } else {
+                    format!("{a}:{}", self.cfg.network.port)
+                });
             }
         }
         if addr.is_none() && host.is_none() {
@@ -86,21 +106,44 @@ impl Engine {
         tokio::spawn(async move {
             let target = match (addr, host) {
                 (Some(a), _) => Some(a),
-                (None, Some(h)) => tokio::net::lookup_host(h).await.ok().and_then(|mut i| i.next()),
+                (None, Some(h)) => tokio::net::lookup_host(h)
+                    .await
+                    .ok()
+                    .and_then(|mut i| i.next()),
                 _ => None,
             };
             let Some(target) = target else {
-                let _ = tx.send(Msg::PairingFinished { ok: false, message: "Adresse nicht auflösbar".into(), peer: None, addr: None });
+                let _ = tx.send(Msg::PairingFinished {
+                    ok: false,
+                    message: "Adresse nicht auflösbar".into(),
+                    peer: None,
+                    addr: None,
+                });
                 return;
             };
             let msg = match transport.connect_pairing(target).await {
-                Err(e) => Msg::PairingFinished { ok: false, message: format!("Verbindung fehlgeschlagen: {e}"), peer: None, addr: None },
+                Err(e) => Msg::PairingFinished {
+                    ok: false,
+                    message: format!("Verbindung fehlgeschlagen: {e}"),
+                    peer: None,
+                    addr: None,
+                },
                 Ok(conn) => {
                     let r = pairing::connect(&conn, &identity, &name, &code).await;
                     conn.close(0u32.into(), b"done");
                     match r {
-                        Ok(p) => Msg::PairingFinished { ok: true, message: "Gekoppelt".into(), peer: Some(p), addr: Some(target) },
-                        Err(e) => Msg::PairingFinished { ok: false, message: e.to_string(), peer: None, addr: None },
+                        Ok(p) => Msg::PairingFinished {
+                            ok: true,
+                            message: "Gekoppelt".into(),
+                            peer: Some(p),
+                            addr: Some(target),
+                        },
+                        Err(e) => Msg::PairingFinished {
+                            ok: false,
+                            message: e.to_string(),
+                            peer: None,
+                            addr: None,
+                        },
                     }
                 }
             };
@@ -109,7 +152,13 @@ impl Engine {
         Ok(json!({ "started": true }))
     }
 
-    pub(crate) fn on_pairing_finished(&mut self, ok: bool, message: String, peer: Option<PairedDevice>, addr: Option<SocketAddr>) {
+    pub(crate) fn on_pairing_finished(
+        &mut self,
+        ok: bool,
+        message: String,
+        peer: Option<PairedDevice>,
+        addr: Option<SocketAddr>,
+    ) {
         if ok {
             if let Some(p) = peer {
                 // One paired peer in v1: replace older pairings.
@@ -118,18 +167,30 @@ impl Engine {
                         let _ = self.peers.remove(old.id);
                     }
                 }
-                let _ = self.peers.add(Peer::new(p.device_id, p.name.clone(), &p.fingerprint));
+                let _ = self
+                    .peers
+                    .add(Peer::new(p.device_id, p.name.clone(), &p.fingerprint));
                 if let Some(a) = addr {
-                    let _ = self.peers.update_address(p.device_id, a.ip().to_string(), a.port());
+                    let _ = self
+                        .peers
+                        .update_address(p.device_id, a.ip().to_string(), a.port());
                 }
                 self.pairing = None;
                 self.backoff.reset();
                 self.next_attempt = Instant::now();
                 self.grace_applied = false;
-                self.emit(UiEvent::PairingResult { ok: true, message, peer_name: Some(p.name) });
+                self.emit(UiEvent::PairingResult {
+                    ok: true,
+                    message,
+                    peer_name: Some(p.name),
+                });
             }
         } else {
-            self.emit(UiEvent::PairingResult { ok: false, message, peer_name: None });
+            self.emit(UiEvent::PairingResult {
+                ok: false,
+                message,
+                peer_name: None,
+            });
         }
         self.dirty = true;
     }

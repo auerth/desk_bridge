@@ -1,8 +1,8 @@
 //! In-memory implementations of the platform traits for tests (no hardware needed).
 
 use crate::audio::{
-    AudioCapture, AudioDeviceInfo, AudioDevices, AudioFrame, AudioPlayback, CaptureSource, DeviceEvent, DeviceKind,
-    MicUsage, PullSource, StreamHandle, VirtualAudio,
+    AudioCapture, AudioDeviceInfo, AudioDevices, AudioFrame, AudioPlayback, CaptureSource,
+    DeviceEvent, DeviceKind, MicUsage, PullSource, StreamHandle, VirtualAudio,
 };
 use crate::clipboard::{
     ClipFormatInfo, ClipboardBackend, ClipboardEvent, ClipboardProvider, FileOffer,
@@ -132,7 +132,9 @@ impl Default for MockCapture {
 impl MockCapture {
     /// Simulates a physical event, honouring hotkeys like the real hook.
     pub fn feed(&self, ev: CaptureEvent) {
-        let Some(sink) = self.sink.lock().clone() else { return };
+        let Some(sink) = self.sink.lock().clone() else {
+            return;
+        };
         if let CaptureEvent::Key { hid, down } = ev {
             match self.matcher.lock().feed(hid, down) {
                 HotkeyOutcome::Fired(id) => {
@@ -184,7 +186,10 @@ pub struct MockScreens {
 impl MockScreens {
     #[must_use]
     pub fn with(screens: Vec<ScreenInfo>) -> Self {
-        Self { screens: Mutex::new(screens), ..Self::default() }
+        Self {
+            screens: Mutex::new(screens),
+            ..Self::default()
+        }
     }
 
     pub fn set(&self, screens: Vec<ScreenInfo>) {
@@ -245,7 +250,10 @@ impl MockClipboard {
         *self.content.lock() = vec![("text/plain".into(), text.as_bytes().to_vec())];
         if let Some(tx) = self.tx.lock().as_ref() {
             let _ = tx.send(ClipboardEvent::Changed {
-                formats: vec![ClipFormatInfo { mime: "text/plain".into(), size: text.len() as u64 }],
+                formats: vec![ClipFormatInfo {
+                    mime: "text/plain".into(),
+                    size: text.len() as u64,
+                }],
                 sensitive: false,
                 text: Some(text.to_string()),
                 files: vec![],
@@ -273,7 +281,12 @@ impl ClipboardBackend for MockClipboard {
     }
 
     fn read(&self, mime: &str) -> Result<Option<Vec<u8>>> {
-        Ok(self.content.lock().iter().find(|(m, _)| m == mime).map(|(_, d)| d.clone()))
+        Ok(self
+            .content
+            .lock()
+            .iter()
+            .find(|(m, _)| m == mime)
+            .map(|(_, d)| d.clone()))
     }
 
     fn set_text(&self, text: &str) -> Result<()> {
@@ -281,14 +294,22 @@ impl ClipboardBackend for MockClipboard {
         Ok(())
     }
 
-    fn offer(&self, formats: Vec<ClipFormatInfo>, provider: Arc<dyn ClipboardProvider>) -> Result<()> {
+    fn offer(
+        &self,
+        formats: Vec<ClipFormatInfo>,
+        provider: Arc<dyn ClipboardProvider>,
+    ) -> Result<()> {
         self.content.lock().clear();
         *self.offered.lock() = formats;
         *self.provider.lock() = Some(provider);
         Ok(())
     }
 
-    fn offer_files(&self, files: Vec<FileOffer>, provider: Arc<dyn VirtualFileProvider>) -> Result<()> {
+    fn offer_files(
+        &self,
+        files: Vec<FileOffer>,
+        provider: Arc<dyn VirtualFileProvider>,
+    ) -> Result<()> {
         *self.offered_files.lock() = files;
         *self.file_provider.lock() = Some(provider);
         Ok(())
@@ -314,24 +335,37 @@ pub struct MockAudioDevices {
 impl MockAudioDevices {
     #[must_use]
     pub fn with(devices: Vec<AudioDeviceInfo>) -> Self {
-        Self { devices: Mutex::new(devices), watchers: Mutex::default() }
+        Self {
+            devices: Mutex::new(devices),
+            watchers: Mutex::default(),
+        }
     }
 
     pub fn add(&self, d: AudioDeviceInfo) {
         self.devices.lock().push(d.clone());
-        self.watchers.lock().retain(|w| w.send(DeviceEvent::Added(d.clone())).is_ok());
+        self.watchers
+            .lock()
+            .retain(|w| w.send(DeviceEvent::Added(d.clone())).is_ok());
     }
 
     pub fn remove(&self, id: &str) {
         self.devices.lock().retain(|d| d.id != id);
         let id = id.to_string();
-        self.watchers.lock().retain(|w| w.send(DeviceEvent::Removed { id: id.clone() }).is_ok());
+        self.watchers
+            .lock()
+            .retain(|w| w.send(DeviceEvent::Removed { id: id.clone() }).is_ok());
     }
 }
 
 impl AudioDevices for MockAudioDevices {
     fn list(&self, kind: DeviceKind) -> Result<Vec<AudioDeviceInfo>> {
-        Ok(self.devices.lock().iter().filter(|d| d.kind == kind).cloned().collect())
+        Ok(self
+            .devices
+            .lock()
+            .iter()
+            .filter(|d| d.kind == kind)
+            .cloned()
+            .collect())
     }
 
     fn watch(&self, tx: UnboundedSender<DeviceEvent>) -> Result<()> {
@@ -363,8 +397,16 @@ impl Drop for FlagHandle {
     }
 }
 
-type CaptureSink = (CaptureSource, UnboundedSender<AudioFrame>, Arc<std::sync::atomic::AtomicBool>);
-type PlaybackSlot = (Option<String>, Arc<dyn PullSource>, Arc<std::sync::atomic::AtomicBool>);
+type CaptureSink = (
+    CaptureSource,
+    UnboundedSender<AudioFrame>,
+    Arc<std::sync::atomic::AtomicBool>,
+);
+type PlaybackSlot = (
+    Option<String>,
+    Arc<dyn PullSource>,
+    Arc<std::sync::atomic::AtomicBool>,
+);
 
 /// Capture whose frames are pushed by the test.
 #[derive(Default)]
@@ -378,22 +420,30 @@ impl MockAudioCapture {
         for (src, tx, alive) in self.sinks.lock().iter() {
             let is_loop = matches!(src, CaptureSource::Loopback(_));
             if is_loop == loopback && alive.load(std::sync::atomic::Ordering::SeqCst) {
-                let _ = tx.send(AudioFrame { samples: samples.clone(), channels, ts_us });
+                let _ = tx.send(AudioFrame {
+                    samples: samples.clone(),
+                    channels,
+                    ts_us,
+                });
             }
         }
     }
 
     #[must_use]
     pub fn active(&self, loopback: bool) -> bool {
-        self.sinks
-            .lock()
-            .iter()
-            .any(|(s, _, a)| matches!(s, CaptureSource::Loopback(_)) == loopback && a.load(std::sync::atomic::Ordering::SeqCst))
+        self.sinks.lock().iter().any(|(s, _, a)| {
+            matches!(s, CaptureSource::Loopback(_)) == loopback
+                && a.load(std::sync::atomic::Ordering::SeqCst)
+        })
     }
 }
 
 impl AudioCapture for MockAudioCapture {
-    fn start(&self, source: CaptureSource, sink: UnboundedSender<AudioFrame>) -> Result<Box<dyn StreamHandle>> {
+    fn start(
+        &self,
+        source: CaptureSource,
+        sink: UnboundedSender<AudioFrame>,
+    ) -> Result<Box<dyn StreamHandle>> {
         let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
         self.sinks.lock().push((source, sink, alive.clone()));
         Ok(Box::new(FlagHandle(alive)))
@@ -424,12 +474,17 @@ impl MockAudioPlayback {
     pub fn active_device(&self) -> Option<Option<String>> {
         let g = self.current.lock();
         let (d, _, a) = g.as_ref()?;
-        a.load(std::sync::atomic::Ordering::SeqCst).then(|| d.clone())
+        a.load(std::sync::atomic::Ordering::SeqCst)
+            .then(|| d.clone())
     }
 }
 
 impl AudioPlayback for MockAudioPlayback {
-    fn start(&self, device_id: Option<&str>, source: Arc<dyn PullSource>) -> Result<Box<dyn StreamHandle>> {
+    fn start(
+        &self,
+        device_id: Option<&str>,
+        source: Arc<dyn PullSource>,
+    ) -> Result<Box<dyn StreamHandle>> {
         let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
         self.starts.lock().push(device_id.map(str::to_string));
         *self.current.lock() = Some((device_id.map(str::to_string), source, alive.clone()));
@@ -455,8 +510,12 @@ impl MockVirtualAudio {
     }
 
     pub fn set_in_use(&self, in_use: bool) {
-        self.in_use.store(in_use, std::sync::atomic::Ordering::SeqCst);
-        let u = MicUsage { in_use, process: in_use.then(|| "Teams.exe".to_string()) };
+        self.in_use
+            .store(in_use, std::sync::atomic::Ordering::SeqCst);
+        let u = MicUsage {
+            in_use,
+            process: in_use.then(|| "Teams.exe".to_string()),
+        };
         self.watchers.lock().retain(|w| w.send(u.clone()).is_ok());
     }
 }
@@ -466,7 +525,10 @@ impl VirtualAudio for MockVirtualAudio {
         self.available.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    fn start_speaker_capture(&self, _sink: UnboundedSender<AudioFrame>) -> Result<Box<dyn StreamHandle>> {
+    fn start_speaker_capture(
+        &self,
+        _sink: UnboundedSender<AudioFrame>,
+    ) -> Result<Box<dyn StreamHandle>> {
         Err(crate::PlatformError::Unsupported("mock virtual speaker"))
     }
 
@@ -496,6 +558,9 @@ mod tests {
         inj.button(Button::Left, true);
         inj.release_all();
         assert!(inj.pressed_keys().is_empty());
-        assert!(inj.ops().contains(&InjectedOp::Button { button: Button::Left, down: false }));
+        assert!(inj.ops().contains(&InjectedOp::Button {
+            button: Button::Left,
+            down: false
+        }));
     }
 }

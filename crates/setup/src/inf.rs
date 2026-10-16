@@ -120,13 +120,13 @@ pub fn parse_inf(text: &str) -> InfInfo {
     let mut model_sections: Vec<String> = Vec::new();
     if let Some(mfg) = section("Manufacturer") {
         for line in mfg {
-            if let Some((_, vals)) = split_entry(line) {
-                if let Some(base) = vals.first().filter(|b| !b.is_empty()) {
-                    model_sections.push(base.to_ascii_lowercase());
-                    for deco in &vals[1..] {
-                        if !deco.is_empty() {
-                            model_sections.push(format!("{base}.{deco}").to_ascii_lowercase());
-                        }
+            if let Some((_, vals)) = split_entry(line)
+                && let Some(base) = vals.first().filter(|b| !b.is_empty())
+            {
+                model_sections.push(base.to_ascii_lowercase());
+                for deco in &vals[1..] {
+                    if !deco.is_empty() {
+                        model_sections.push(format!("{base}.{deco}").to_ascii_lowercase());
                     }
                 }
             }

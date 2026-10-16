@@ -112,10 +112,10 @@ pub fn from_name(s: &str) -> Option<u16> {
             _ => None,
         };
     }
-    if let Some(n) = l.strip_prefix('f').and_then(|n| n.parse::<u16>().ok()) {
-        if (1..=12).contains(&n) {
-            return Some(F1 + n - 1);
-        }
+    if let Some(n) = l.strip_prefix('f').and_then(|n| n.parse::<u16>().ok())
+        && (1..=12).contains(&n)
+    {
+        return Some(F1 + n - 1);
     }
     Some(match l.as_str() {
         "enter" | "return" => ENTER,
@@ -148,7 +148,19 @@ mod tests {
 
     #[test]
     fn names_roundtrip() {
-        for hid in [A, Z, N1, N0, ENTER, SPACE, F1, F12, END, BACKSPACE, SCROLL_LOCK] {
+        for hid in [
+            A,
+            Z,
+            N1,
+            N0,
+            ENTER,
+            SPACE,
+            F1,
+            F12,
+            END,
+            BACKSPACE,
+            SCROLL_LOCK,
+        ] {
             assert_eq!(from_name(&name(hid)), Some(hid), "{hid:#x}");
         }
     }
