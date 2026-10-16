@@ -13,7 +13,7 @@ deskbridge-display.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 parking_lot = "0.12"
-png = "0.17"
+png = "0.18"
 tokio = { workspace = true, features = ["sync", "rt"] }
 
 # `windows-core` is needed by the `#[implement]` / `#[interface]` macro expansions (audio COM objects).
