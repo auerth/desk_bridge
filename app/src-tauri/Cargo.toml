@@ -31,7 +31,7 @@ tracing-appender = { workspace = true }
 directories = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
+winreg = "0.56"
 sys-locale = "0.3"
 
 [features]
