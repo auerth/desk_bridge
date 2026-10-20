@@ -346,6 +346,95 @@ impl LateFrameFilter {
     }
 }
 
+/// Receiver-side reorder buffer in front of [`LateFrameFilter`].
+///
+/// Every frame travels on its own QUIC stream, and the streams are read in parallel, so a large
+/// keyframe regularly arrives *after* the small delta frames sent right behind it. Without
+/// reordering the filter then drops the keyframe as late, waits for the next one, which gets
+/// overtaken the same way: a frozen picture. This buffer hands frames on strictly in `frame_id`
+/// order; a missing id is waited for at most `max_wait` (or until `max_pending` frames queue up)
+/// and then skipped, so a real loss still reaches the filter as a gap.
+#[derive(Debug)]
+pub struct ReorderBuffer<T> {
+    next: Option<u32>,
+    pending: Vec<(VideoHeader, T, std::time::Instant)>,
+    max_wait: std::time::Duration,
+    max_pending: usize,
+}
+
+impl<T> ReorderBuffer<T> {
+    #[must_use]
+    pub fn new(max_wait: std::time::Duration, max_pending: usize) -> Self {
+        Self {
+            next: None,
+            pending: Vec::new(),
+            max_wait,
+            max_pending: max_pending.max(1),
+        }
+    }
+
+    /// Adds an arrived frame; returns the frames that are now ready, in order.
+    pub fn push(
+        &mut self,
+        h: VideoHeader,
+        payload: T,
+        now: std::time::Instant,
+    ) -> Vec<(VideoHeader, T)> {
+        let next = *self.next.get_or_insert(h.frame_id);
+        if (h.frame_id.wrapping_sub(next) as i32) < 0 {
+            // Older than what was already handed on (we skipped it): let the filter drop it.
+            return vec![(h, payload)];
+        }
+        if self
+            .pending
+            .iter()
+            .any(|(p, _, _)| p.frame_id == h.frame_id)
+        {
+            return Vec::new();
+        }
+        self.pending.push((h, payload, now));
+        self.release(now)
+    }
+
+    /// Releases frames whose predecessor did not arrive in time. Call regularly.
+    pub fn poll(&mut self, now: std::time::Instant) -> Vec<(VideoHeader, T)> {
+        self.release(now)
+    }
+
+    /// Frames waiting for a predecessor.
+    #[must_use]
+    pub fn pending(&self) -> usize {
+        self.pending.len()
+    }
+
+    fn release(&mut self, now: std::time::Instant) -> Vec<(VideoHeader, T)> {
+        let mut out = Vec::new();
+        while let Some(next) = self.next {
+            if let Some(i) = self.pending.iter().position(|(p, _, _)| p.frame_id == next) {
+                let (h, t, _) = self.pending.swap_remove(i);
+                self.next = Some(next.wrapping_add(1));
+                out.push((h, t));
+                continue;
+            }
+            // `next` is missing: give up on it when the oldest waiting frame waited too long or
+            // too many queue up, and continue with the lowest id that is there.
+            let Some(oldest) = self.pending.iter().map(|(_, _, at)| *at).min() else {
+                break;
+            };
+            if now.duration_since(oldest) < self.max_wait && self.pending.len() < self.max_pending {
+                break;
+            }
+            let lowest = self
+                .pending
+                .iter()
+                .map(|(p, _, _)| p.frame_id)
+                .min_by_key(|id| id.wrapping_sub(next));
+            self.next = lowest;
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,6 +442,90 @@ mod tests {
 
     fn hdr(id: u32, key: bool) -> VideoHeader {
         frame_header(id, key, VideoCodec::Hevc, 5120, 1440, u64::from(id) * 8_333)
+    }
+
+    #[test]
+    fn reorder_puts_an_overtaken_keyframe_back_in_front() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut r = ReorderBuffer::new(Duration::from_millis(80), 16);
+        let mut f = LateFrameFilter::new();
+        let mut accepted = Vec::new();
+        let feed =
+            |out: Vec<(VideoHeader, ())>, f: &mut LateFrameFilter, acc: &mut Vec<u32>| {
+                for (h, ()) in out {
+                    if f.on_frame(&h, 0, None).verdict == Verdict::Accept {
+                        acc.push(h.frame_id);
+                    }
+                }
+            };
+        let out = r.push(hdr(0, true), (), t0);
+        feed(out, &mut f, &mut accepted);
+        let out = r.push(hdr(1, false), (), t0);
+        feed(out, &mut f, &mut accepted);
+        // keyframe 2 is big: deltas 3 and 4 arrive first
+        let out = r.push(hdr(3, false), (), t0);
+        assert!(out.is_empty(), "3 waits for 2");
+        let out = r.push(hdr(4, false), (), t0);
+        assert!(out.is_empty());
+        let out = r.push(hdr(2, true), (), t0 + Duration::from_millis(30));
+        assert_eq!(
+            out.iter().map(|(h, ())| h.frame_id).collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
+        feed(out, &mut f, &mut accepted);
+        assert_eq!(accepted, vec![0, 1, 2, 3, 4], "nothing dropped, no freeze");
+    }
+
+    #[test]
+    fn reorder_skips_a_really_lost_frame_after_the_wait() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut r = ReorderBuffer::new(Duration::from_millis(80), 16);
+        assert_eq!(r.push(hdr(10, true), (), t0).len(), 1);
+        assert!(r.push(hdr(12, false), (), t0).is_empty());
+        assert!(r.poll(t0 + Duration::from_millis(50)).is_empty());
+        let out = r.poll(t0 + Duration::from_millis(90));
+        assert_eq!(
+            out.iter().map(|(h, ())| h.frame_id).collect::<Vec<_>>(),
+            vec![12]
+        );
+        // the lost one turning up later goes straight through (the filter drops it as late)
+        assert_eq!(
+            r.push(hdr(11, false), (), t0 + Duration::from_millis(100))
+                .len(),
+            1
+        );
+        assert_eq!(r.pending(), 0);
+    }
+
+    #[test]
+    fn reorder_releases_when_too_many_queue_up() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut r = ReorderBuffer::new(Duration::from_secs(10), 3);
+        assert_eq!(r.push(hdr(0, true), (), t0).len(), 1);
+        assert!(r.push(hdr(2, false), (), t0).is_empty());
+        assert!(r.push(hdr(3, false), (), t0).is_empty());
+        let out = r.push(hdr(4, false), (), t0);
+        assert_eq!(
+            out.iter().map(|(h, ())| h.frame_id).collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn reorder_handles_id_wraparound() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut r = ReorderBuffer::new(Duration::from_millis(80), 16);
+        assert_eq!(r.push(hdr(u32::MAX, true), (), t0).len(), 1);
+        assert!(r.push(hdr(1, false), (), t0).is_empty());
+        let out = r.push(hdr(0, false), (), t0);
+        assert_eq!(
+            out.iter().map(|(h, ())| h.frame_id).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
     }
 
     #[tokio::test]

@@ -915,7 +915,11 @@ async fn partner_logs_are_fetched_and_readable() {
     let (pc, lp) = setup().await;
     let logs = lp._dir.path().join("data").join("logs");
     std::fs::create_dir_all(&logs).unwrap();
-    std::fs::write(logs.join("agent.log.2026-10-20"), "first\nERROR focus restore failed\n").unwrap();
+    std::fs::write(
+        logs.join("agent.log.2026-10-20"),
+        "first\nERROR focus restore failed\n",
+    )
+    .unwrap();
 
     let mut rx = pc.h.subscribe();
     pc.h.request(UiRequest::FetchPeerLogs).await.unwrap();
@@ -942,14 +946,18 @@ async fn partner_logs_are_fetched_and_readable() {
     assert!(files.iter().any(|f| f.name == "system-info.txt"));
     assert!(files.iter().any(|f| f.name == "agent.log.2026-10-20"));
 
-    let v = pc
-        .h
-        .request(UiRequest::GetPeerLog {
+    let v =
+        pc.h.request(UiRequest::GetPeerLog {
             name: "agent.log.2026-10-20".into(),
         })
         .await
         .unwrap();
-    assert!(v["content"].as_str().unwrap().contains("focus restore failed"));
+    assert!(
+        v["content"]
+            .as_str()
+            .unwrap()
+            .contains("focus restore failed")
+    );
     pc.h.stop();
     lp.h.stop();
 }

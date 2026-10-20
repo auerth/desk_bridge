@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-20
+
+### Fixed
+
+- **Focus mode picture freezing while the laptop keeps sending**: every video frame travels on its
+  own QUIC stream and the PC read them in parallel, so a large keyframe was regularly overtaken by
+  the small frames sent right after it. The viewer then dropped the keyframe as "late" and waited
+  for the next one, which was overtaken the same way: the picture stood still although frames kept
+  arriving. The PC now puts frames back into order (waiting at most 80 ms for an overtaken one),
+  and the laptop sends older frames with higher priority so they are not overtaken in the first
+  place. Install it on both devices; the PC side alone already fixes the freeze.
+- The viewer logs every 5 s how many frames it had to drop and why, so a standing picture is
+  diagnosable from the log (also via "Fetch logs").
+
 ## [0.1.2] - 2026-10-20
 
 Fixes the laptop staying black after focus mode, lets you read the partner's logs from your own
@@ -143,7 +157,8 @@ code. Everything stays on your LAN: end-to-end encrypted, no cloud, no account, 
 - Install the same version on both devices.
 - Several hardware scenarios are not signed off yet, see [docs/testing.md](docs/testing.md).
 
-[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/auerth/desk_bridge/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/auerth/desk_bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/auerth/desk_bridge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/auerth/desk_bridge/releases/tag/v0.1.0

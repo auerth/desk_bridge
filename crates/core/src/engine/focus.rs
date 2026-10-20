@@ -24,7 +24,8 @@ use deskbridge_video::backend::PresenterMode;
 use deskbridge_video::negotiate::{WantedStream, codec_from_pb, codec_to_pb, negotiate};
 use deskbridge_video::pacing::{IdrThrottle, KeepAlive};
 use deskbridge_video::stream::{
-    LateFrameFilter, Verdict, frame_header, keepalive_header, read_frame, write_frame,
+    LateFrameFilter, ReorderBuffer, Verdict, frame_header, keepalive_header, read_frame,
+    write_frame,
 };
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -41,6 +42,61 @@ const START_TIMEOUT: Duration = Duration::from_secs(25);
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(8);
 /// After the first picture the source sends at least a keep-alive every 500 ms.
 const STREAM_GAP_TIMEOUT: Duration = Duration::from_secs(4);
+/// How long the viewer waits for a frame that was overtaken by later ones (see `ReorderBuffer`).
+const REORDER_MAX_WAIT: Duration = Duration::from_millis(80);
+const REORDER_MAX_PENDING: usize = 24;
+
+/// Counts dropped frames and logs them at most every 5 s, so a picture that stands still while
+/// frames keep arriving is visible in the log (before, such a freeze left no trace).
+#[derive(Default)]
+struct DropLog {
+    late: u64,
+    stale: u64,
+    waiting_key: u64,
+    keys_dropped: u64,
+    decode_errors: u64,
+    last_log: Option<Instant>,
+    presented_at_log: u64,
+}
+
+impl DropLog {
+    fn note(&mut self, reason: deskbridge_video::stream::DropReason, key: bool) {
+        use deskbridge_video::stream::DropReason as R;
+        match reason {
+            R::Late | R::Duplicate => self.late += 1,
+            R::Stale => self.stale += 1,
+            R::WaitingForKeyframe => self.waiting_key += 1,
+        }
+        if key {
+            self.keys_dropped += 1;
+        }
+    }
+
+    fn maybe_log(&mut self, sh: &ViewerShared) {
+        let due = self
+            .last_log
+            .is_none_or(|t| t.elapsed() >= Duration::from_secs(5));
+        let total = self.late + self.stale + self.waiting_key + self.decode_errors;
+        if !due || total == 0 {
+            return;
+        }
+        let presented = sh.presented_total.load(Ordering::Relaxed);
+        tracing::warn!(
+            late = self.late,
+            stale = self.stale,
+            waiting_for_keyframe = self.waiting_key,
+            keyframes_dropped = self.keys_dropped,
+            decode_errors = self.decode_errors,
+            presented = presented - self.presented_at_log,
+            "focus viewer dropped frames"
+        );
+        *self = Self {
+            last_log: Some(Instant::now()),
+            presented_at_log: presented,
+            ..Self::default()
+        };
+    }
+}
 /// The source gives up (and tells the viewer why) if nothing could be sent by then.
 const SOURCE_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the "how to get out" hint stays on the picture.
@@ -1176,6 +1232,8 @@ fn viewer_thread(
 ) {
     let epoch = Instant::now();
     let mut filter = LateFrameFilter::new();
+    let mut reorder = ReorderBuffer::new(REORDER_MAX_WAIT, REORDER_MAX_PENDING);
+    let mut dropped = DropLog::default();
     let mut interval = Instant::now();
     let mut overlay_on = false;
     let mut last_update: Option<ViewerUpdate> = None;
@@ -1200,16 +1258,10 @@ fn viewer_thread(
                 break;
             }
         }
-        let Some(first) = first else {
-            continue;
-        };
-        let mut batch = vec![first];
-        batch.extend(rx.try_iter());
-        let last_frame = batch
-            .iter()
-            .rposition(|c| matches!(c, ViewerCmd::Frame(..)));
-        for (idx, cmd) in batch.into_iter().enumerate() {
-            let present_now = Some(idx) == last_frame;
+        // Commands in arrival order; frames go through the reorder buffer first (streams are read
+        // in parallel, so a big keyframe is often overtaken by the deltas behind it).
+        let mut ready: Vec<(VideoHeader, Vec<u8>, Instant)> = Vec::new();
+        for cmd in first.into_iter().chain(rx.try_iter()) {
             match cmd {
                 ViewerCmd::Stop => break 'outer,
                 ViewerCmd::Cursor(c) => presenter.set_cursor(&c),
@@ -1224,55 +1276,72 @@ fn viewer_thread(
                     presenter.set_stats_overlay(overlay_on, &text);
                 }
                 ViewerCmd::Frame(h, payload, arrived) => {
-                    let now_ms = epoch.elapsed().as_millis() as u64;
-                    let offset = sh.clock_offset_us.load(Ordering::Relaxed);
-                    let local_ts = (h.ts_us as i64 - offset).max(0) as u64;
-                    let now_us = crate::clock::now_us();
-                    let age = now_us.saturating_sub(local_ts);
-                    let outcome = filter.on_frame(&h, now_ms, Some(age));
-                    if outcome.request_keyframe {
-                        link.send_control(pb::control::Msg::KeyframeRequest(
-                            pb::KeyframeRequest {},
-                        ));
-                    }
-                    if outcome.verdict != Verdict::Accept || h.is_keepalive() {
-                        continue;
-                    }
-                    let t0 = Instant::now();
-                    match decoder.decode(&payload, h.is_key()) {
-                        Ok(Some(frame)) => {
-                            let dec_us = t0.elapsed().as_micros() as u64;
-                            let frame: Frame = frame;
-                            let shown = !present_now || presenter.present(&frame).is_ok();
-                            if shown {
-                                if sh.presented_total.fetch_add(1, Ordering::Relaxed) == 0 {
-                                    tracing::info!("focus mode: first picture shown");
-                                }
-                                sh.presented.fetch_add(1, Ordering::Relaxed);
-                                sh.bytes.fetch_add(payload.len() as u64, Ordering::Relaxed);
-                                sh.decode_us_sum.fetch_add(dec_us, Ordering::Relaxed);
-                                sh.decode_n.fetch_add(1, Ordering::Relaxed);
-                                let total = crate::clock::now_us().saturating_sub(local_ts);
-                                sh.total_us_sum.fetch_add(total, Ordering::Relaxed);
-                                sh.network_us_sum.fetch_add(
-                                    age.saturating_sub(arrived.elapsed().as_micros() as u64),
-                                    Ordering::Relaxed,
-                                );
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            tracing::debug!("decode error: {e}");
-                            if filter.on_decode_error(now_ms) {
-                                link.send_control(pb::control::Msg::KeyframeRequest(
-                                    pb::KeyframeRequest {},
-                                ));
-                            }
-                        }
+                    for (h, (payload, arrived)) in
+                        reorder.push(h, (payload, arrived), Instant::now())
+                    {
+                        ready.push((h, payload, arrived));
                     }
                 }
             }
         }
+        for (h, (payload, arrived)) in reorder.poll(Instant::now()) {
+            ready.push((h, payload, arrived));
+        }
+        let last_frame = ready.len().checked_sub(1);
+        for (idx, (h, payload, arrived)) in ready.into_iter().enumerate() {
+            let present_now = Some(idx) == last_frame;
+            let now_ms = epoch.elapsed().as_millis() as u64;
+            let offset = sh.clock_offset_us.load(Ordering::Relaxed);
+            let local_ts = (h.ts_us as i64 - offset).max(0) as u64;
+            let now_us = crate::clock::now_us();
+            let age = now_us.saturating_sub(local_ts);
+            let outcome = filter.on_frame(&h, now_ms, Some(age));
+            if outcome.request_keyframe {
+                link.send_control(pb::control::Msg::KeyframeRequest(pb::KeyframeRequest {}));
+            }
+            if outcome.verdict != Verdict::Accept || h.is_keepalive() {
+                if let Verdict::Drop(reason) = outcome.verdict
+                    && !h.is_keepalive()
+                {
+                    dropped.note(reason, h.is_key());
+                }
+                continue;
+            }
+            let t0 = Instant::now();
+            match decoder.decode(&payload, h.is_key()) {
+                Ok(Some(frame)) => {
+                    let dec_us = t0.elapsed().as_micros() as u64;
+                    let frame: Frame = frame;
+                    let shown = !present_now || presenter.present(&frame).is_ok();
+                    if shown {
+                        if sh.presented_total.fetch_add(1, Ordering::Relaxed) == 0 {
+                            tracing::info!("focus mode: first picture shown");
+                        }
+                        sh.presented.fetch_add(1, Ordering::Relaxed);
+                        sh.bytes.fetch_add(payload.len() as u64, Ordering::Relaxed);
+                        sh.decode_us_sum.fetch_add(dec_us, Ordering::Relaxed);
+                        sh.decode_n.fetch_add(1, Ordering::Relaxed);
+                        let total = crate::clock::now_us().saturating_sub(local_ts);
+                        sh.total_us_sum.fetch_add(total, Ordering::Relaxed);
+                        sh.network_us_sum.fetch_add(
+                            age.saturating_sub(arrived.elapsed().as_micros() as u64),
+                            Ordering::Relaxed,
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    dropped.decode_errors += 1;
+                    tracing::debug!("decode error: {e}");
+                    if filter.on_decode_error(now_ms) {
+                        link.send_control(pb::control::Msg::KeyframeRequest(
+                            pb::KeyframeRequest {},
+                        ));
+                    }
+                }
+            }
+        }
+        dropped.maybe_log(&sh);
         if interval.elapsed() > Duration::from_millis(500) {
             interval = Instant::now();
             sh.loss_permille.store(
@@ -1288,6 +1357,13 @@ fn viewer_thread(
 }
 
 // --- source pipeline ----------------------------------------------------------------------------
+
+/// QUIC send priority of a frame stream: higher is sent first, so it falls with the frame id.
+/// The id wraps after 2^32 frames (years at 144 Hz); only the low 31 bits matter for ordering of
+/// the few frames in flight at once.
+fn stream_priority(frame_id: u32) -> i32 {
+    -((frame_id & 0x3FFF_FFFF) as i32)
+}
 
 async fn run_source(
     link: PeerLink,
@@ -1386,11 +1462,17 @@ async fn run_source(
                                 continue;
                             };
                             let link = link.clone();
+                            // Older frames first: every frame has its own stream, and without a
+                            // priority QUIC interleaves them, so the deltas behind a big
+                            // keyframe overtook it and the viewer froze waiting for a keyframe.
+                            let priority = stream_priority(h.frame_id);
                             tokio::spawn(async move {
-                                if let Ok(mut s) = link.open_uni(uni::VIDEO).await
-                                    && write_frame(&mut s, &h, &p.data).await.is_ok() {
+                                if let Ok(mut s) = link.open_uni(uni::VIDEO).await {
+                                    let _ = s.set_priority(priority);
+                                    if write_frame(&mut s, &h, &p.data).await.is_ok() {
                                         let _ = s.finish();
                                     }
+                                }
                                 drop(permit);
                             });
                         }
