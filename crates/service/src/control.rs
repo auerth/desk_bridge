@@ -176,6 +176,18 @@ impl Handler for ControlHandler {
                     Err(e) => Response::error(ErrorCode::Failed, e),
                 }
             }
+            Request::MakeNetworkPrivate => {
+                match deskbridge_platform_windows::network::make_private(false) {
+                    Ok(changed) => {
+                        tracing::info!(networks = ?changed, "network profile set to Private");
+                        Response::Ok
+                    }
+                    Err(e) => {
+                        tracing::warn!("make network private failed: {e}");
+                        Response::error(ErrorCode::Failed, e.message())
+                    }
+                }
+            }
             _ => Response::error(ErrorCode::BadRequest, "not served by the service pipe"),
         })
     }

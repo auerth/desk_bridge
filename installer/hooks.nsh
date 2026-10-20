@@ -40,6 +40,15 @@ Var DbPurgeArg
 ; Ask the agent/service/UI to quit, then force whatever is left, so files can be replaced.
 !macro DeskBridgeStopProcesses
   DetailPrint "Stopping Desk Bridge ..."
+  ; 0. Close the UI first: while it runs, its reconnect loop restarts the agent within a second
+  ;    (scheduled task or exe next to it), so everything stopped below would be back and locked
+  ;    again by the time the files are copied ("cannot replace deskbridge-agent.exe"). No /T:
+  ;    the UI may be the parent of this very installer (partner update).
+  nsExec::Exec 'taskkill.exe /IM "${MAINBINARYNAME}.exe"'
+  Pop $0
+  Sleep 500
+  nsExec::Exec 'taskkill.exe /F /IM "${MAINBINARYNAME}.exe"'
+  Pop $0
   ; 1. Stop the supervising service first (it would restart the agent). Ignore errors:
   ;    the setup helper may not exist yet (fresh install) or the service may not be registered.
   ${If} ${FileExists} "$DbPayloadDir\${DB_SETUP_EXE}"
@@ -70,13 +79,15 @@ Var DbPurgeArg
   Push $R1
   StrCpy $R1 0
   ${Do}
-    nsExec::ExecToStack 'cmd.exe /c tasklist /FO CSV /NH | findstr /I /C:"${DB_AGENT_EXE}" /C:"${DB_SERVICE_EXE}"'
+    nsExec::ExecToStack 'cmd.exe /c tasklist /FO CSV /NH | findstr /I /C:"${DB_AGENT_EXE}" /C:"${DB_SERVICE_EXE}" /C:"${MAINBINARYNAME}.exe"'
     Pop $0
     Pop $1
     ${If} $0 <> 0
       ${Break}
     ${EndIf}
     ; still running: try again to kill, then wait
+    nsExec::Exec 'taskkill.exe /F /IM "${MAINBINARYNAME}.exe"'
+    Pop $0
     nsExec::Exec 'taskkill.exe /F /T /IM "${DB_SERVICE_EXE}"'
     Pop $0
     nsExec::Exec 'taskkill.exe /F /T /IM "${DB_AGENT_EXE}"'
@@ -85,7 +96,7 @@ Var DbPurgeArg
     IntOp $R1 $R1 + 1
   ${LoopWhile} $R1 < 30
   Pop $R1
-  ; The UI is handled by Tauri's own CheckIfAppIsRunning right after this hook.
+  ; Tauri's own CheckIfAppIsRunning right after this hook then finds nothing left to close.
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL

@@ -80,6 +80,7 @@ export const de = {
   'warn.network_public.body':
     'Windows blockiert in öffentlichen Netzwerken die Verbindung zwischen deinen Geräten. Mit einem Klick stellst du es auf „Privat“ – das ändert eine Windows-Einstellung.',
   'warn.network_public.action': 'Netzwerk als privat markieren',
+  'warn.peer_network_public': 'Das andere Gerät ist im Netzwerk „Öffentlich“',
   'warn.no_encoder': 'Kein Hardware-Encoder gefunden',
   'warn.no_virtual_display': 'Virtueller Bildschirm fehlt',
   'warn.no_virtual_audio': 'Virtueller Audiotreiber fehlt',

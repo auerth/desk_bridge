@@ -8,6 +8,7 @@ mod dto;
 mod features;
 mod focus;
 mod input;
+mod netprofile;
 mod pairing;
 pub mod session;
 mod transfers;
@@ -126,6 +127,8 @@ pub(crate) enum Msg {
     AudioDevice(deskbridge_platform::audio::DeviceEvent),
     /// Result of the release check: the newer release, `None` when up to date.
     UpdateChecked(Result<Option<update::ReleaseInfo>, String>),
+    /// Connected networks classified as Public (`None` = could not be determined).
+    NetworkProfile(Option<Vec<String>>),
     Tick,
     Shutdown,
 }
@@ -149,6 +152,7 @@ pub struct EngineHandle {
     local_addr: SocketAddr,
     device_id: Uuid,
     shutdown: Arc<tokio::sync::Notify>,
+    restart: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl EngineHandle {
@@ -186,6 +190,12 @@ impl EngineHandle {
     /// Resolves when the engine asked to shut the process down (`ShutdownAgent`).
     pub async fn wait_shutdown(&self) {
         self.shutdown.notified().await;
+    }
+
+    /// The shutdown was a `RestartAgent` request: the process should start a fresh instance.
+    #[must_use]
+    pub fn restart_requested(&self) -> bool {
+        self.restart.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn stop(&self) {
@@ -226,6 +236,8 @@ pub(crate) struct Engine {
     pub msg_tx: mpsc::UnboundedSender<Msg>,
     pub pushes: broadcast::Sender<Push>,
     pub shutdown: Arc<tokio::sync::Notify>,
+    /// Set by `RestartAgent` right before the shutdown is signalled.
+    pub restart: Arc<std::sync::atomic::AtomicBool>,
     pub hello: Arc<parking_lot::RwLock<pb::Hello>>,
     pub session_ids: Arc<AtomicU64>,
 
@@ -246,6 +258,10 @@ pub(crate) struct Engine {
     pub proc_cpu: f32,
     pub proc_rss: f32,
     pub tick_count: u64,
+    /// A network category check is running in the background.
+    pub net_check_pending: bool,
+    /// Connected networks classified as Public at the last check.
+    pub public_networks: Vec<String>,
 
     pub pairing: Option<Arc<PairingWindow>>,
     pub local_screens: Vec<ScreenInfo>,
@@ -359,6 +375,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
     let (msg_tx, msg_rx) = mpsc::unbounded_channel();
     let (pushes, _) = broadcast::channel(64);
     let shutdown = Arc::new(tokio::sync::Notify::new());
+    let restart = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let own_id = identity.device_id;
     let local_screens = usable_screens(platform.screens.screens(), config.device.stream_source);
@@ -407,6 +424,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         msg_tx: msg_tx.clone(),
         pushes: pushes.clone(),
         shutdown: shutdown.clone(),
+        restart: restart.clone(),
         hello: Arc::new(parking_lot::RwLock::new(pb::Hello::default())),
         session_ids: Arc::new(AtomicU64::new(1)),
         session: None,
@@ -425,6 +443,8 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         proc_cpu: 0.0,
         proc_rss: 0.0,
         tick_count: 0,
+        net_check_pending: false,
+        public_networks: Vec::new(),
         pairing: None,
         local_screens,
         layout: Layout::default(),
@@ -528,6 +548,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         local_addr,
         device_id: own_id,
         shutdown,
+        restart,
     };
     tokio::spawn(engine.run(msg_rx));
     Ok(handle)
@@ -556,6 +577,7 @@ pub(crate) fn router_config(cfg: &Config) -> RouterConfig {
 
 impl Engine {
     async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
+        self.check_network_profile();
         while let Some(msg) = rx.recv().await {
             if matches!(msg, Msg::Shutdown) {
                 break;
@@ -623,6 +645,7 @@ impl Engine {
             Msg::FocusViewer(u) => self.on_focus_viewer_update(u),
             Msg::AudioDevice(ev) => self.on_audio_device_event(ev),
             Msg::UpdateChecked(r) => self.on_update_checked(r),
+            Msg::NetworkProfile(p) => self.on_network_profile(p),
             Msg::Shutdown => {}
         }
     }
@@ -645,7 +668,6 @@ impl Engine {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn clear_warning(&mut self, code: &str) {
         let before = self.warnings.len();
         self.warnings.retain(|w| w.code != code);
@@ -781,14 +803,8 @@ impl Engine {
                 }
                 self.backoff.reset();
                 self.next_attempt = Instant::now();
-                if let Some(d) = self.discovery.as_mut() {
-                    let _ = d.announce(
-                        &self.cfg.device.name,
-                        self.transport.local_addr().map_or(0, |a| a.port()),
-                        crate::brand::VERSION,
-                        &crate::netaddr::parse_ips(&self.cfg.network.advertise_addresses),
-                    );
-                }
+                self.announce_self();
+                self.check_network_profile();
             }
             PowerEvent::LidClosed | PowerEvent::LidOpened => {
                 self.on_lid(matches!(ev, PowerEvent::LidClosed));
@@ -835,6 +851,7 @@ impl Engine {
             self.dirty = true;
         }
 
+        self.tick_network_profile();
         if self.tick_count.is_multiple_of(8) {
             self.report_mic_stats();
             self.tick_release_check();

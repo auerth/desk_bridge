@@ -6,6 +6,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-20
+
+Fixes the devices silently losing each other when Windows re-classifies a network, makes
+"Restart agent" work and makes updating over a running installation reliable. Install it on both
+devices.
+
+### Added
+
+- **Public network detection**: the agent checks the Windows network category at start, after
+  network changes and every 10 s. On a network classified as "Public" (Windows Firewall blocks
+  Desk Bridge there) the app shows a hint with the network name and the button "Mark network as
+  private". The click switches it to Private (directly when the agent is elevated, otherwise
+  through the Desk Bridge service). Before, this button only answered "not available yet".
+- The partner is told as well: a device on a Public network announces that over mDNS, and the
+  other device shows "The other device is on a Public network" instead of silently retrying.
+- Failed connection attempts are written to the agent log (once per distinct error), so an
+  unreachable partner is diagnosable from the default log.
+
+### Fixed
+
+- **Restart agent** (Settings) works: the agent shuts down cleanly and starts a fresh instance
+  that waits until the old process has released the port, the pipe and the single-instance lock.
+  When the Desk Bridge service supervises the agent it adopts the new instance (no double start).
+- **Installer over a running Desk Bridge**: the installer now closes the UI first. Before, the
+  UI restarted the agent while the "close Desk Bridge?" dialog was open, so the installer could
+  not replace `deskbridge-agent.exe` and had to be started a second time.
+- The firewall rule also opens the **Domain** profile (company LANs are classified as domain
+  networks). Still limited to `deskbridge-agent.exe`, UDP 47820 + mDNS and the local subnet; the
+  Public profile stays closed.
+
 ## [0.1.0] - 2026-10-16
 
 First public release. One installer for both Windows machines; pair them once with a six-digit
@@ -84,5 +114,6 @@ code. Everything stays on your LAN: end-to-end encrypted, no cloud, no account, 
 - Install the same version on both devices.
 - Several hardware scenarios are not signed off yet, see [docs/testing.md](docs/testing.md).
 
-[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/auerth/desk_bridge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/auerth/desk_bridge/releases/tag/v0.1.0

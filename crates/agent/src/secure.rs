@@ -140,6 +140,37 @@ impl SystemServices for ServiceClient {
         ok
     }
 
+    fn public_networks(&self) -> Option<Vec<String>> {
+        match deskbridge_platform_windows::network::public_networks() {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::debug!("network category check failed: {e}");
+                None
+            }
+        }
+    }
+
+    fn make_network_private(&self) -> Result<()> {
+        // Elevated agent (the usual case, logon task "highest"): do it directly.
+        if deskbridge_platform_windows::input::is_elevated() {
+            return deskbridge_platform_windows::network::make_private(false)
+                .map(|_| ())
+                .map_err(|e| PlatformError::Other(e.message()));
+        }
+        match self.call(&Request::MakeNetworkPrivate) {
+            Ok(Response::Ok) => Ok(()),
+            Ok(Response::Error { text, .. }) => Err(PlatformError::Other(text)),
+            Ok(other) => Err(PlatformError::Other(format!(
+                "unexpected service answer: {other:?}"
+            ))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(PlatformError::Other(
+                "Desk Bridge läuft ohne Administratorrechte und der Dienst ist nicht erreichbar. Stelle das Netzwerk in den Windows-Einstellungen auf „Privat“."
+                    .to_string(),
+            )),
+            Err(e) => Err(PlatformError::Other(format!("service pipe: {e}"))),
+        }
+    }
+
     fn send_sas(&self) -> Result<()> {
         match self.call(&Request::SendSas) {
             Ok(Response::Ok) => Ok(()),

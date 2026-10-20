@@ -16,6 +16,8 @@ pub struct Discovered {
     pub port: u16,
     pub proto: u32,
     pub version: String,
+    /// The device reports that its network is classified as "Public" (firewall closed).
+    pub public_network: bool,
 }
 
 impl Discovered {
@@ -38,6 +40,7 @@ pub struct Discovery {
     daemon: ServiceDaemon,
     own_id: Uuid,
     fullname: Option<String>,
+    public_network: bool,
 }
 
 fn sanitize_label(s: &str) -> String {
@@ -61,7 +64,16 @@ impl Discovery {
             daemon,
             own_id,
             fullname: None,
+            public_network: false,
         })
+    }
+
+    /// Marks this device's network as "Public" in the next [`Self::announce`]. Returns whether
+    /// the flag changed (then announce again).
+    pub fn set_public_network(&mut self, public: bool) -> bool {
+        let changed = self.public_network != public;
+        self.public_network = public;
+        changed
     }
 
     /// Announces this device. Call again after a name or port change.
@@ -82,12 +94,17 @@ impl Discovery {
             &self.own_id.simple().to_string()[..8]
         );
         let host = format!("{instance}.local.");
-        let props: HashMap<String, String> = HashMap::from([
+        let mut props: HashMap<String, String> = HashMap::from([
             ("id".to_string(), self.own_id.to_string()),
             ("name".to_string(), name.to_string()),
             ("ver".to_string(), app_version.to_string()),
             ("proto".to_string(), PROTO_VERSION.to_string()),
         ]);
+        if self.public_network {
+            // Outgoing announcements still pass the firewall: lets the partner explain why it
+            // cannot connect.
+            props.insert("net".to_string(), "public".to_string());
+        }
         let info = if addrs.is_empty() {
             ServiceInfo::new(MDNS_SERVICE, &instance, &host, "", port, props)
                 .map_err(|e| NetError::Discovery(e.to_string()))?
@@ -137,6 +154,7 @@ impl Discovery {
                                     .and_then(|s| s.parse().ok())
                                     .unwrap_or(0),
                                 version: info.get_property_val_str("ver").unwrap_or("").to_string(),
+                                public_network: info.get_property_val_str("net") == Some("public"),
                             };
                             if tx.send(DiscoveryEvent::Found(d)).is_err() {
                                 break;

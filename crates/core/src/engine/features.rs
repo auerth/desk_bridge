@@ -103,9 +103,7 @@ impl Engine {
                 self.start_release_check();
                 Ok(serde_json::json!({ "started": true }))
             }
-            R::MakeNetworkPrivate | R::RestartAgent => {
-                Err("Diese Funktion ist noch nicht verfügbar".into())
-            }
+            R::MakeNetworkPrivate => self.make_network_private(),
             _ => Err("Unbekannte Anfrage".into()),
         }
     }

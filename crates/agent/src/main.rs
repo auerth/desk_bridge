@@ -3,6 +3,8 @@
 //! * `deskbridge-agent` – run the agent (single instance per user session)
 //! * `deskbridge-agent send <paths…>` – ask the running agent to send files/folders ("Senden an")
 //! * `deskbridge-agent --stop` – ask the running agent to quit
+//! * `deskbridge-agent --after-pid <pid>` – run the agent once process `pid` has exited (used by
+//!   "Agent neu starten": the old instance starts its successor right before it exits)
 //!
 //! Environment overrides (used by `scripts/dev-two-instances.ps1` and tests):
 //! `DESKBRIDGE_DATA_ROOT`, `DESKBRIDGE_PORT`, `DESKBRIDGE_PIPE`.
@@ -42,6 +44,12 @@ fn main() {
             println!("deskbridge-agent {}", deskbridge_core::brand::VERSION);
             0
         }
+        Some("--after-pid") => {
+            if let Some(pid) = args.get(1).and_then(|p| p.parse::<u32>().ok()) {
+                wait_for_exit(pid, std::time::Duration::from_secs(15));
+            }
+            run_agent()
+        }
         _ => run_agent(),
     };
     std::process::exit(code);
@@ -54,6 +62,48 @@ fn attach_parent_console() {
     // SAFETY: plain Win32 call; failure (no parent console) is fine.
     unsafe {
         let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+/// Blocks until process `pid` has exited (or `timeout` elapsed / the process is already gone).
+#[cfg(windows)]
+fn wait_for_exit(pid: u32, timeout: std::time::Duration) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+    // SAFETY: plain Win32 calls; the handle is closed before returning.
+    unsafe {
+        if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            let ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+            let _ = WaitForSingleObject(h, ms);
+            let _ = CloseHandle(h);
+        }
+    }
+}
+
+/// Starts the successor of this agent (`--after-pid`): it waits until this process has exited
+/// and released the single-instance mutex, the UDP port and the pipe. When the service
+/// supervises the agent it sees a clean exit (no restart of its own) and adopts the successor.
+#[cfg(windows)]
+fn spawn_successor() {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::error!("restart: cannot locate own executable: {e}");
+            return;
+        }
+    };
+    match std::process::Command::new(&exe)
+        .arg("--after-pid")
+        .arg(std::process::id().to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => tracing::info!(pid = child.id(), "restart: successor started"),
+        Err(e) => tracing::error!("restart: cannot start successor: {e}"),
     }
 }
 
@@ -154,9 +204,14 @@ fn run_agent() -> i32 {
             _ = handle.wait_shutdown() => tracing::info!("shutdown requested"),
             _ = tokio::signal::ctrl_c() => tracing::info!("ctrl-c"),
         }
+        // Let the pipe deliver the reply to the request that asked for the shutdown.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         handle.stop();
         pipe_task.abort();
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if handle.restart_requested() {
+            spawn_successor();
+        }
         0
     })
 }

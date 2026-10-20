@@ -29,7 +29,7 @@ mod policy;
 mod sessions;
 mod stream;
 pub mod util;
-mod wasapi;
+pub(crate) mod wasapi;
 
 pub use cable::{CableVirtualAudio, MicEndpointSwitch, cable_mic_endpoint, set_cable_mic_enabled};
 pub use capture::{CaptureHandle, WasapiCapture};

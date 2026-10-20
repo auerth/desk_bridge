@@ -9,6 +9,7 @@ pub mod clipboard;
 pub mod display;
 pub mod input;
 pub mod keymap;
+pub mod network;
 pub mod power;
 pub mod screen;
 pub mod secret;

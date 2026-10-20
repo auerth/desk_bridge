@@ -109,6 +109,13 @@ impl Engine {
                 self.shutdown.notify_waiters();
                 ok()
             }
+            UiRequest::RestartAgent => {
+                tracing::info!("agent restart requested");
+                self.restart
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                self.shutdown.notify_waiters();
+                ok()
+            }
             UiRequest::Ping => Ok(json!({ "pong": true })),
             other => self.handle_ui_feature(other),
         }
@@ -142,15 +149,7 @@ impl Engine {
     fn after_device_change(&mut self) {
         self.persist_config();
         self.refresh_hello();
-        if let Some(d) = self.discovery.as_mut() {
-            let port = self.transport.local_addr().map_or(0, |a| a.port());
-            let _ = d.announce(
-                &self.cfg.device.name,
-                port,
-                crate::brand::VERSION,
-                &crate::netaddr::parse_ips(&self.cfg.network.advertise_addresses),
-            );
-        }
+        self.announce_self();
     }
 
     fn set_feature(&mut self, feature: Feature, enabled: bool) -> Reply {

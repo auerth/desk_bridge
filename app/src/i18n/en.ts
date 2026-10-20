@@ -80,6 +80,7 @@ export const en: Record<MessageKey, string> = {
   'warn.network_public.body':
     'Windows blocks the connection between your devices on public networks. One click sets it to “Private” – this changes a Windows setting.',
   'warn.network_public.action': 'Mark network as private',
+  'warn.peer_network_public': 'The other device is on a “Public” network',
   'warn.no_encoder': 'No hardware encoder found',
   'warn.no_virtual_display': 'Virtual display missing',
   'warn.no_virtual_audio': 'Virtual audio driver missing',

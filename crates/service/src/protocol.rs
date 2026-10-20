@@ -2,7 +2,7 @@
 //!
 //! * `\\.\pipe\deskbridge-helper`  agent -> secure-desktop helper: input injection
 //! * `\\.\pipe\deskbridge-service` agent -> service: `ping`, `send_sas`, `helper_status`,
-//!   `cable_mic`
+//!   `cable_mic`, `make_network_private`
 //!
 //! Framing: `u16` little-endian payload length, then the payload; `payload[0]` is the tag and the
 //! remaining bytes are fixed-size little-endian fields. Injection requests are fire-and-forget (no
@@ -36,6 +36,9 @@ pub enum Request {
         enabled: bool,
         managed: bool,
     },
+    /// Switch the connected "Public" networks to Private (service pipe only). The agent sends it
+    /// only after the user confirmed it in the UI.
+    MakeNetworkPrivate,
     /// Key by USB HID usage (helper pipe only from here on).
     Key {
         hid: u16,
@@ -68,7 +71,11 @@ impl Request {
     pub fn expects_response(&self) -> bool {
         matches!(
             self,
-            Self::Ping | Self::SendSas | Self::HelperStatus | Self::CableMic { .. }
+            Self::Ping
+                | Self::SendSas
+                | Self::HelperStatus
+                | Self::CableMic { .. }
+                | Self::MakeNetworkPrivate
         )
     }
 
@@ -161,6 +168,7 @@ mod tag {
     pub const SEND_SAS: u8 = 0x02;
     pub const HELPER_STATUS: u8 = 0x03;
     pub const CABLE_MIC: u8 = 0x04;
+    pub const MAKE_NETWORK_PRIVATE: u8 = 0x05;
     pub const KEY: u8 = 0x10;
     pub const MOUSE_REL: u8 = 0x11;
     pub const MOUSE_ABS: u8 = 0x12;
@@ -239,6 +247,7 @@ impl Request {
                 p.push(u8::from(enabled));
                 p.push(u8::from(managed));
             }
+            Self::MakeNetworkPrivate => p.push(tag::MAKE_NETWORK_PRIVATE),
             Self::Key { hid, down } => {
                 p.push(tag::KEY);
                 p.extend_from_slice(&hid.to_le_bytes());
@@ -286,6 +295,7 @@ impl Request {
                 enabled: r.bool()?,
                 managed: r.bool()?,
             },
+            tag::MAKE_NETWORK_PRIVATE => Self::MakeNetworkPrivate,
             tag::KEY => Self::Key {
                 hid: r.u16()?,
                 down: r.bool()?,
@@ -438,6 +448,7 @@ mod tests {
                 enabled: true,
                 managed: false,
             },
+            Request::MakeNetworkPrivate,
             Request::Key {
                 hid: 0x04,
                 down: true,
@@ -500,7 +511,11 @@ mod tests {
         for r in all_requests() {
             let control = matches!(
                 r,
-                Request::Ping | Request::SendSas | Request::HelperStatus | Request::CableMic { .. }
+                Request::Ping
+                    | Request::SendSas
+                    | Request::HelperStatus
+                    | Request::CableMic { .. }
+                    | Request::MakeNetworkPrivate
             );
             assert_eq!(r.expects_response(), control, "{r:?}");
             assert_eq!(r.is_injection(), !control);
