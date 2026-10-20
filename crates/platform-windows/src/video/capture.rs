@@ -38,8 +38,8 @@ use windows::Win32::System::Threading::{
 use windows::core::Interface;
 
 use super::common::{
-    GpuFrame, OutputInfo, adapter_by_index, create_device, list_outputs, luid_to_i64, now_us,
-    os_err, qpc_to_us,
+    D3dDevice, GpuFrame, OutputInfo, adapter_by_index, create_device, list_outputs, luid_to_i64,
+    now_us, os_err, qpc_to_us,
 };
 
 const SHAPE_MONOCHROME: u32 = 1;
@@ -272,8 +272,62 @@ struct Session {
 }
 
 fn open_session(out: &OutputInfo) -> Result<Session> {
+    open_session_on(out, None)
+}
+
+/// Finds `out` again after a display change: Windows renumbers adapters/outputs when the
+/// topology changes (the virtual display becoming the only one), so the indices saved at start
+/// may point to nothing or to another screen. The GDI device name stays the same.
+fn refresh_output(out: &OutputInfo) -> Option<OutputInfo> {
+    let all = list_outputs().ok()?;
+    all.iter()
+        .find(|o| o.attached && !o.device_name.is_empty() && o.device_name == out.device_name)
+        .or_else(|| {
+            all.iter().find(|o| {
+                o.attached
+                    && o.adapter_luid == out.adapter_luid
+                    && (o.w, o.h) == (out.w, out.h)
+                    && (o.x, o.y) == (out.x, out.y)
+            })
+        })
+        .cloned()
+}
+
+/// Re-opens the duplication after `ACCESS_LOST` & co.: re-resolves the output and keeps the D3D11
+/// device while it is alive and on the same adapter (the zero-copy encoder is bound to it).
+fn reopen_session(out: &mut OutputInfo, old: &Session) -> Result<Session> {
+    if let Some(fresh) = refresh_output(out) {
+        if (fresh.adapter_index, fresh.output_index) != (out.adapter_index, out.output_index) {
+            tracing::info!(
+                name = %fresh.device_name,
+                adapter = fresh.adapter_index,
+                output = fresh.output_index,
+                "capture output was renumbered after a display change"
+            );
+        }
+        *out = fresh;
+    }
+    // SAFETY: plain COM call on a live device.
+    let alive = unsafe { old.device.GetDeviceRemovedReason() }.is_ok();
+    let keep =
+        (alive && old.luid == out.adapter_luid).then(|| (old.device.clone(), old.context.clone()));
+    open_session_on(out, keep)
+}
+
+fn open_session_on(
+    out: &OutputInfo,
+    existing: Option<(ID3D11Device, ID3D11DeviceContext)>,
+) -> Result<Session> {
     let adapter: IDXGIAdapter1 = adapter_by_index(out.adapter_index)?;
-    let dev = create_device(Some(&adapter))?;
+    let dev = match existing {
+        Some((device, context)) => D3dDevice {
+            device,
+            context,
+            adapter_luid: out.adapter_luid,
+            adapter_name: out.adapter_name.clone(),
+        },
+        None => create_device(Some(&adapter))?,
+    };
     // SAFETY: plain COM calls on interfaces owned here.
     let (dup, width, height) = unsafe {
         let output: IDXGIOutput = adapter
@@ -461,7 +515,7 @@ struct Pending {
 }
 
 fn capture_thread(
-    out: OutputInfo,
+    mut out: OutputInfo,
     fps: u32,
     sink: UnboundedSender<CaptureOutput>,
     stop: Arc<AtomicBool>,
@@ -547,21 +601,33 @@ fn capture_thread(
                     tracing::warn!("AcquireNextFrame: {e}; re-creating duplication");
                 }
                 last_error = Instant::now();
-                // Re-create (device, duplication, pool); retry until it works or we are stopped.
+                // Re-create (duplication, pool, the device only if it is gone); retry until it
+                // works or we are stopped.
                 drop(std::mem::take(&mut pending));
+                let mut last_report: Option<Instant> = None;
+                let mut attempts = 0u32;
                 loop {
                     if stop.load(Ordering::Relaxed) {
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(150));
-                    match open_session(&out) {
+                    attempts += 1;
+                    match reopen_session(&mut out, &session) {
                         Ok(s) => {
+                            if attempts > 1 {
+                                tracing::info!(attempts, "capture re-opened");
+                            }
                             session = s;
                             cursor = CursorTracker::default();
                             have_picture = false;
                             break;
                         }
-                        Err(e) => tracing::debug!("capture re-open failed: {e}"),
+                        Err(e) => {
+                            if last_report.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) {
+                                last_report = Some(Instant::now());
+                                tracing::warn!(attempts, "capture re-open failed: {e}");
+                            }
+                        }
                     }
                 }
                 continue;

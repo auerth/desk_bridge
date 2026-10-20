@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-20
+
+### Fixed
+
+- **"Die Bildschirmaufnahme am Laptop liefert keine Bilder" right after starting focus mode**:
+  switching to the virtual display makes Windows interrupt the screen capture
+  (`DXGI_ERROR_ACCESS_LOST`), and it renumbers the displays. The capture re-opened the old
+  display number, which no longer existed, so it never got a picture again and focus mode gave
+  up after 5 s. It now finds the display again by its name and keeps its graphics device, so it
+  continues within a fraction of a second. Re-open failures are logged.
+- If the capture does have to create a new graphics device, the video encoder re-opens itself
+  on it instead of rejecting every frame.
+
 ## [0.1.4] - 2026-10-20
 
 ### Fixed
@@ -171,7 +184,8 @@ code. Everything stays on your LAN: end-to-end encrypted, no cloud, no account, 
 - Install the same version on both devices.
 - Several hardware scenarios are not signed off yet, see [docs/testing.md](docs/testing.md).
 
-[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/auerth/desk_bridge/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/auerth/desk_bridge/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/auerth/desk_bridge/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/auerth/desk_bridge/compare/v0.1.1...v0.1.2

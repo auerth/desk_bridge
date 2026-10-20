@@ -324,6 +324,16 @@ impl FfmpegEncoder {
 
 impl VideoEncoder for FfmpegEncoder {
     fn encode(&mut self, frame: &Frame, force_key: bool) -> Result<Vec<EncodedPacket>> {
+        // The capture re-created its D3D11 device (driver reset, adapter change): a zero-copy
+        // encoder bound to the old device would reject every frame, so open again on the new one.
+        if let (Some(o), FrameData::Gpu(any)) = (self.open.as_ref(), &frame.data)
+            && o.kind == Kind::ZeroCopy
+            && let (Some(g), Some((dev, _))) = (GpuFrame::from_any(any.as_ref()), o.device.as_ref())
+            && g.device.as_raw() != dev.as_raw()
+        {
+            tracing::info!("capture device changed; re-opening the video encoder on it");
+            self.open = None;
+        }
         // Lazy open on the capture device.
         if self.open.is_none() {
             let dev = match &frame.data {
