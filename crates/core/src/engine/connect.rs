@@ -115,7 +115,13 @@ impl Engine {
     }
 
     pub(crate) fn on_connect_failed(&mut self, peer: Uuid, error: &str) {
-        tracing::debug!(%peer, error, "connect failed");
+        // Once per distinct error at info (otherwise an unreachable peer leaves no trace in the
+        // default log), repeats at debug.
+        if self.last_error.as_deref() == Some(error) {
+            tracing::debug!(%peer, error, "connect failed");
+        } else {
+            tracing::info!(%peer, error, "connect failed");
+        }
         self.connecting = None;
         self.last_error = Some(error.to_string());
         if matches!(self.conn_state, ConnState::Connecting) {

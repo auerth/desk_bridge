@@ -46,8 +46,8 @@ pub enum Command {
 
 #[derive(Debug, Args, Default)]
 pub struct InstallArgs {
-    /// Also open the Domain firewall profile (default: Private only, plan 7.5). Use on PCs
-    /// whose network is classified as a domain network.
+    /// Also open the Domain firewall profile (default: Private only). The installer always
+    /// passes it, because company LANs are classified as domain networks (plan 7.5).
     #[arg(long)]
     pub include_domain: bool,
     /// Do not create the firewall rule.

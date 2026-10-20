@@ -99,7 +99,9 @@ Var DbPurgeArg
   DetailPrint "Configuring Desk Bridge (firewall rule, autostart task, Send-to entry) ..."
   ; --install-dir is the directory that holds deskbridge-agent.exe (the task and the firewall
   ; rule are scoped to that exact path). Exit code: 0 ok, 2 some steps failed, other = error.
-  nsExec::ExecToStack '"$DbPayloadDir\${DB_SETUP_EXE}" install --quiet --install-dir "$DbPayloadDir"'
+  ; --include-domain: company LANs are classified as "Domain", not "Private"; with a Private-only
+  ; rule the peers silently stop finding each other once Windows re-classifies the network.
+  nsExec::ExecToStack '"$DbPayloadDir\${DB_SETUP_EXE}" install --quiet --include-domain --install-dir "$DbPayloadDir"'
   Pop $0
   Pop $1
   DetailPrint "$1"

@@ -298,7 +298,7 @@ message MicInUse { bool in_use = 1; }                           // Laptop meldet
 *(Umsetzung: `crates/proto/proto/deskbridge.proto`; Tasten werden als USB-HID-Usage-Codes übertragen, siehe Abschnitt 17.)*
 
 ### 7.5 Firewall
-- Der Installer legt die Regel „Desk Bridge (UDP 47820 + mDNS)“ für das Profil **Privat** an (COM `INetFwPolicy2` oder `netsh advfirewall`).
+- Der Installer legt die Regel „Desk Bridge (UDP 47820 + mDNS)“ für die Profile **Privat** und **Domäne** an (COM `INetFwPolicy2` oder `netsh advfirewall`, Remote-Bereich `LocalSubnet`). Firmennetze sind als Domäne eingestuft; mit einer reinen Privat-Regel finden sich die Geräte nicht mehr, sobald Windows das Netz umklassifiziert. **Öffentlich** bleibt zu.
 - Ist das Netzwerk als **Öffentlich** eingestuft, zeigt die UI einen Hinweis mit Erklärung und dem Button „Netzwerk als privat markieren“ (das ist eine Systemeinstellung, nur nach Bestätigung).
 
 ---

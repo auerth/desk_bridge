@@ -613,8 +613,8 @@ pub fn check_network() -> Result<Value> {
         "networks": nets,
         "connected": nets.len(),
         "has_public": has_public,
-        // The firewall rule only opens the Private profile.
-        "peer_traffic_allowed": !nets.is_empty() && nets.iter().all(|n| n.category == network::Category::Private),
+        // The installer opens the Private and Domain profiles (never Public).
+        "peer_traffic_allowed": !nets.is_empty() && nets.iter().all(|n| n.category != network::Category::Public),
         "has_domain": has_domain,
     }))
 }

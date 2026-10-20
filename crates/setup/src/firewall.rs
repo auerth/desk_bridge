@@ -1,5 +1,6 @@
 //! Inbound firewall rule (plan 7.5): UDP 47820 (QUIC) + UDP 5353 (mDNS), **Private** profile
-//! only, scoped to `deskbridge-agent.exe` and the local subnet.
+//! (plus **Domain** with `include_domain`, which the installer always passes), never Public,
+//! scoped to `deskbridge-agent.exe` and the local subnet.
 //!
 //! Primary path is the `INetFwPolicy2` COM API; `netsh advfirewall` is the fallback.
 
@@ -107,7 +108,7 @@ mod sys {
         unsafe {
             rule.SetName(&BSTR::from(FIREWALL_RULE_NAME))?;
             rule.SetDescription(&BSTR::from(format!(
-                "{PRODUCT_NAME}: peer protocol (QUIC) and mDNS discovery on the private network."
+                "{PRODUCT_NAME}: peer protocol (QUIC) and mDNS discovery on the local network."
             )))?;
             rule.SetGrouping(&BSTR::from(PRODUCT_NAME))?;
             rule.SetApplicationName(&BSTR::from(agent_exe.display().to_string()))?;
