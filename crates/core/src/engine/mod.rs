@@ -130,6 +130,10 @@ pub(crate) enum Msg {
     UpdateChecked(Result<Option<update::ReleaseInfo>, String>),
     /// Connected networks classified as Public (`None` = could not be determined).
     NetworkProfile(Option<Vec<String>>),
+    /// The focus viewer cannot decode any more, even after rebuilding its decoder.
+    FocusViewerBroken {
+        reason: String,
+    },
     /// A focus display session was ended (or a retry of that finished).
     DisplayRestored {
         session: std::sync::Arc<deskbridge_display::FocusDisplaySession>,
@@ -655,6 +659,7 @@ impl Engine {
             Msg::UpdateChecked(r) => self.on_update_checked(r),
             Msg::NetworkProfile(p) => self.on_network_profile(p),
             Msg::DisplayRestored { session, result } => self.on_display_restored(session, result),
+            Msg::FocusViewerBroken { reason } => self.on_focus_viewer_broken(&reason),
             Msg::Shutdown => {}
         }
     }

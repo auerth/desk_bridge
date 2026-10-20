@@ -55,6 +55,8 @@ struct DropLog {
     waiting_key: u64,
     keys_dropped: u64,
     decode_errors: u64,
+    rebuilds: u64,
+    last_error: Option<String>,
     last_log: Option<Instant>,
     presented_at_log: u64,
 }
@@ -87,6 +89,8 @@ impl DropLog {
             waiting_for_keyframe = self.waiting_key,
             keyframes_dropped = self.keys_dropped,
             decode_errors = self.decode_errors,
+            decoder_rebuilds = self.rebuilds,
+            last_error = self.last_error.as_deref().unwrap_or(""),
             presented = presented - self.presented_at_log,
             "focus viewer dropped frames"
         );
@@ -155,7 +159,15 @@ pub(crate) struct FocusRt {
     /// succeeds, and a new focus start waits for it.
     restore_pending: Option<Arc<FocusDisplaySession>>,
     restore_inflight: bool,
+    /// A `FocusStart` that arrived while the previous display session was still being restored
+    /// (quick restart): started as soon as the restore finished.
+    start_after_restore: Option<pb::FocusStart>,
+    // viewer side: automatic restarts after a broken decoder (rate limited)
+    auto_restarts: Vec<Instant>,
 }
+
+/// Automatic focus restarts allowed per minute before giving up.
+const MAX_AUTO_RESTARTS_PER_MIN: usize = 3;
 
 /// Retry spacing for a failed display restore (in 250 ms ticks).
 const RESTORE_RETRY_TICKS: u64 = 12;
@@ -523,7 +535,11 @@ impl Engine {
             .name("focus-decode".into())
             .spawn({
                 let msg = self.msg_tx.clone();
-                move || viewer_thread(cmd_rx_plain, decoder, presenter, sh, link_t, msg)
+                let rebuild = DecoderFactory {
+                    backend: self.platform.video.clone(),
+                    cfg: plan.cfg.clone(),
+                };
+                move || viewer_thread(cmd_rx_plain, decoder, rebuild, presenter, sh, link_t, msg)
             })
             .ok();
         let Some(thread) = thread else {
@@ -677,6 +693,11 @@ impl Engine {
         }
         if self.focus.phase != Phase::Off {
             self.stop_focus("", false);
+        }
+        if self.focus.restore_inflight && self.focus.restore_pending.is_none() {
+            // The previous session is still ending (a quick restart): start right after it.
+            self.focus.start_after_restore = Some(fs);
+            return;
         }
         if self.focus.restore_pending.is_some() || self.focus.restore_inflight {
             // The previous session's display state is not cleaned up yet: starting now would
@@ -893,6 +914,9 @@ impl Engine {
                     tracing::info!("display layout restored after an earlier failure");
                 }
                 self.clear_warning("display_restore");
+                if let Some(fs) = self.focus.start_after_restore.take() {
+                    self.on_focus_start(fs);
+                }
             }
             Err(e) => {
                 if self.focus.restore_pending.is_none() {
@@ -905,9 +929,47 @@ impl Engine {
                     ),
                 );
                 self.focus.restore_pending = Some(session);
+                if self.focus.start_after_restore.take().is_some()
+                    && let Some(s) = &self.session
+                {
+                    s.link
+                        .send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
+                            reason: "Der Laptop konnte seine Bildschirmanordnung nicht wiederherstellen (ist er gesperrt? Bitte entsperren).".into(),
+                        }));
+                }
             }
         }
         self.dirty = true;
+    }
+
+    /// Viewer: the decoder keeps failing even after a rebuild (lost GPU device): restart the
+    /// whole focus pipeline on both sides, at most [`MAX_AUTO_RESTARTS_PER_MIN`] times a minute.
+    pub(crate) fn on_focus_viewer_broken(&mut self, reason: &str) {
+        if self.focus.phase == Phase::Off {
+            return;
+        }
+        let now = Instant::now();
+        self.focus
+            .auto_restarts
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(60));
+        let mode = self.focus.mode.clone();
+        if self.focus.auto_restarts.len() >= MAX_AUTO_RESTARTS_PER_MIN {
+            tracing::error!(reason, "focus picture keeps failing; giving up");
+            self.abort_focus(&format!(
+                "Das Bild vom Laptop lässt sich nicht dekodieren ({reason}). Bitte Fokusmodus neu starten."
+            ));
+            return;
+        }
+        self.focus.auto_restarts.push(now);
+        tracing::warn!(reason, mode = %mode, "restarting focus mode after a broken decoder");
+        self.stop_focus("", true);
+        self.emit(UiEvent::Osd {
+            icon: "monitor".into(),
+            text: "Bild hing – Fokusmodus wird neu gestartet".into(),
+        });
+        if let Err(e) = self.set_focus(&mode) {
+            tracing::warn!("focus restart failed: {e}");
+        }
     }
 
     /// Tick: retry a pending display restore.
@@ -1222,9 +1284,23 @@ pub(crate) struct ViewerUpdate {
     pub hover: Option<bool>,
 }
 
+/// Creates a fresh decoder when the current one is stuck (see [`DECODER_REBUILD_AFTER`]).
+struct DecoderFactory {
+    backend: Arc<dyn deskbridge_video::backend::VideoBackend>,
+    cfg: EncoderConfig,
+}
+
+/// Consecutive decode errors after which the decoder is rebuilt. A hardware decoder that lost its
+/// surfaces or its device (driver reset) fails on every packet, keyframes included, and never
+/// recovers by itself: the picture froze until focus mode was restarted.
+const DECODER_REBUILD_AFTER: u32 = 3;
+/// At most one rebuild per this interval (a broken GPU must not turn into a rebuild loop).
+const DECODER_REBUILD_SPACING: Duration = Duration::from_secs(1);
+
 fn viewer_thread(
     rx: std_mpsc::Receiver<ViewerCmd>,
     mut decoder: Box<dyn VideoDecoder>,
+    rebuild: DecoderFactory,
     mut presenter: Box<dyn VideoPresenter>,
     sh: Arc<ViewerShared>,
     link: PeerLink,
@@ -1234,6 +1310,12 @@ fn viewer_thread(
     let mut filter = LateFrameFilter::new();
     let mut reorder = ReorderBuffer::new(REORDER_MAX_WAIT, REORDER_MAX_PENDING);
     let mut dropped = DropLog::default();
+    let mut decode_errors_in_row = 0u32;
+    let mut last_rebuild: Option<Instant> = None;
+    // A rebuilt decoder that fails again: the device itself is gone (driver reset) and the whole
+    // pipeline has to be rebuilt by the actor.
+    let mut rebuilt_without_success = false;
+    let mut broken_reported = false;
     let mut interval = Instant::now();
     let mut overlay_on = false;
     let mut last_update: Option<ViewerUpdate> = None;
@@ -1310,6 +1392,8 @@ fn viewer_thread(
             let t0 = Instant::now();
             match decoder.decode(&payload, h.is_key()) {
                 Ok(Some(frame)) => {
+                    decode_errors_in_row = 0;
+                    rebuilt_without_success = false;
                     let dec_us = t0.elapsed().as_micros() as u64;
                     let frame: Frame = frame;
                     let shown = !present_now || presenter.present(&frame).is_ok();
@@ -1332,7 +1416,42 @@ fn viewer_thread(
                 Ok(None) => {}
                 Err(e) => {
                     dropped.decode_errors += 1;
-                    tracing::debug!("decode error: {e}");
+                    decode_errors_in_row += 1;
+                    if dropped.last_error.is_none() {
+                        tracing::warn!(key = h.is_key(), decoder = %decoder.name(), "decode error: {e}");
+                    }
+                    dropped.last_error = Some(e.to_string());
+                    let stuck = decode_errors_in_row >= DECODER_REBUILD_AFTER
+                        || (h.is_key() && decode_errors_in_row > 1);
+                    if stuck && rebuilt_without_success && !broken_reported {
+                        broken_reported = true;
+                        tracing::error!(
+                            "video decoder still failing after a rebuild; restarting focus mode: {e}"
+                        );
+                        let _ = msg.send(super::Msg::FocusViewerBroken {
+                            reason: e.to_string(),
+                        });
+                    } else if stuck
+                        && !rebuilt_without_success
+                        && last_rebuild.is_none_or(|t| t.elapsed() >= DECODER_REBUILD_SPACING)
+                    {
+                        last_rebuild = Some(Instant::now());
+                        match rebuild.backend.create_decoder(&rebuild.cfg) {
+                            Ok(d) => {
+                                tracing::warn!(
+                                    errors = decode_errors_in_row,
+                                    old = %decoder.name(),
+                                    new = %d.name(),
+                                    "video decoder was stuck; rebuilt it"
+                                );
+                                decoder = d;
+                                decode_errors_in_row = 0;
+                                rebuilt_without_success = true;
+                                dropped.rebuilds += 1;
+                            }
+                            Err(re) => tracing::error!("rebuilding the video decoder failed: {re}"),
+                        }
+                    }
                     if filter.on_decode_error(now_ms) {
                         link.send_control(pb::control::Msg::KeyframeRequest(
                             pb::KeyframeRequest {},

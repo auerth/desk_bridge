@@ -52,7 +52,15 @@ impl WindowsVideoBackend {
     fn view_device(&self, rect: Option<(i32, i32, u32, u32)>) -> Result<D3dDevice> {
         let mut g = self.view_device.lock();
         if let Some(d) = g.as_ref() {
-            return Ok(d.clone());
+            // SAFETY: plain COM call on a live device.
+            match unsafe { d.device.GetDeviceRemovedReason() } {
+                Ok(()) => return Ok(d.clone()),
+                Err(e) => {
+                    // Driver reset / TDR: everything built on this device is dead.
+                    tracing::warn!("viewer D3D11 device was removed ({e}); creating a new one");
+                    *g = None;
+                }
+            }
         }
         let outputs = list_outputs()?;
         let target = rect

@@ -451,14 +451,13 @@ mod tests {
         let mut r = ReorderBuffer::new(Duration::from_millis(80), 16);
         let mut f = LateFrameFilter::new();
         let mut accepted = Vec::new();
-        let feed =
-            |out: Vec<(VideoHeader, ())>, f: &mut LateFrameFilter, acc: &mut Vec<u32>| {
-                for (h, ()) in out {
-                    if f.on_frame(&h, 0, None).verdict == Verdict::Accept {
-                        acc.push(h.frame_id);
-                    }
+        let feed = |out: Vec<(VideoHeader, ())>, f: &mut LateFrameFilter, acc: &mut Vec<u32>| {
+            for (h, ()) in out {
+                if f.on_frame(&h, 0, None).verdict == Verdict::Accept {
+                    acc.push(h.frame_id);
                 }
-            };
+            }
+        };
         let out = r.push(hdr(0, true), (), t0);
         feed(out, &mut f, &mut accepted);
         let out = r.push(hdr(1, false), (), t0);

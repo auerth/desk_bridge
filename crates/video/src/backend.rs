@@ -125,6 +125,11 @@ pub mod mock {
         pub presenter_modes: Mutex<Vec<PresenterMode>>,
         pub last_bitrate_kbps: AtomicU64,
         pub cursor_updates: AtomicU64,
+        /// The next this many `decode` calls fail (a stuck hardware decoder).
+        pub decode_failures: AtomicU64,
+        /// Every `decode` fails (a lost GPU device).
+        pub decode_always_fails: AtomicBool,
+        pub decoders_created: AtomicU64,
     }
 
     pub struct MockVideoBackend {
@@ -195,6 +200,7 @@ pub mod mock {
         }
 
         fn create_decoder(&self, _cfg: &EncoderConfig) -> Result<Box<dyn VideoDecoder>> {
+            self.stats.decoders_created.fetch_add(1, Ordering::SeqCst);
             Ok(Box::new(MockDecoder {
                 stats: self.stats.clone(),
                 have_key: false,
@@ -329,6 +335,17 @@ pub mod mock {
 
     impl VideoDecoder for MockDecoder {
         fn decode(&mut self, data: &[u8], key: bool) -> Result<Option<Frame>> {
+            if self.stats.decode_always_fails.load(Ordering::SeqCst)
+                || self
+                    .stats
+                    .decode_failures
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                    .is_ok()
+            {
+                return Err(deskbridge_platform::PlatformError::other(
+                    "mock decoder failure",
+                ));
+            }
             if key {
                 self.have_key = true;
             }

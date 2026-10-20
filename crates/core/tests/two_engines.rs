@@ -961,3 +961,69 @@ async fn partner_logs_are_fetched_and_readable() {
     pc.h.stop();
     lp.h.stop();
 }
+
+async fn start_streaming(pc: &Node, lp: &Node) {
+    use std::sync::atomic::Ordering::SeqCst;
+    pc.h.request(UiRequest::SetFocus {
+        mode: "full".into(),
+    })
+    .await
+    .unwrap();
+    wait_for("laptop captures", || {
+        lp.m.video.stats.capturer_running.load(SeqCst)
+    })
+    .await;
+    wait_for("frames presented on the pc", || {
+        pc.m.video.stats.frames_presented.load(SeqCst) > 10
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stuck_decoder_is_rebuilt_and_the_picture_continues() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    start_streaming(&pc, &lp).await;
+    assert_eq!(pc.m.video.stats.decoders_created.load(SeqCst), 1);
+    pc.m.video.stats.decode_failures.store(6, SeqCst);
+    wait_for("decoder rebuilt", || {
+        pc.m.video.stats.decoders_created.load(SeqCst) >= 2
+    })
+    .await;
+    let before = pc.m.video.stats.frames_presented.load(SeqCst);
+    wait_for("picture moves again", || {
+        pc.m.video.stats.frames_presented.load(SeqCst) > before + 10
+    })
+    .await;
+    assert_eq!(pc.h.state().await.features.focus.phase, "streaming");
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn broken_decoder_restarts_focus_and_finally_gives_up_cleanly() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    start_streaming(&pc, &lp).await;
+    pc.m.video.stats.decode_always_fails.store(true, SeqCst);
+    wait_for("focus restarted (a second viewer opened)", || {
+        pc.m.video.stats.presenter_modes.lock().len() >= 2
+    })
+    .await;
+    // still broken: after the allowed restarts focus mode ends and the laptop is restored
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if pc.h.state().await.features.focus.phase == "off"
+                && !lp.m.display.world().virtual_enabled
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("focus mode gave up and the laptop display was restored");
+    assert!(!lp.m.display.ever_blackout());
+    pc.h.stop();
+    lp.h.stop();
+}
