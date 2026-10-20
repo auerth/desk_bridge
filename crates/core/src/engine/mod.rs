@@ -10,6 +10,7 @@ mod focus;
 mod input;
 mod netprofile;
 mod pairing;
+mod remote_logs;
 pub mod session;
 mod transfers;
 mod ui;
@@ -129,6 +130,11 @@ pub(crate) enum Msg {
     UpdateChecked(Result<Option<update::ReleaseInfo>, String>),
     /// Connected networks classified as Public (`None` = could not be determined).
     NetworkProfile(Option<Vec<String>>),
+    /// A focus display session was ended (or a retry of that finished).
+    DisplayRestored {
+        session: std::sync::Arc<deskbridge_display::FocusDisplaySession>,
+        result: Result<(), String>,
+    },
     Tick,
     Shutdown,
 }
@@ -276,6 +282,7 @@ pub(crate) struct Engine {
     pub(crate) clip: Option<clip::ClipRuntime>,
     pub(crate) audio: audio::AudioState,
     pub(crate) focus: focus::FocusRt,
+    pub(crate) remote_logs: remote_logs::RemoteLogs,
     pub(crate) cursor_shape: Option<deskbridge_platform::video::CursorShapeData>,
     pub(crate) cursor_shape_serial: u32,
     pub(crate) audio_rx_slots: Option<AudioSlots>,
@@ -457,6 +464,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         clip: None,
         audio: audio::AudioState::default(),
         focus: focus::FocusRt::default(),
+        remote_logs: remote_logs::RemoteLogs::default(),
         cursor_shape: None,
         cursor_shape_serial: 0,
         audio_rx_slots: None,
@@ -646,6 +654,7 @@ impl Engine {
             Msg::AudioDevice(ev) => self.on_audio_device_event(ev),
             Msg::UpdateChecked(r) => self.on_update_checked(r),
             Msg::NetworkProfile(p) => self.on_network_profile(p),
+            Msg::DisplayRestored { session, result } => self.on_display_restored(session, result),
             Msg::Shutdown => {}
         }
     }
@@ -701,6 +710,7 @@ impl Engine {
             caps::AUDIO_PCM,
             caps::AUDIO_OPUS,
             caps::UPDATE,
+            caps::LOGS,
         ];
         if d.input_source {
             c.push("role.input_source");
@@ -852,6 +862,8 @@ impl Engine {
         }
 
         self.tick_network_profile();
+        self.tick_display_restore();
+        self.tick_remote_logs();
         if self.tick_count.is_multiple_of(8) {
             self.report_mic_stats();
             self.tick_release_check();

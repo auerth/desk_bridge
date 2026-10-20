@@ -79,6 +79,12 @@ pub enum UiRequest {
         paths: Vec<String>,
     },
     OpenIncomingFolder,
+    /// Ask the partner for its recent logs; the answer arrives as `UiEvent::PeerLogs`.
+    FetchPeerLogs,
+    /// Content of one file of the last fetched partner logs.
+    GetPeerLog {
+        name: String,
+    },
     ShowTransferInFolder {
         transfer_id: u64,
     },
@@ -188,6 +194,20 @@ pub enum UiEvent {
     DiagnosticsExported {
         path: String,
     },
+    /// Answer to `FetchPeerLogs` (`error` set when it failed). `folder`: where they were saved.
+    PeerLogs {
+        peer: String,
+        folder: Option<String>,
+        files: Vec<PeerLogFileDto>,
+        error: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerLogFileDto {
+    pub name: String,
+    pub size: u64,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

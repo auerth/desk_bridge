@@ -31,6 +31,8 @@ impl Engine {
             M::SendFiles(sf) => self.on_send_files(sf),
             M::FileRequest(r) => self.on_file_request(r),
             M::TransferProgress(p) => self.on_transfer_progress(p),
+            M::LogsRequest(r) => self.on_logs_request(r),
+            M::LogsResponse(r) => self.on_logs_response(r),
             other => tracing::trace!(?other, "unhandled control message"),
         }
     }
@@ -88,6 +90,8 @@ impl Engine {
         match req {
             R::SendFiles { paths } => self.send_files(paths),
             R::OpenIncomingFolder => self.open_incoming_folder(),
+            R::FetchPeerLogs => self.fetch_peer_logs(),
+            R::GetPeerLog { name } => self.get_peer_log(&name),
             R::ShowTransferInFolder { transfer_id } => self.show_transfer(transfer_id),
             R::ClearTransferHistory => {
                 self.xfer.mgr.clear_finished();
@@ -117,7 +121,7 @@ impl Engine {
 
 impl Engine {
     /// Human readable system block for the diagnostics archive.
-    fn system_info(&self) -> String {
+    pub(crate) fn system_info(&self) -> String {
         use std::fmt::Write;
         let mut s = String::new();
         let _ = writeln!(

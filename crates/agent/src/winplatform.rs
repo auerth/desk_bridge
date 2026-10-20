@@ -49,7 +49,10 @@ pub fn build() -> Platform {
         local_output: Arc::new(WinLocalOutput::new()),
         system: Arc::new(ServiceClient::new()),
         video: Arc::new(deskbridge_video::WindowsVideoBackend::new()),
-        display: Arc::new(deskbridge_platform_windows::display::WinDisplayManager::new()),
+        display: Arc::new(
+            deskbridge_platform_windows::display::WinDisplayManager::new()
+                .with_activation_fallback(Arc::new(crate::secure::show_real_displays_via_helper)),
+        ),
         web: Arc::new(deskbridge_platform_windows::web::WinHttpClient::new(
             format!("DeskBridge/{}", deskbridge_core::brand::VERSION),
         )),

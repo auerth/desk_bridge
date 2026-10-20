@@ -100,6 +100,21 @@ impl ServiceClient {
     }
 }
 
+/// Asks the SYSTEM helper on the secure desktop to switch the real displays back on (the agent
+/// itself is refused while the workstation is locked).
+pub fn show_real_displays_via_helper() -> Result<()> {
+    let mut c = PipeClient::connect(HELPER_PIPE, CONNECT_TIMEOUT * 5)
+        .map_err(|e| PlatformError::Other(format!("helper pipe: {e}")))?;
+    match c.call(&Request::ShowRealDisplays, Duration::from_secs(10)) {
+        Ok(Response::Ok) => Ok(()),
+        Ok(Response::Error { text, .. }) => Err(PlatformError::Other(text)),
+        Ok(other) => Err(PlatformError::Other(format!(
+            "unexpected helper answer: {other:?}"
+        ))),
+        Err(e) => Err(PlatformError::Other(format!("helper pipe: {e}"))),
+    }
+}
+
 impl Default for ServiceClient {
     fn default() -> Self {
         Self::new()

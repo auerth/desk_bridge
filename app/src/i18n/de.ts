@@ -90,6 +90,21 @@ export const de = {
   'warn.headset_missing': 'Headset nicht gefunden',
   'warn.dismiss': 'Hinweis ausblenden',
 
+  'peerLogs.title': 'Logs des anderen Geräts',
+  'peerLogs.titleFrom': 'Logs von {peer}',
+  'peerLogs.hint': 'Holt die aktuellen Protokolle über die Kopplung und zeigt sie hier an.',
+  'peerLogs.show': 'Logs abrufen',
+  'peerLogs.description': 'Die neuesten Protokolldateien des gekoppelten Geräts (ohne Schlüssel). Sie werden auch lokal gespeichert.',
+  'peerLogs.copy': 'Kopieren',
+  'peerLogs.openFolder': 'Ordner öffnen',
+  'peerLogs.refresh': 'Neu abrufen',
+  'peerLogs.loading': 'Logs werden abgerufen …',
+  'peerLogs.none': 'Keine Logs empfangen.',
+  'peerLogs.file': 'Datei',
+  'peerLogs.filter': 'Filtern …',
+  'peerLogs.lines': '{n} Zeilen',
+  'peerLogs.truncated': 'nur der neueste Teil',
+
   // ---- dashboard ----------------------------------------------------------------------------
   'dash.title': 'Übersicht',
   'dash.subtitle': 'Alles, was zwischen deinen beiden Rechnern läuft, auf einen Blick.',

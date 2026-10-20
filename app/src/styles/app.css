@@ -1117,6 +1117,53 @@ a {
   animation: modal-in var(--t-med) var(--ease);
   user-select: text;
 }
+.modal--wide {
+  width: min(1100px, calc(100vw - 48px));
+  height: calc(100vh - 64px);
+}
+.peer-logs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  flex: 1;
+  min-height: 0;
+}
+.peer-logs__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.peer-logs__meta,
+.peer-logs__empty {
+  color: var(--c-text-muted);
+  font-size: var(--fs-small);
+}
+.peer-logs__error {
+  color: var(--c-danger, #c0392b);
+}
+.peer-logs__text {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: var(--s-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-card);
+  background: var(--c-bg);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+.peer-logs__err {
+  color: var(--c-danger, #c0392b);
+}
+.peer-logs__warn {
+  color: var(--c-warn, #b7791f);
+}
 .modal__head {
   display: flex;
   justify-content: space-between;

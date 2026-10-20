@@ -36,6 +36,8 @@ export type UiRequest =
   | { type: 'play_test_tone' }
   | { type: 'send_files'; paths: string[] }
   | { type: 'open_incoming_folder' }
+  | { type: 'fetch_peer_logs' }
+  | { type: 'get_peer_log'; name: string }
   | { type: 'show_transfer_in_folder'; transfer_id: number }
   | { type: 'clear_transfer_history' }
   | { type: 'export_diagnostics'; target: string | null }
@@ -68,7 +70,21 @@ export type UiEvent =
   | { kind: 'update_available'; version: string; notes: string }
   | { kind: 'partner_update_offered'; version: string; size: number; from: string }
   | { kind: 'partner_update_ready'; path: string; version: string }
-  | { kind: 'diagnostics_exported'; path: string };
+  | { kind: 'diagnostics_exported'; path: string }
+  | { kind: 'peer_logs'; peer: string; folder: string | null; files: PeerLogFile[]; error: string | null };
+
+export interface PeerLogFile {
+  name: string;
+  size: number;
+  truncated: boolean;
+}
+
+export interface PeerLogContent {
+  name: string;
+  content: string;
+  truncated: boolean;
+  size: number;
+}
 
 export interface DeviceDto {
   id: string;

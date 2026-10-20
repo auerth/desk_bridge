@@ -518,6 +518,31 @@ export function createMockBackend(): Backend {
         state.transfers = state.transfers.filter((t) => t.status === 'running');
         pushState();
         return null;
+      case 'fetch_peer_logs':
+        await sleep(700);
+        emitEvent({
+          kind: 'peer_logs',
+          peer: 'Laptop',
+          folder: String.raw`C:\Users\thorben\AppData\Local\softwelop\DeskBridge\peer-logs\Laptop-1760942100`,
+          files: [
+            { name: 'system-info.txt', size: 412, truncated: false },
+            { name: 'agent.log.2026-10-20', size: 1_204_331, truncated: true },
+            { name: 'service/service.log.2026-10-20', size: 8_120, truncated: false },
+          ],
+          error: null,
+        });
+        return { started: true };
+      case 'get_peer_log': {
+        const now = Date.now();
+        const content =
+          req.name === 'system-info.txt'
+            ? ['desk bridge 0.1.2', 'os: Windows', 'device: Laptop', 'connection: Connected'].join('\n')
+            : Array.from({ length: 400 }, (_, i) => {
+                const lvl = i % 37 === 0 ? 'ERROR' : i % 11 === 0 ? 'WARN' : 'INFO';
+                return `${new Date(now - (400 - i) * 1000).toISOString()}  ${lvl} deskbridge_core::engine: mock line ${i}`;
+              }).join('\n');
+        return { name: req.name, content, truncated: req.name.startsWith('agent'), size: content.length };
+      }
       case 'export_diagnostics':
         await sleep(600);
         emitEvent({ kind: 'diagnostics_exported', path: 'C:\\Users\\thorben\\Desktop\\DeskBridge-Diagnose-2026-10-16.zip' });

@@ -90,6 +90,21 @@ export const en: Record<MessageKey, string> = {
   'warn.headset_missing': 'Headset not found',
   'warn.dismiss': 'Dismiss notice',
 
+  'peerLogs.title': 'Logs of the other device',
+  'peerLogs.titleFrom': 'Logs from {peer}',
+  'peerLogs.hint': 'Fetches the current logs over the pairing and shows them here.',
+  'peerLogs.show': 'Fetch logs',
+  'peerLogs.description': 'The newest log files of the paired device (no keys). They are saved locally as well.',
+  'peerLogs.copy': 'Copy',
+  'peerLogs.openFolder': 'Open folder',
+  'peerLogs.refresh': 'Fetch again',
+  'peerLogs.loading': 'Fetching logs …',
+  'peerLogs.none': 'No logs received.',
+  'peerLogs.file': 'File',
+  'peerLogs.filter': 'Filter …',
+  'peerLogs.lines': '{n} lines',
+  'peerLogs.truncated': 'newest part only',
+
   // ---- dashboard ----------------------------------------------------------------------------
   'dash.title': 'Overview',
   'dash.subtitle': 'Everything running between your two computers at a glance.',

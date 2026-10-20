@@ -56,6 +56,8 @@ pub mod caps {
     pub const FOCUS_SOURCE: &str = "focus.source";
     pub const FOCUS_VIEWER: &str = "focus.viewer";
     pub const UPDATE: &str = "update";
+    /// Answers `LogsRequest` with its recent log files.
+    pub const LOGS: &str = "logs";
 }
 
 #[cfg(test)]

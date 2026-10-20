@@ -302,6 +302,11 @@ impl DisplayManager for MockDisplayManager {
         let (failed, effect) = self.enter(Call::DisableVirtual);
         let mut g = self.lock();
         if effect {
+            // Like the real manager: when only the virtual display is active, the real ones
+            // are switched on before the device goes away (never a blackout).
+            if g.world.virtual_in_use && !g.world.internal_active {
+                g.world.internal_active = true;
+            }
             g.world.virtual_enabled = false;
             g.world.virtual_in_use = false;
             Self::check_blackout(&mut g);

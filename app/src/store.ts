@@ -6,6 +6,7 @@ import {
   type AppState,
   type AudioDeviceDto,
   type Config,
+  type PeerLogFile,
   type UiEvent,
   type UiRequest,
 } from './api/types';
@@ -47,6 +48,8 @@ interface UiStore {
   partnerOffer: { version: string; size: number; from: string } | null;
   /** A verified partner installer was received and may be started. */
   partnerReady: { path: string; version: string } | null;
+  /** Last answer to `fetch_peer_logs` (`at` changes with every answer). */
+  peerLogs: { peer: string; folder: string | null; files: PeerLogFile[]; error: string | null; at: number } | null;
   toasts: Toast[];
   /** Warning codes the user dismissed in this session. */
   dismissedWarnings: string[];
@@ -89,6 +92,7 @@ export const useStore = create<UiStore>((set, get) => ({
   updateOffer: null,
   partnerOffer: null,
   partnerReady: null,
+  peerLogs: null,
   toasts: [],
   dismissedWarnings: [],
 
@@ -137,6 +141,9 @@ export const useStore = create<UiStore>((set, get) => ({
             break;
           case 'partner_update_ready':
             set({ partnerReady: { path: e.path, version: e.version }, partnerOffer: null });
+            break;
+          case 'peer_logs':
+            set({ peerLogs: { peer: e.peer, folder: e.folder, files: e.files, error: e.error, at: Date.now() } });
             break;
           case 'diagnostics_exported':
             get().pushToast({

@@ -502,6 +502,7 @@ export function Modal({
   description,
   children,
   footer,
+  wide,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -509,13 +510,15 @@ export function Modal({
   description?: string;
   children?: ReactNode;
   footer?: ReactNode;
+  /** Large dialog (log viewer). */
+  wide?: boolean;
 }) {
   const t = useT();
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="modal__overlay" />
-        <DialogPrimitive.Content className="modal" aria-describedby={description ? undefined : undefined}>
+        <DialogPrimitive.Content className={wide ? 'modal modal--wide' : 'modal'} aria-describedby={description ? undefined : undefined}>
           <div className="modal__head">
             <DialogPrimitive.Title className="t-h2">{title}</DialogPrimitive.Title>
             <DialogPrimitive.Close asChild>

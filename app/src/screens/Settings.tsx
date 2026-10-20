@@ -1,7 +1,8 @@
-import { ExternalLink, FileArchive, FolderOpen, Send, Laptop, Monitor, Pause, Play, Plus, RotateCw, Trash2, Unlink } from 'lucide-react';
+import { ExternalLink, FileArchive, FileText, FolderOpen, Send, Laptop, Monitor, Pause, Play, Plus, RotateCw, Trash2, Unlink } from 'lucide-react';
 import { useState } from 'react';
 import { getBackend } from '../api';
 import { PairedBadge, PairingPanel } from '../components/Pairing';
+import { PeerLogsDialog } from '../components/PeerLogs';
 import { Button, Card, ConfirmDialog, Modal, PageHeader, Pill, PromptDialog, Row, Segmented, Select, SwitchRow, TextInput } from '../components/ui';
 import { useLang, useT } from '../i18n/useT';
 import { formatMs } from '../lib/format';
@@ -65,6 +66,7 @@ export function Settings() {
   const [host, setHost] = useState('');
   const [latency, setLatency] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [peerLogsOpen, setPeerLogsOpen] = useState(false);
 
   if (!state || !config) return null;
   const backend = getBackend();
@@ -272,6 +274,11 @@ export function Settings() {
             {t('settings.openLogs')}
           </Button>
         </Row>
+        <Row title={t('peerLogs.title')} description={t('peerLogs.hint')}>
+          <Button size="sm" icon={<FileText size={16} aria-hidden />} disabled={state.connection.state !== 'connected'} onClick={() => setPeerLogsOpen(true)}>
+            {t('peerLogs.show')}
+          </Button>
+        </Row>
         <Row title={t('settings.exportDiag')} description={t('settings.exportDiagHint')}>
           <Button
             size="sm"
@@ -326,6 +333,7 @@ export function Settings() {
         </Row>
       </Card>
 
+      <PeerLogsDialog open={peerLogsOpen} onOpenChange={setPeerLogsOpen} />
       <PromptDialog
         open={renamePeer != null}
         onOpenChange={(o) => !o && setRenamePeer(null)}

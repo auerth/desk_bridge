@@ -24,6 +24,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use deskbridge_display::topology::{
@@ -75,11 +76,23 @@ impl Default for DisplayTuning {
     }
 }
 
+/// Switches the real displays back on from a process that may do so while this one may not
+/// (lock screen / UAC: `SetDisplayConfig` is refused off the input desktop). The agent plugs in
+/// the SYSTEM helper on the secure desktop.
+pub type ActivationFallback = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+
 pub struct WinDisplayManager {
     settings_dir: PathBuf,
     tuning: DisplayTuning,
     /// Serialises every operation.
     op: Mutex<()>,
+    activation_fallback: Option<ActivationFallback>,
+}
+
+/// Activates every connected display (`SDC_TOPOLOGY_EXTEND`). Used by the secure-desktop helper,
+/// whose thread is attached to the input desktop (lock screen), where the agent is refused.
+pub fn activate_all_displays() -> Result<()> {
+    ccd::extend_all()
 }
 
 impl Default for WinDisplayManager {
@@ -122,7 +135,43 @@ impl WinDisplayManager {
             settings_dir: dir.into(),
             tuning: DisplayTuning::default(),
             op: Mutex::new(()),
+            activation_fallback: None,
         }
+    }
+
+    /// See [`ActivationFallback`].
+    #[must_use]
+    pub fn with_activation_fallback(mut self, f: ActivationFallback) -> Self {
+        self.activation_fallback = Some(f);
+        self
+    }
+
+    /// Switches the real displays back on: directly, and through the fallback when Windows
+    /// refuses it here (typically while the workstation is locked).
+    fn activate_real_displays(&self) -> Result<bool> {
+        if let Err(e) = ccd::extend_all() {
+            tracing::warn!(error = %e, "activating the real displays failed here");
+        }
+        if ccd::query_active_saved()?
+            .paths
+            .iter()
+            .any(|p| !p.is_indirect())
+        {
+            return Ok(true);
+        }
+        if let Some(f) = &self.activation_fallback {
+            match f() {
+                Ok(()) => {
+                    tracing::info!("real displays activated through the secure-desktop helper")
+                }
+                Err(e) => tracing::warn!(error = %e, "secure-desktop display fallback failed"),
+            }
+            return Ok(ccd::query_active_saved()?
+                .paths
+                .iter()
+                .any(|p| !p.is_indirect()));
+        }
+        Ok(false)
     }
 
     #[must_use]
@@ -596,9 +645,7 @@ impl DisplayManager for WinDisplayManager {
             tracing::warn!(
                 "only virtual displays are active; activating the real ones before disabling"
             );
-            let _ = ccd::extend_all();
-            let after = ccd::query_active_saved()?;
-            let real_active = after.paths.iter().any(|p| !p.is_indirect());
+            let real_active = self.activate_real_displays()?;
             let real_available = ccd::current_targets()?
                 .iter()
                 .any(|t| t.available && !is_indirect_technology(t.output_technology));

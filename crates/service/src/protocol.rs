@@ -39,6 +39,10 @@ pub enum Request {
     /// Switch the connected "Public" networks to Private (service pipe only). The agent sends it
     /// only after the user confirmed it in the UI.
     MakeNetworkPrivate,
+    /// Switch every connected real display on from the current input desktop (helper pipe only).
+    /// Needed when focus mode ends on the lock screen, where the agent may not change the
+    /// display topology.
+    ShowRealDisplays,
     /// Key by USB HID usage (helper pipe only from here on).
     Key {
         hid: u16,
@@ -76,6 +80,7 @@ impl Request {
                 | Self::HelperStatus
                 | Self::CableMic { .. }
                 | Self::MakeNetworkPrivate
+                | Self::ShowRealDisplays
         )
     }
 
@@ -169,6 +174,7 @@ mod tag {
     pub const HELPER_STATUS: u8 = 0x03;
     pub const CABLE_MIC: u8 = 0x04;
     pub const MAKE_NETWORK_PRIVATE: u8 = 0x05;
+    pub const SHOW_REAL_DISPLAYS: u8 = 0x06;
     pub const KEY: u8 = 0x10;
     pub const MOUSE_REL: u8 = 0x11;
     pub const MOUSE_ABS: u8 = 0x12;
@@ -248,6 +254,7 @@ impl Request {
                 p.push(u8::from(managed));
             }
             Self::MakeNetworkPrivate => p.push(tag::MAKE_NETWORK_PRIVATE),
+            Self::ShowRealDisplays => p.push(tag::SHOW_REAL_DISPLAYS),
             Self::Key { hid, down } => {
                 p.push(tag::KEY);
                 p.extend_from_slice(&hid.to_le_bytes());
@@ -296,6 +303,7 @@ impl Request {
                 managed: r.bool()?,
             },
             tag::MAKE_NETWORK_PRIVATE => Self::MakeNetworkPrivate,
+            tag::SHOW_REAL_DISPLAYS => Self::ShowRealDisplays,
             tag::KEY => Self::Key {
                 hid: r.u16()?,
                 down: r.bool()?,
@@ -449,6 +457,7 @@ mod tests {
                 managed: false,
             },
             Request::MakeNetworkPrivate,
+            Request::ShowRealDisplays,
             Request::Key {
                 hid: 0x04,
                 down: true,
@@ -516,6 +525,7 @@ mod tests {
                     | Request::HelperStatus
                     | Request::CableMic { .. }
                     | Request::MakeNetworkPrivate
+                    | Request::ShowRealDisplays
             );
             assert_eq!(r.expects_response(), control, "{r:?}");
             assert_eq!(r.is_injection(), !control);

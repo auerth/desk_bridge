@@ -63,6 +63,7 @@
       "nsis": {
         "installMode": "perMachine",
         "installerHooks": "../../installer/hooks.nsh",
+        "template": "../../installer/installer.nsi",
         "languages": ["German", "English"],
         "displayLanguageSelector": false
       }

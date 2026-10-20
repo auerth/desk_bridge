@@ -52,6 +52,7 @@ impl Handler for HelperHandler {
                 ErrorCode::BadRequest,
                 "not served by the helper pipe",
             )),
+            Request::ShowRealDisplays => Some(show_real_displays()),
             injection => {
                 // A closed channel means the worker died; the helper process is restarted by the
                 // service, nothing sensible to answer for fire-and-forget commands.
@@ -132,8 +133,45 @@ pub fn apply(inj: &dyn InputInjector, req: &Request) {
         | Request::SendSas
         | Request::HelperStatus
         | Request::CableMic { .. }
-        | Request::MakeNetworkPrivate => {}
+        | Request::MakeNetworkPrivate
+        | Request::ShowRealDisplays => {}
     }
+}
+
+/// `ShowRealDisplays`: on a fresh thread attached to the current input desktop (lock screen,
+/// UAC, logon), where `SetDisplayConfig` is allowed for this SYSTEM process in the console
+/// session, unlike for the agent on the user desktop.
+#[cfg(windows)]
+fn show_real_displays() -> Response {
+    let r = std::thread::Builder::new()
+        .name("helper-displays".into())
+        .spawn(|| {
+            let mut desk = ThreadDesktop::default();
+            if let Err(code) = desk.follow() {
+                tracing::warn!(
+                    "cannot attach to the input desktop for the display switch (error {code})"
+                );
+            }
+            deskbridge_platform_windows::display::activate_all_displays()
+        })
+        .map_err(|e| e.to_string())
+        .and_then(|h| h.join().map_err(|_| "display thread panicked".to_string()));
+    match r {
+        Ok(Ok(())) => {
+            tracing::info!("real displays activated on the input desktop");
+            Response::Ok
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("activating the real displays failed: {e}");
+            Response::error(ErrorCode::Failed, e.to_string())
+        }
+        Err(e) => Response::error(ErrorCode::Failed, e),
+    }
+}
+
+#[cfg(not(windows))]
+fn show_real_displays() -> Response {
+    Response::error(ErrorCode::Unsupported, "Windows only")
 }
 
 /// Worker loop: runs until the sender side is dropped.

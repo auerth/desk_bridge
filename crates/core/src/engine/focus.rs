@@ -95,7 +95,14 @@ pub(crate) struct FocusRt {
     // source side
     display: Option<Arc<FocusDisplaySession>>,
     source: Option<Source>,
+    /// A display session whose restore failed (e.g. ended on the lock screen): retried until it
+    /// succeeds, and a new focus start waits for it.
+    restore_pending: Option<Arc<FocusDisplaySession>>,
+    restore_inflight: bool,
 }
+
+/// Retry spacing for a failed display restore (in 250 ms ticks).
+const RESTORE_RETRY_TICKS: u64 = 12;
 
 struct ViewerPlan {
     presenter: PresenterMode,
@@ -615,6 +622,19 @@ impl Engine {
         if self.focus.phase != Phase::Off {
             self.stop_focus("", false);
         }
+        if self.focus.restore_pending.is_some() || self.focus.restore_inflight {
+            // The previous session's display state is not cleaned up yet: starting now would
+            // save the broken layout as "original".
+            if let Some(d) = self.focus.restore_pending.clone()
+                && !self.focus.restore_inflight
+            {
+                self.spawn_display_end(d);
+            }
+            link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
+                reason: "Der Laptop stellt seine Bildschirmanordnung noch wieder her. Bitte gleich noch einmal versuchen (ist er gesperrt, zuerst entsperren).".into(),
+            }));
+            return;
+        }
         let Some(codec) = codec_from_pb(fs.codec) else {
             link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
                 reason: "Unbekannter Codec".into(),
@@ -781,22 +801,66 @@ impl Engine {
 
     fn end_display_async(&mut self) {
         if let Some(d) = self.focus.display.take() {
-            let tx = self.msg_tx.clone();
             if self.cfg.focus.lid_do_nothing {
                 let _ = self.platform.power.set_lid_action_do_nothing(false);
             }
-            tokio::spawn(async move {
-                let r = tokio::task::spawn_blocking(move || d.end()).await;
-                if let Ok(Err(e)) = r {
-                    tracing::error!("restoring the display failed: {e}");
-                    let _ = tx.send(super::Msg::Warn {
-                        code: "display_restore".into(),
-                        message: format!(
-                            "Die Bildschirmanordnung konnte nicht wiederhergestellt werden: {e}"
-                        ),
-                    });
-                }
+            self.spawn_display_end(d);
+        }
+    }
+
+    /// Ends (or retries ending) a display session in the background; the result comes back as
+    /// `Msg::DisplayRestored`.
+    fn spawn_display_end(&mut self, d: Arc<FocusDisplaySession>) {
+        self.focus.restore_inflight = true;
+        let tx = self.msg_tx.clone();
+        tokio::spawn(async move {
+            let s = d.clone();
+            let r = tokio::task::spawn_blocking(move || s.end())
+                .await
+                .unwrap_or_else(|e| Err(deskbridge_platform::PlatformError::other(e.to_string())));
+            let _ = tx.send(super::Msg::DisplayRestored {
+                session: d,
+                result: r.map_err(|e| e.to_string()),
             });
+        });
+    }
+
+    pub(crate) fn on_display_restored(
+        &mut self,
+        session: Arc<FocusDisplaySession>,
+        result: Result<(), String>,
+    ) {
+        self.focus.restore_inflight = false;
+        match result {
+            Ok(()) => {
+                if self.focus.restore_pending.take().is_some() {
+                    tracing::info!("display layout restored after an earlier failure");
+                }
+                self.clear_warning("display_restore");
+            }
+            Err(e) => {
+                if self.focus.restore_pending.is_none() {
+                    tracing::error!("restoring the display failed (retrying every 3 s): {e}");
+                }
+                self.warn_once(
+                    "display_restore",
+                    &format!(
+                        "Die Bildschirmanordnung konnte noch nicht wiederhergestellt werden, Desk Bridge versucht es weiter: {e}"
+                    ),
+                );
+                self.focus.restore_pending = Some(session);
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Tick: retry a pending display restore.
+    pub(crate) fn tick_display_restore(&mut self) {
+        if self.focus.restore_inflight || !self.tick_count.is_multiple_of(RESTORE_RETRY_TICKS) {
+            return;
+        }
+        if let Some(d) = self.focus.restore_pending.clone() {
+            self.spawn_display_end(d);
         }
     }
 
@@ -1035,12 +1099,13 @@ impl Engine {
     /// Blocking variant for process shutdown.
     pub(crate) fn focus_shutdown(&mut self) {
         let display = self.focus.display.take();
+        let pending = self.focus.restore_pending.take();
         self.focus.source = None;
         self.focus.viewer = None;
-        if let Some(d) = display
-            && let Err(e) = d.end()
-        {
-            tracing::error!("restoring the display at shutdown failed: {e}");
+        for d in display.into_iter().chain(pending) {
+            if let Err(e) = d.end() {
+                tracing::error!("restoring the display at shutdown failed: {e}");
+            }
         }
         self.focus.phase = Phase::Off;
     }

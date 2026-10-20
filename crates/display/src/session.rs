@@ -283,12 +283,27 @@ fn teardown(
             );
             Topology::default()
         });
-        timed_retry(dm, "restore-topology", t, t.restore, move |d| d.restore_topology(&top)).map_err(
-            |e| {
-                tracing::error!(error = %e, "topology restore failed; keeping the focus marker for the next attempt");
-                e
-            },
-        )?;
+        if let Err(e) = timed_retry(dm, "restore-topology", t, t.restore, move |d| {
+            d.restore_topology(&top)
+        }) {
+            tracing::error!(error = %e, "topology restore failed; keeping the focus marker for the next attempt");
+            // Never leave the machine with only the (invisible) virtual display: that is a black
+            // screen nobody can operate (typically: focus mode ended on the lock screen, where
+            // Windows refuses topology changes). `disable_virtual` first brings a real display
+            // back (through the secure-desktop helper if needed) and refuses otherwise; the exact
+            // layout is restored by the next attempt.
+            match timed(dm, "disable-virtual-fallback", t.disable, |d| {
+                d.disable_virtual()
+            }) {
+                Ok(()) => tracing::warn!(
+                    "virtual display disabled as a fallback; the saved layout is restored later"
+                ),
+                Err(de) => {
+                    tracing::error!(error = %de, "fallback disabling the virtual display failed as well")
+                }
+            }
+            return Err(e);
+        }
         marker.topology_restored = true;
         if let Err(e) = files.write_marker(&marker) {
             tracing::warn!(error = %e, "cannot update focus marker");
@@ -822,8 +837,12 @@ mod tests {
         assert_eq!(rig.mock.count(Step::RestoreTopology), 3);
         assert_eq!(
             rig.mock.count(Step::DisableVirtual),
-            0,
-            "never disable the device before the topology is back"
+            1,
+            "the failed restore falls back to disabling the virtual display"
+        );
+        assert!(
+            rig.mock.world().internal_active,
+            "a real display must be back on after the fallback"
         );
         assert!(!rig.mock.ever_blackout());
         // a new begin is refused while stopping

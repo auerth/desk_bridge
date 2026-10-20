@@ -909,3 +909,47 @@ async fn copied_files_take_over_the_clipboard_only_on_arrival() {
     pc.h.stop();
     lp.h.stop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn partner_logs_are_fetched_and_readable() {
+    let (pc, lp) = setup().await;
+    let logs = lp._dir.path().join("data").join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::write(logs.join("agent.log.2026-10-20"), "first\nERROR focus restore failed\n").unwrap();
+
+    let mut rx = pc.h.subscribe();
+    pc.h.request(UiRequest::FetchPeerLogs).await.unwrap();
+    let files = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(deskbridge_core::ipc::Push::Event {
+                event:
+                    deskbridge_core::ipc::UiEvent::PeerLogs {
+                        files,
+                        error,
+                        folder,
+                        ..
+                    },
+            }) = rx.recv().await
+            {
+                assert_eq!(error, None);
+                assert!(folder.is_some_and(|f| std::path::Path::new(&f).is_dir()));
+                return files;
+            }
+        }
+    })
+    .await
+    .expect("peer logs answer");
+    assert!(files.iter().any(|f| f.name == "system-info.txt"));
+    assert!(files.iter().any(|f| f.name == "agent.log.2026-10-20"));
+
+    let v = pc
+        .h
+        .request(UiRequest::GetPeerLog {
+            name: "agent.log.2026-10-20".into(),
+        })
+        .await
+        .unwrap();
+    assert!(v["content"].as_str().unwrap().contains("focus restore failed"));
+    pc.h.stop();
+    lp.h.stop();
+}

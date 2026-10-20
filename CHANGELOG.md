@@ -6,6 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-20
+
+Fixes the laptop staying black after focus mode, lets you read the partner's logs from your own
+device and turns an update into a single run without questions. Install it on both devices (the
+laptop fix only takes effect on the laptop).
+
+### Added
+
+- **Logs of the other device**: Settings → Diagnostics → "Fetch logs" pulls the newest log files of
+  the paired device over the connection (agent, UI, setup and service logs plus a system-info
+  block; no keys, no config secrets) and shows them in a viewer with file selection, filter,
+  highlighted warnings/errors, copy and "open folder". They are also saved locally under
+  `%LOCALAPPDATA%\softwelop\DeskBridge\peer-logs\`. Needs 0.1.2 on both devices.
+
+### Fixed
+
+- **Laptop black after focus mode**: when the display layout could not be restored (typically
+  because the laptop was locked meanwhile: Windows refuses layout changes on the lock screen), the
+  laptop stayed on the invisible virtual display with its own panel switched off. Now
+  - the real displays are switched back on in that case, if necessary by the Desk Bridge service
+    on the lock screen, and only then the virtual display is removed,
+  - the exact layout is restored again every 3 s until it works (e.g. right after unlocking),
+  - a new focus mode waits until the old layout is back instead of saving the broken one.
+- **Updating**: running the installer over an existing installation no longer shows welcome,
+  licence, "uninstall before installing?", folder and start-menu pages, and no longer uninstalls
+  the old version first (that removed service, task, firewall rule and display driver just to set
+  them up again and asked whether to delete the user data). It shows only the progress bar and
+  starts Desk Bridge again. A first installation keeps the normal assistant.
+
 ## [0.1.1] - 2026-10-20
 
 Fixes the devices silently losing each other when Windows re-classifies a network, makes
@@ -114,6 +143,7 @@ code. Everything stays on your LAN: end-to-end encrypted, no cloud, no account, 
 - Install the same version on both devices.
 - Several hardware scenarios are not signed off yet, see [docs/testing.md](docs/testing.md).
 
-[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/auerth/desk_bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/auerth/desk_bridge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/auerth/desk_bridge/releases/tag/v0.1.0

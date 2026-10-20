@@ -176,6 +176,9 @@ impl Handler for ControlHandler {
                     Err(e) => Response::error(ErrorCode::Failed, e),
                 }
             }
+            Request::ShowRealDisplays => {
+                Response::error(ErrorCode::BadRequest, "served by the helper pipe")
+            }
             Request::MakeNetworkPrivate => {
                 match deskbridge_platform_windows::network::make_private(false) {
                     Ok(changed) => {
