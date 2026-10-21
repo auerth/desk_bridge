@@ -81,14 +81,25 @@ pub trait AudioPlayback: Send + Sync {
     ) -> Result<Box<dyn StreamHandle>>;
 }
 
-/// Mutes the machine's *own* speakers while its sound is forwarded to the other device.
+/// A render endpoint's mute switch and master volume, as found before it was silenced.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputLevel {
+    pub id: String,
+    pub muted: bool,
+    /// Master volume scalar 0.0..=1.0; `None` leaves the volume alone when restoring (crash
+    /// backups written by versions that only muted).
+    pub volume: Option<f32>,
+}
+
+/// Keeps the machine's *own* speakers quiet while its sound is forwarded to the other device.
 pub trait LocalOutput: Send + Sync {
-    /// Mutes or unmutes every render endpoint whose sound is forwarded (the default device, the
-    /// default communications device Teams & co. use, the other real outputs). Returns each
-    /// endpoint id with the mute state it had before the call (so it can be restored exactly).
-    fn set_forwarded_render_mute(&self, mute: bool) -> Result<Vec<(String, bool)>>;
-    /// Sets the mute state of a specific render endpoint (used to restore).
-    fn set_render_mute(&self, device_id: &str, mute: bool) -> Result<()>;
+    /// Silences every render endpoint whose sound is forwarded (the default device, the default
+    /// communications device Teams & co. use, the other real outputs) by turning its master
+    /// volume to 0 and its mute switch *off*: WASAPI loopback taps the mix before the master
+    /// volume, but the endpoint mute silences it too. Returns each endpoint's previous state.
+    fn silence_forwarded_outputs(&self) -> Result<Vec<OutputLevel>>;
+    /// Puts a render endpoint back to `prev`.
+    fn restore_output(&self, prev: &OutputLevel) -> Result<()>;
 }
 
 /// No local control (platforms without an implementation).
@@ -96,11 +107,11 @@ pub trait LocalOutput: Send + Sync {
 pub struct NullLocalOutput;
 
 impl LocalOutput for NullLocalOutput {
-    fn set_forwarded_render_mute(&self, _mute: bool) -> Result<Vec<(String, bool)>> {
+    fn silence_forwarded_outputs(&self) -> Result<Vec<OutputLevel>> {
         Err(crate::PlatformError::Unsupported("local output muting"))
     }
 
-    fn set_render_mute(&self, _device_id: &str, _mute: bool) -> Result<()> {
+    fn restore_output(&self, _prev: &OutputLevel) -> Result<()> {
         Err(crate::PlatformError::Unsupported("local output muting"))
     }
 }

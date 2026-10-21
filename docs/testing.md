@@ -113,7 +113,8 @@ M3a: laptop sound to headset
 
 - [ ] Play music on the laptop. Expected: audible in the PC headset (pick the right dongle device "Game"/"Chat"); mixed with PC audio.
 - [ ] Expected: laptop speakers stay silent (or the behaviour is documented in the ADR with the workaround).
-- [ ] Laptop volume 0 and muted. Expected: documented behaviour (loopback may go silent).
+- [ ] Teams call on the laptop while forwarding. Expected: audible in the headset; the laptop output shows volume 0, **not muted** (ADR 0002: on the laptop's Realtek output the mute silenced the loopback); after forwarding stops, volume and mute are back to what they were (also when the laptop was muted before).
+- [ ] Laptop muted by hand while forwarding. Expected: documented behaviour (loopback may go silent on Realtek).
 - [ ] 1 hour of music. Expected: no crackle, no growing delay (drift control).
 - [ ] Switch codec Auto / PCM / Opus. Expected: seamless, no click.
 - [ ] Turn the headset off and on, unplug/replug the dongle during playback. Expected: stream pauses and **resumes automatically**; no crash; no silent switch to another device.

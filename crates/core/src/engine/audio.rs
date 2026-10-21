@@ -11,8 +11,8 @@ use deskbridge_audio::{
     AudioReceiver, AudioSender, CodecPolicy, OpusApp, ReceiverConfig, SenderConfig,
 };
 use deskbridge_platform::audio::{
-    AudioDeviceInfo, CaptureSource, DeviceEvent, DeviceKind, MicDefaults, PullSource, StreamHandle,
-    VirtualAudio,
+    AudioDeviceInfo, CaptureSource, DeviceEvent, DeviceKind, MicDefaults, OutputLevel, PullSource,
+    StreamHandle, VirtualAudio,
 };
 use deskbridge_proto::media::{AudioPacket, STREAM_AUDIO_MIC, STREAM_AUDIO_SPEAKER};
 use deskbridge_proto::pb;
@@ -56,8 +56,8 @@ pub(crate) struct AudioState {
     last_packet_opus: Arc<AtomicBool>,
     // --- stream source side (laptop)
     speaker_tx: Option<SendPipe>,
-    /// Our own speakers were muted by us: (render endpoint id, mute state before we touched it).
-    muted_local: Option<Vec<(String, bool)>>,
+    /// Our own speakers were silenced by us: their state before we touched them.
+    silenced_local: Option<Vec<OutputLevel>>,
     route_speaker_wanted: bool,
     // --- microphone: sender on the headset device, sink on the stream source
     mic_tx: Option<SendPipe>,
@@ -328,7 +328,7 @@ impl Engine {
             peak,
             opus,
         });
-        self.mute_local_speakers();
+        self.silence_local_speakers();
     }
 
     /// Stops sending the laptop sound and gives the laptop its own speakers back.
@@ -341,32 +341,34 @@ impl Engine {
         self.paths.data_dir.join("speaker-mute.json")
     }
 
-    /// While the sound is forwarded to the other device, the local speakers stay quiet. The
-    /// previous mute state is remembered (also on disk, so a crash cannot leave the laptop muted).
-    fn mute_local_speakers(&mut self) {
-        if !self.cfg.audio.laptop_to_pc.mute_local_output || self.audio.muted_local.is_some() {
+    /// While the sound is forwarded to the other device, the local speakers stay quiet (volume 0,
+    /// not muted: the mute would silence the forwarded loopback too). The previous state is
+    /// remembered (also on disk, so a crash cannot leave the laptop silent).
+    fn silence_local_speakers(&mut self) {
+        if !self.cfg.audio.laptop_to_pc.mute_local_output || self.audio.silenced_local.is_some() {
             return;
         }
-        match self.platform.local_output.set_forwarded_render_mute(true) {
+        match self.platform.local_output.silence_forwarded_outputs() {
             Ok(list) => {
+                // `prev` is the mute state (key kept from the versions that only muted).
                 let devices: Vec<_> = list
                     .iter()
-                    .map(|(id, prev)| serde_json::json!({ "id": id, "prev": prev }))
+                    .map(|o| serde_json::json!({ "id": o.id, "prev": o.muted, "volume": o.volume }))
                     .collect();
                 let _ = std::fs::write(
                     self.speaker_backup_file(),
                     serde_json::json!({ "devices": devices }).to_string(),
                 );
-                self.audio.muted_local = Some(list);
+                self.audio.silenced_local = Some(list);
             }
-            Err(e) => tracing::warn!("could not mute the local speakers: {e}"),
+            Err(e) => tracing::warn!("could not silence the local speakers: {e}"),
         }
     }
 
     fn restore_local_speakers(&mut self) {
-        if let Some(list) = self.audio.muted_local.take() {
-            for (id, prev) in list {
-                if let Err(e) = self.platform.local_output.set_render_mute(&id, prev) {
+        if let Some(list) = self.audio.silenced_local.take() {
+            for prev in &list {
+                if let Err(e) = self.platform.local_output.restore_output(prev) {
                     tracing::warn!("could not restore the local speakers: {e}");
                 }
             }
@@ -851,7 +853,7 @@ impl Engine {
             self.drop_speaker_source();
         } else if self.audio.speaker_tx.is_some() {
             if c.mute_local_output {
-                self.mute_local_speakers();
+                self.silence_local_speakers();
             } else {
                 self.restore_local_speakers();
             }

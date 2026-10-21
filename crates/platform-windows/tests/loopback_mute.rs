@@ -1,12 +1,16 @@
-//! Manual experiment: does WASAPI loopback of the default render endpoint keep delivering the
-//! signal while that endpoint is muted? Plays a quiet tone in the default output for a few
+//! Manual experiment: does WASAPI loopback of a render endpoint keep delivering the signal while
+//! that endpoint is muted, or while its volume is 0? Plays a quiet tone in the output for a few
 //! seconds. `cargo test -p deskbridge-platform-windows --test loopback_mute -- --ignored --nocapture`
+//! (`DB_LOOPBACK_DEVICE=<part of the name>` picks an output other than the default).
 #![cfg(windows)]
 
 use deskbridge_platform::audio::{
-    AudioCapture, AudioFrame, AudioPlayback, CaptureSource, PullSource,
+    AudioCapture, AudioDevices, AudioFrame, AudioPlayback, CaptureSource, DeviceKind, PullSource,
 };
-use deskbridge_platform_windows::audio::{WasapiCapture, WasapiPlayback, set_render_mute};
+use deskbridge_platform_windows::audio::{
+    WasapiCapture, WasapiDevices, WasapiPlayback, endpoint_volume, set_render_mute,
+    set_render_volume,
+};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -38,21 +42,38 @@ fn peak_for(secs: u64, rx: &mut UnboundedReceiver<AudioFrame>) -> f32 {
 }
 
 #[test]
-#[ignore = "plays a quiet tone and briefly mutes the default output"]
-fn loopback_while_endpoint_is_muted() {
+#[ignore = "plays a quiet tone and briefly mutes / turns down an output"]
+fn loopback_while_endpoint_is_muted_or_at_volume_zero() {
+    let id = match std::env::var("DB_LOOPBACK_DEVICE") {
+        Ok(part) => {
+            let list = WasapiDevices::new().list(DeviceKind::Render).expect("list");
+            let dev = list
+                .iter()
+                .find(|d| d.name.to_lowercase().contains(&part.to_lowercase()))
+                .unwrap_or_else(|| panic!("no output matching {part:?}"));
+            println!("output: {}", dev.name);
+            Some(dev.id.clone())
+        }
+        Err(_) => None,
+    };
+    let orig = endpoint_volume(DeviceKind::Render, id.as_deref()).expect("volume");
     let _play = WasapiPlayback::new()
-        .start(None, Arc::new(Tone(AtomicU64::new(0))))
+        .start(id.as_deref(), Arc::new(Tone(AtomicU64::new(0))))
         .expect("playback");
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let _cap = WasapiCapture::new()
-        .start(CaptureSource::Loopback(None), tx)
+        .start(CaptureSource::Loopback(id.clone()), tx)
         .expect("loopback");
     let before = peak_for(2, &mut rx);
-    let (id, prev) = set_render_mute(None, true).expect("mute");
+    let (id, _) = set_render_mute(id.as_deref(), true).expect("mute");
     let muted = peak_for(2, &mut rx);
-    set_render_mute(Some(&id), prev).expect("restore");
+    set_render_mute(Some(&id), false).expect("unmute");
+    set_render_volume(Some(&id), 0.0).expect("volume 0");
+    let zero = peak_for(2, &mut rx);
+    set_render_volume(Some(&id), orig.scalar).expect("restore volume");
+    set_render_mute(Some(&id), orig.muted).expect("restore mute");
     let after = peak_for(1, &mut rx);
-    println!("PEAK before={before:.4} muted={muted:.4} after={after:.4}");
+    println!("PEAK before={before:.4} muted={muted:.4} volume0={zero:.4} after={after:.4}");
     assert!(before > 0.01, "no loopback signal at all");
-    assert!(muted > 0.01, "loopback went silent while muted");
+    assert!(zero > 0.01, "loopback went silent at volume 0");
 }

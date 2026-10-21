@@ -341,19 +341,26 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         Some(i) => i,
         None => Identity::load_or_create(&paths.identity_file(), platform.secrets.as_ref())?,
     });
-    // A crash while the local speakers were muted must not leave this device silent.
+    // A crash while the local speakers were silenced must not leave this device silent.
     {
         let f = paths.data_dir.join("speaker-mute.json");
         if let Ok(text) = std::fs::read_to_string(&f) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                // `{"devices":[{"id","prev"}]}`; older versions wrote a single `{"id","prev"}`.
+                // `{"devices":[{"id","prev","volume"}]}` (`prev` = mute state); versions that only
+                // muted wrote no `volume`, the oldest a single `{"id","prev"}`.
                 let entries = match v["devices"].as_array() {
                     Some(a) => a.clone(),
                     None => vec![v],
                 };
                 for e in entries {
-                    if let (Some(id), Some(prev)) = (e["id"].as_str(), e["prev"].as_bool()) {
-                        let _ = platform.local_output.set_render_mute(id, prev);
+                    if let (Some(id), Some(muted)) = (e["id"].as_str(), e["prev"].as_bool()) {
+                        let _ = platform.local_output.restore_output(
+                            &deskbridge_platform::audio::OutputLevel {
+                                id: id.to_string(),
+                                muted,
+                                volume: e["volume"].as_f64().map(|v| v as f32),
+                            },
+                        );
                     }
                 }
             }

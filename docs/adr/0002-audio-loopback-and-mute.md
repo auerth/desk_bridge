@@ -7,12 +7,10 @@
 
 Der Laptop-Ton wird in M3a per WASAPI-Loopback auf dem Standard-Ausgabegerät abgegriffen und
 zum Headset am PC geschickt. Loopback greift den Mix der Audio-Engine **vor** Lautstärke und
-Stumm-Schaltung des Endpunkts ab. Stumm oder Lautstärke 0 am Laptop lässt den Loopback deshalb
-normalerweise **nicht** verstummen, und die Laptop-Lautsprecher können auf Wunsch stumm bleiben,
-während der Ton im Headset ankommt. Das ist ein Treiberverhalten (Software-Master-Volume in
-manchen Realtek/Waves-Pfaden verhält sich anders). **Bitte am Laptop prüfen:** Lautsprecher
-stumm schalten, Video abspielen, `cargo run -p deskbridge-platform-windows --example audio_probe`
-starten – der Peak der Loopback-Ausgabe muss > 0 bleiben.
+Stumm-Schaltung des Endpunkts ab – aber nicht bei jedem Treiber: Am Laptop (Realtek) macht
+**Stumm** auch den Loopback stumm (Teams-Anruf kam am PC nicht an), die **Lautstärke** nicht
+(1 % ging). Desk Bridge hält die Laptop-Lautsprecher deshalb über **Lautstärke 0 ohne Stumm**
+leise und stellt Lautstärke und Stumm danach wieder her (Nachtrag 2026-10-21).
 
 ## Context
 
@@ -46,8 +44,13 @@ path exists (see ADR 0003).
    trimmed above 50 ms), so an idle default device does not stall the others. "Mute the laptop"
    mutes all forwarded outputs; the capture is reopened when outputs appear, vanish or the
    default changes.
-2. The UI offers "Laptop-Lautsprecher stumm lassen" (the user mutes the laptop; Desk Bridge keeps
-   streaming). If a driver attenuates before the tap (test above fails), the documented
+2. The UI offers "Laptop-Lautsprecher stumm lassen" (Desk Bridge keeps the laptop quiet and keeps
+   streaming). **Amended 2026-10-21 (hardware result):** on the laptop's Realtek output the
+   endpoint *mute* silences the loopback (a Teams call arrived silent in the headset), the master
+   *volume* does not (volume 1 % worked). The PC's Steam Streaming Speakers keep the loopback in
+   both cases, so this is driver behaviour. Desk Bridge therefore never mutes: it sets the
+   forwarded outputs to volume 0 with the mute off and restores volume and mute afterwards (crash
+   backup `speaker-mute.json` carries both). If a driver attenuates before the tap (test above fails), the documented
    workaround is to select a *different* render device as default whose volume is left at 100 %
    and which is not audible (HDMI/DisplayPort audio of a dummy monitor, or a virtual cable if the
    owner approves ADR 0003's conditional recommendation).

@@ -921,17 +921,20 @@ async fn focus_start_failure_on_the_laptop_leaves_the_pc_clean() {
     lp.h.stop();
 }
 
+/// Speakers quiet through the volume, not the mute switch: on the laptop the mute silenced the
+/// loopback too (Teams calls arrived silent in the headset).
+fn laptop_silenced(lp: &Node) -> bool {
+    lp.m.local_output.volume("out1") < 0.001 && !lp.m.local_output.is_muted("out1")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn laptop_speakers_are_muted_while_streaming_and_restored_afterwards() {
+async fn laptop_speakers_are_silenced_while_streaming_and_restored_afterwards() {
     let (pc, lp) = setup().await;
     wait_for("laptop captures loopback", || {
         lp.m.audio_capture.active(true)
     })
     .await;
-    wait_for("laptop speakers muted", || {
-        lp.m.local_output.is_muted("out1")
-    })
-    .await;
+    wait_for("laptop speakers silenced", || laptop_silenced(&lp)).await;
 
     // Headset gone → the stream pauses → the laptop gets its speakers back.
     let mut cfg: deskbridge_core::config::Config =
@@ -943,7 +946,7 @@ async fn laptop_speakers_are_muted_while_streaming_and_restored_afterwards() {
     .await
     .unwrap();
     wait_for("laptop speakers restored", || {
-        !lp.m.local_output.is_muted("out1")
+        lp.m.local_output.volume("out1") > 0.999
     })
     .await;
     pc.h.stop();
@@ -953,13 +956,10 @@ async fn laptop_speakers_are_muted_while_streaming_and_restored_afterwards() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn laptop_speakers_are_restored_when_the_connection_drops() {
     let (pc, lp) = setup().await;
-    wait_for("laptop speakers muted", || {
-        lp.m.local_output.is_muted("out1")
-    })
-    .await;
+    wait_for("laptop speakers silenced", || laptop_silenced(&lp)).await;
     pc.h.stop(); // cable pulled
     wait_for("laptop speakers restored", || {
-        !lp.m.local_output.is_muted("out1")
+        lp.m.local_output.volume("out1") > 0.999
     })
     .await;
     lp.h.stop();

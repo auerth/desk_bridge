@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+### Fixed
+
+- **Teams calls were silent in the headset**: while the laptop's sound is forwarded, Desk Bridge
+  kept the laptop speakers quiet by muting them. On the laptop's Realtek output the mute also
+  silences what Desk Bridge records, so a call arrived silent at the PC (turning the volume down
+  instead of muting kept it working). The speakers are now kept quiet by turning their volume to 0
+  with the mute switched off; volume and mute are put back exactly as they were when forwarding
+  stops (also after a crash). If the laptop was muted before, it is unmuted at volume 0 while
+  forwarding, so its sound reaches the headset.
+
 ## [0.1.3] - 2026-10-21
 
 Install it on both devices.

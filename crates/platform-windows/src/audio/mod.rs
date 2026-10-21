@@ -13,13 +13,14 @@
 //! endpoint disappears they end (and report [`StreamEvent::DeviceLost`] if asked to), and the
 //! caller restarts them when `DeviceEvent::Added` arrives.
 //!
-//! # Loopback with a muted / volume-0 render endpoint (plan 8.3, "to verify")
+//! # Loopback with a muted / volume-0 render endpoint (plan 8.3, ADR 0002)
 //! WASAPI loopback taps the mixed stream *inside the audio engine, before* the endpoint's
-//! hardware stage, so Windows' master volume/mute normally do not influence it (this is why OBS
-//! and similar tools keep recording while the speakers are muted). Drivers that implement the
-//! master volume as a software APO *in the render path* can behave differently, and a loopback
-//! stream only delivers packets while something is rendering. Treat as unverified on the laptop;
-//! see `endpoint_volume` and the `audio_probe` example for the read-only inspection.
+//! hardware stage, so Windows' master volume/mute normally do not influence it (measured on the
+//! PC's Steam Streaming Speakers: same peak muted and at volume 0). Drivers can differ: on the
+//! laptop's Realtek output the **mute** silences the loopback (Teams calls arrived silent) while
+//! the volume does not, so [`WinLocalOutput`] silences the speakers with volume 0, never with the
+//! mute. A loopback stream only delivers packets while something is rendering. The
+//! `loopback_mute` test measures both for any output.
 
 mod cable;
 mod capture;
@@ -35,6 +36,7 @@ pub use cable::{CableVirtualAudio, MicEndpointSwitch, cable_mic_endpoint, set_ca
 pub use capture::{CaptureHandle, WasapiCapture};
 pub use devices::{
     DeviceDetails, EndpointVolume, WasapiDevices, WinLocalOutput, endpoint_volume, set_render_mute,
+    set_render_volume,
 };
 pub use playback::{PlaybackHandle, PlaybackInfo, WasapiPlayback};
 pub use policy::{DefaultRole, policy_config_available, set_default_device, set_endpoint_enabled};

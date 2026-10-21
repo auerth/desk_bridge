@@ -2,8 +2,8 @@
 
 use crate::audio::{
     AudioCapture, AudioDeviceInfo, AudioDevices, AudioFrame, AudioPlayback, CaptureSource,
-    DeviceEvent, DeviceKind, LocalOutput, MicDefaults, MicUsage, PullSource, StreamHandle,
-    VirtualAudio,
+    DeviceEvent, DeviceKind, LocalOutput, MicDefaults, MicUsage, OutputLevel, PullSource,
+    StreamHandle, VirtualAudio,
 };
 use crate::clipboard::{
     ClipFormatInfo, ClipboardBackend, ClipboardEvent, ClipboardProvider, FileOffer,
@@ -631,28 +631,46 @@ impl crate::system::SystemServices for MockSystem {
     }
 }
 
-/// Local speaker muting stand-in: remembers the mute state per device.
+/// Local speaker silencing stand-in: remembers mute switch and volume per device (unknown
+/// devices are unmuted at full volume).
 #[derive(Default)]
 pub struct MockLocalOutput {
-    pub muted: Mutex<std::collections::BTreeMap<String, bool>>,
+    pub levels: Mutex<std::collections::BTreeMap<String, (bool, f32)>>,
 }
 
 impl MockLocalOutput {
+    fn level(&self, id: &str) -> (bool, f32) {
+        self.levels.lock().get(id).copied().unwrap_or((false, 1.0))
+    }
+
     #[must_use]
     pub fn is_muted(&self, id: &str) -> bool {
-        self.muted.lock().get(id).copied().unwrap_or(false)
+        self.level(id).0
+    }
+
+    #[must_use]
+    pub fn volume(&self, id: &str) -> f32 {
+        self.level(id).1
     }
 }
 
 impl LocalOutput for MockLocalOutput {
-    fn set_forwarded_render_mute(&self, mute: bool) -> Result<Vec<(String, bool)>> {
+    fn silence_forwarded_outputs(&self) -> Result<Vec<OutputLevel>> {
         let id = "out1".to_string();
-        let prev = self.muted.lock().insert(id.clone(), mute).unwrap_or(false);
-        Ok(vec![(id, prev)])
+        let (muted, volume) = self.level(&id);
+        self.levels.lock().insert(id.clone(), (false, 0.0));
+        Ok(vec![OutputLevel {
+            id,
+            muted,
+            volume: Some(volume),
+        }])
     }
 
-    fn set_render_mute(&self, device_id: &str, mute: bool) -> Result<()> {
-        self.muted.lock().insert(device_id.to_string(), mute);
+    fn restore_output(&self, prev: &OutputLevel) -> Result<()> {
+        let volume = prev.volume.unwrap_or_else(|| self.level(&prev.id).1);
+        self.levels
+            .lock()
+            .insert(prev.id.clone(), (prev.muted, volume));
         Ok(())
     }
 }

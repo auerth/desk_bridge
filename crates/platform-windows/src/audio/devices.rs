@@ -4,7 +4,9 @@ use super::util::{StateTransition, classify_state, looks_virtual};
 use super::wasapi::{
     ComGuard, data_flow, device_id, device_kind, enumerator, open_device, os_ctx, os_err,
 };
-use deskbridge_platform::audio::{AudioDeviceInfo, AudioDevices, DeviceEvent, DeviceKind};
+use deskbridge_platform::audio::{
+    AudioDeviceInfo, AudioDevices, DeviceEvent, DeviceKind, OutputLevel,
+};
 use deskbridge_platform::{PlatformError, Result, UnboundedSender};
 use parking_lot::Mutex;
 use std::collections::HashSet;
@@ -196,6 +198,57 @@ pub fn set_render_mute(device_id: Option<&str>, mute: bool) -> Result<(String, b
     }
 }
 
+/// Sets the master volume scalar (0.0..=1.0) of a render endpoint (`None` = default render
+/// device).
+pub fn set_render_volume(device_id: Option<&str>, scalar: f32) -> Result<()> {
+    let _com = ComGuard::init();
+    let en = enumerator().map_err(os_err)?;
+    let dev = open_device(&en, DeviceKind::Render, device_id, eConsole)?;
+    // SAFETY: activation returns an owned interface; the setter is a plain call.
+    unsafe {
+        let vol: IAudioEndpointVolume = dev
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| os_ctx("Activate(IAudioEndpointVolume)", e))?;
+        vol.SetMasterVolumeLevelScalar(scalar.clamp(0.0, 1.0), std::ptr::null())
+            .map_err(os_err)
+    }
+}
+
+/// Makes a render endpoint inaudible without silencing its loopback: volume 0, mute off (on the
+/// laptop's Realtek output the mute also silenced the loopback, the volume does not). Returns
+/// the state to restore.
+fn silence_render(device_id: Option<&str>) -> Result<OutputLevel> {
+    let _com = ComGuard::init();
+    let en = enumerator().map_err(os_err)?;
+    let dev = open_device(&en, DeviceKind::Render, device_id, eConsole)?;
+    let id = device_id_of(&dev)?;
+    // SAFETY: activation returns an owned interface; getters and setters are plain calls.
+    unsafe {
+        let vol: IAudioEndpointVolume = dev
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| os_ctx("Activate(IAudioEndpointVolume)", e))?;
+        let prev = OutputLevel {
+            id,
+            muted: vol.GetMute().map_err(os_err)?.as_bool(),
+            volume: Some(vol.GetMasterVolumeLevelScalar().map_err(os_err)?),
+        };
+        // Volume first, so unmuting a muted output never plays a burst at the old level.
+        vol.SetMasterVolumeLevelScalar(0.0, std::ptr::null())
+            .map_err(os_err)?;
+        if prev.muted {
+            vol.SetMute(false, std::ptr::null()).map_err(os_err)?;
+        }
+        Ok(prev)
+    }
+}
+
+fn restore_render(prev: &OutputLevel) -> Result<()> {
+    if let Some(v) = prev.volume {
+        set_render_volume(Some(&prev.id), v)?;
+    }
+    set_render_mute(Some(&prev.id), prev.muted).map(|_| ())
+}
+
 fn device_id_of(dev: &IMMDevice) -> Result<String> {
     device_id(dev).map_err(os_err)
 }
@@ -212,27 +265,27 @@ impl WinLocalOutput {
 }
 
 impl deskbridge_platform::audio::LocalOutput for WinLocalOutput {
-    fn set_forwarded_render_mute(&self, mute: bool) -> Result<Vec<(String, bool)>> {
+    fn silence_forwarded_outputs(&self) -> Result<Vec<OutputLevel>> {
         let ids = {
             let _com = ComGuard::init();
             let en = enumerator().map_err(os_err)?;
             forwarded_render_endpoints(&en)?
         };
         if ids.is_empty() {
-            return Ok(vec![set_render_mute(None, mute)?]);
+            return Ok(vec![silence_render(None)?]);
         }
         let mut out = Vec::with_capacity(ids.len());
         for (id, name) in ids {
-            match set_render_mute(Some(&id), mute) {
+            match silence_render(Some(&id)) {
                 Ok(r) => out.push(r),
-                Err(e) => tracing::debug!(device = %name, "could not change mute: {e}"),
+                Err(e) => tracing::debug!(device = %name, "could not silence: {e}"),
             }
         }
         Ok(out)
     }
 
-    fn set_render_mute(&self, device_id: &str, mute: bool) -> Result<()> {
-        set_render_mute(Some(device_id), mute).map(|_| ())
+    fn restore_output(&self, prev: &OutputLevel) -> Result<()> {
+        restore_render(prev)
     }
 }
 
