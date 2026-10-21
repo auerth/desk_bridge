@@ -12,7 +12,7 @@ Hardware steht aus · **Entscheidung** = braucht dein OK.
 * `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
   (über 500 Tests, davon 14 Integrationstests mit zwei Engines auf `127.0.0.1`), `cargo deny check`
   (Lizenzen, Advisories mit dokumentierten Ausnahmen) laufen sauber.
-* NSIS-Installer wird gebaut (`DeskBridge_0.1.6_x64-setup.exe`, ca. 245 MiB inkl. WebView2-Offline-
+* NSIS-Installer wird gebaut (`DeskBridge_0.1.7_x64-setup.exe`, ca. 245 MiB inkl. WebView2-Offline-
   Installer und FFmpeg-DLLs). **Er wurde auf diesem PC bewusst nicht ausgeführt** (er legt Firewall-
   Regel, Aufgabe, Dienst und eine Richtlinie an).
 * Echte Windows-Pfade, die auf dem Entwicklungs-PC gelaufen sind: Hooks/Injektion (Selbsttest),

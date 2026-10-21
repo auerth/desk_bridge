@@ -1318,3 +1318,34 @@ async fn hung_viewer_thread_is_replaced_by_a_restart() {
     pc.h.stop();
     lp.h.stop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stalled_viewer_start_does_not_block_the_engine() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    // a graphics driver that does not come back while the window is being opened
+    pc.m.video.stats.presenter_create_hangs.store(true, SeqCst);
+    pc.h.request(UiRequest::SetFocus {
+        mode: "full".into(),
+    })
+    .await
+    .unwrap();
+    wait_for("laptop captures", || {
+        lp.m.video.stats.capturer_running.load(SeqCst)
+    })
+    .await;
+    // longer than the 3 s heartbeat timeout
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let st = tokio::time::timeout(Duration::from_secs(1), pc.h.state())
+        .await
+        .expect("the pc engine still answers");
+    assert_eq!(st.connection.state, ConnState::Connected);
+    assert_eq!(st.features.focus.phase, "preparing");
+    pc.m.video.stats.presenter_create_hangs.store(false, SeqCst);
+    wait_for("frames presented on the pc", || {
+        pc.m.video.stats.frames_presented.load(SeqCst) > 10
+    })
+    .await;
+    pc.h.stop();
+    lp.h.stop();
+}

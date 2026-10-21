@@ -140,6 +140,8 @@ pub mod mock {
         pub capture_resets: AtomicU64,
         /// `present` blocks while set (a viewer thread hanging in the driver).
         pub present_hangs: AtomicBool,
+        /// `create_presenter` blocks while set (a stalled graphics driver).
+        pub presenter_create_hangs: AtomicBool,
         pub view_devices_discarded: AtomicU64,
     }
 
@@ -229,6 +231,9 @@ pub mod mock {
             mode: PresenterMode,
             _cfg: &EncoderConfig,
         ) -> Result<Box<dyn VideoPresenter>> {
+            while self.stats.presenter_create_hangs.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             self.stats.presenter_open.store(true, Ordering::SeqCst);
             self.stats.presenter_modes.lock().push(mode);
             Ok(Box::new(MockPresenter {

@@ -59,9 +59,45 @@ pub struct VpConverter {
     vp: ID3D11VideoProcessor,
     in_size: (u32, u32),
     out_size: (u32, u32),
-    // Views are cached per (texture pointer, slice): decoder and encoder pools are small and stable.
-    in_views: HashMap<(usize, u32), ID3D11VideoProcessorInputView>,
-    out_views: HashMap<(usize, u32), ID3D11VideoProcessorOutputView>,
+    in_views: ViewCache<ID3D11VideoProcessorInputView>,
+    out_views: ViewCache<ID3D11VideoProcessorOutputView>,
+}
+
+/// Views of the texture used last, per array slice. A view keeps its texture alive, so the views
+/// of a texture are dropped as soon as another one shows up: the decoder re-creates its whole
+/// surface pool whenever the stream parameters change (every bitrate change of the encoder), and a
+/// cache keyed by texture kept each old pool (~120 MB at 2560x1440) until the GPU ran out of
+/// memory and `Present` hung. The capture pool behind the encoder is re-created the same way.
+struct ViewCache<V> {
+    tex: usize,
+    views: HashMap<u32, V>,
+}
+
+impl<V: Clone> ViewCache<V> {
+    fn new() -> Self {
+        Self {
+            tex: 0,
+            views: HashMap::new(),
+        }
+    }
+
+    /// The cached view of `tex[slice]`; forgets the views of any other texture.
+    fn get(&mut self, tex: usize, slice: u32) -> Option<V> {
+        if self.tex != tex {
+            self.views.clear();
+            self.tex = tex;
+        }
+        self.views.get(&slice).cloned()
+    }
+
+    fn put(&mut self, slice: u32, view: V) {
+        self.views.insert(slice, view);
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.views.len()
+    }
 }
 
 // SAFETY: all contained COM interfaces are free-threaded D3D11 objects; the device is created
@@ -134,8 +170,8 @@ impl VpConverter {
             vp,
             in_size,
             out_size,
-            in_views: HashMap::new(),
-            out_views: HashMap::new(),
+            in_views: ViewCache::new(),
+            out_views: ViewCache::new(),
         };
         this.configure_colour_spaces();
         Ok(this)
@@ -177,9 +213,8 @@ impl VpConverter {
         tex: &ID3D11Texture2D,
         slice: u32,
     ) -> Result<ID3D11VideoProcessorInputView> {
-        let key = (tex.as_raw() as usize, slice);
-        if let Some(v) = self.in_views.get(&key) {
-            return Ok(v.clone());
+        if let Some(v) = self.in_views.get(tex.as_raw() as usize, slice) {
+            return Ok(v);
         }
         let desc = D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC {
             FourCC: 0,
@@ -200,7 +235,7 @@ impl VpConverter {
         }
         .map_err(|e| os_err("CreateVideoProcessorInputView", &e))?;
         let view = view.ok_or_else(|| PlatformError::other("no input view"))?;
-        self.in_views.insert(key, view.clone());
+        self.in_views.put(slice, view.clone());
         Ok(view)
     }
 
@@ -209,9 +244,8 @@ impl VpConverter {
         tex: &ID3D11Texture2D,
         slice: u32,
     ) -> Result<ID3D11VideoProcessorOutputView> {
-        let key = (tex.as_raw() as usize, slice);
-        if let Some(v) = self.out_views.get(&key) {
-            return Ok(v.clone());
+        if let Some(v) = self.out_views.get(tex.as_raw() as usize, slice) {
+            return Ok(v);
         }
         let desc = D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC {
             ViewDimension: D3D11_VPOV_DIMENSION_TEXTURE2DARRAY,
@@ -232,7 +266,7 @@ impl VpConverter {
         }
         .map_err(|e| os_err("CreateVideoProcessorOutputView", &e))?;
         let view = view.ok_or_else(|| PlatformError::other("no output view"))?;
-        self.out_views.insert(key, view.clone());
+        self.out_views.put(slice, view.clone());
         Ok(view)
     }
 
@@ -288,5 +322,25 @@ impl VpConverter {
         // Release the extra reference held by the stream description.
         drop(std::mem::ManuallyDrop::into_inner(stream.pInputSurface));
         r.map_err(|e| os_err("VideoProcessorBlt", &e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ViewCache;
+
+    #[test]
+    fn view_cache_only_keeps_the_current_texture() {
+        let mut c = ViewCache::<u32>::new();
+        assert_eq!(c.get(0xA0, 0), None);
+        c.put(0, 10);
+        c.put(1, 11);
+        assert_eq!(c.get(0xA0, 1), Some(11));
+        assert_eq!(c.len(), 2);
+        // a new decoder pool: the old texture's views (and with them the texture) are released
+        assert_eq!(c.get(0xB0, 1), None);
+        assert_eq!(c.len(), 0);
+        c.put(1, 21);
+        assert_eq!(c.get(0xB0, 1), Some(21));
     }
 }

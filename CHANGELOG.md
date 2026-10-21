@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-21
+
+### Fixed
+
+- **PC running out of graphics memory in focus mode** (picture frozen after a few minutes, the
+  split window staying open, then "laptop not reachable"): every bitrate change of the laptop made
+  the PC's video decoder re-create its picture pool, and the colour converter kept each old pool
+  alive (about 120 MB at 2560x1440). After a few minutes the 8 GB of the graphics card were full:
+  the picture froze, and the next focus start blocked the whole agent, so the laptop lost the
+  connection. The converter now only keeps what belongs to the current pool; measured on the
+  RTX 3070 Ti, graphics memory stays flat across bitrate changes (before: +118 MB each). The
+  laptop's encoder had the same problem whenever its screen capture was re-created.
+- Opening the focus window and video decoder no longer happens on the agent's main loop: a
+  stalled graphics driver can only make that focus start fail (with a message), and the
+  connection to the partner stays up.
+
 ### Added
 
 - **Update the other device from this one**: when the two devices run different versions, the

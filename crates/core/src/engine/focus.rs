@@ -171,6 +171,8 @@ pub(crate) struct FocusRt {
     /// Id of the current viewer: messages from an older viewer thread (one that hung and woke up
     /// later) must not touch the next one.
     viewer_seq: u64,
+    /// Id of the viewer whose window and decoder are being opened off the actor.
+    opening: Option<u64>,
     // source side: the picture standing still while the user types and clicks
     stall: StallWatch,
 }
@@ -268,6 +270,16 @@ struct ViewerPlan {
     presenter: PresenterMode,
     cfg: EncoderConfig,
 }
+
+/// Window and decoder opened for a viewer (see `on_focus_ready`).
+pub(crate) struct ViewerOpened {
+    id: u64,
+    ready: pb::FocusReady,
+    plan: ViewerPlan,
+    result: Result<ViewerParts, String>,
+}
+
+type ViewerParts = (Box<dyn VideoPresenter>, Box<dyn VideoDecoder>);
 
 struct Viewer {
     id: u64,
@@ -645,39 +657,66 @@ impl Engine {
     }
 
     pub(crate) fn on_focus_ready(&mut self, r: pb::FocusReady) {
-        if self.focus.phase != Phase::Preparing {
+        if self.focus.phase != Phase::Preparing || self.session.is_none() {
             return;
         }
         let Some(plan) = self.focus.plan.take() else {
             return;
         };
+        // Opening the window and the decoder talks to the graphics driver, which can stall: with
+        // the GPU out of video memory this blocked the actor, the agent stopped answering and the
+        // laptop dropped the connection. Off the actor; the start deadline still applies.
+        self.focus.viewer_seq += 1;
+        let id = self.focus.viewer_seq;
+        self.focus.opening = Some(id);
+        let video = self.platform.video.clone();
+        let tx = self.msg_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = video
+                .create_presenter(plan.presenter, &plan.cfg)
+                .map_err(|e| format!("Anzeigefenster konnte nicht geöffnet werden: {e}"))
+                .and_then(|p| {
+                    video
+                        .create_decoder(&plan.cfg)
+                        .map(|d| (p, d))
+                        .map_err(|e| format!("Video-Decoder nicht verfügbar: {e}"))
+                });
+            let _ = tx.send(super::Msg::FocusViewerOpened(Box::new(ViewerOpened {
+                id,
+                ready: r,
+                plan,
+                result,
+            })));
+        });
+    }
+
+    /// The viewer's window and decoder are open (or failed): start showing the stream.
+    pub(crate) fn on_focus_viewer_opened(&mut self, opened: ViewerOpened) {
+        let ViewerOpened {
+            id,
+            ready: r,
+            plan,
+            result,
+        } = opened;
+        if self.focus.opening != Some(id) || self.focus.phase != Phase::Preparing {
+            // Stopped or restarted meanwhile; dropping the presenter closes its window.
+            return;
+        }
+        self.focus.opening = None;
         let Some(s) = &self.session else { return };
         let link = s.link.clone();
+        let (presenter, decoder) = match result {
+            Ok(pd) => pd,
+            Err(reason) => {
+                tracing::error!(reason, "focus viewer could not be opened");
+                self.abort_focus(&reason);
+                return;
+            }
+        };
         self.focus.encoder = r.encoder.clone();
         self.focus.screen_id = r.screen_id;
-        let presenter = match self
-            .platform
-            .video
-            .create_presenter(plan.presenter, &plan.cfg)
-        {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("presenter failed: {e}");
-                self.abort_focus(&format!("Anzeigefenster konnte nicht geöffnet werden: {e}"));
-                return;
-            }
-        };
-        let decoder = match self.platform.video.create_decoder(&plan.cfg) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!("decoder failed: {e}");
-                self.abort_focus(&format!("Video-Decoder nicht verfügbar: {e}"));
-                return;
-            }
-        };
         let closer = presenter.closer();
-        self.focus.viewer_seq += 1;
-        let viewer_id = self.focus.viewer_seq;
+        let viewer_id = id;
         let shared = Arc::new(ViewerShared::default());
         shared
             .clock_offset_us
@@ -1204,6 +1243,7 @@ impl Engine {
         }
         self.focus.viewer = None;
         self.focus.plan = None;
+        self.focus.opening = None;
         self.focus.streaming_since = None;
         self.focus.hint_until = None;
         self.focus.source_info_key = None;

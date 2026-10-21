@@ -122,6 +122,7 @@ pub(crate) enum Msg {
         link: PeerLink,
     },
     FocusViewer(focus::ViewerUpdate),
+    FocusViewerOpened(Box<focus::ViewerOpened>),
     FocusSourceFailed {
         reason: String,
     },
@@ -671,6 +672,7 @@ impl Engine {
             } => self.on_focus_source_up(screen_id, capturer, encoder, cfg, link),
             Msg::FocusSourceFailed { reason } => self.on_focus_source_failed(&reason),
             Msg::FocusViewer(u) => self.on_focus_viewer_update(u),
+            Msg::FocusViewerOpened(o) => self.on_focus_viewer_opened(*o),
             Msg::AudioDevice(ev) => self.on_audio_device_event(ev),
             Msg::UpdateChecked(r) => self.on_update_checked(r),
             Msg::PartnerUpdateHashed {
