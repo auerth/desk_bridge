@@ -253,7 +253,7 @@ export function usePartnerUpdate() {
     if (upd?.installer_available) {
       r = await send({ type: 'update_partner' });
     } else {
-      // No installer kept on this device (dev build, installed before 0.1.7): pick it.
+      // No installer kept on this device (dev build, installed before 0.1.3): pick it.
       const path = await getBackend().pickInstaller();
       if (!path) return;
       const version = installerVersion(path);

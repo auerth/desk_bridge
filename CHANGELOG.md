@@ -6,21 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
-## [0.1.7] - 2026-10-21
+## [0.1.3] - 2026-10-21
 
-### Fixed
-
-- **PC running out of graphics memory in focus mode** (picture frozen after a few minutes, the
-  split window staying open, then "laptop not reachable"): every bitrate change of the laptop made
-  the PC's video decoder re-create its picture pool, and the colour converter kept each old pool
-  alive (about 120 MB at 2560x1440). After a few minutes the 8 GB of the graphics card were full:
-  the picture froze, and the next focus start blocked the whole agent, so the laptop lost the
-  connection. The converter now only keeps what belongs to the current pool; measured on the
-  RTX 3070 Ti, graphics memory stays flat across bitrate changes (before: +118 MB each). The
-  laptop's encoder had the same problem whenever its screen capture was re-created.
-- Opening the focus window and video decoder no longer happens on the agent's main loop: a
-  stalled graphics driver can only make that focus start fail (with a message), and the
-  connection to the partner stays up.
+Install it on both devices.
 
 ### Added
 
@@ -34,70 +22,59 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
   update is shown as a question as before.
 - The installer keeps a copy of itself next to the agent (`installer\DeskBridge-Setup-<version>.exe`,
   about 250 MB) so the device can pass its version on; received update packages that are no longer
-  needed are deleted at start. A partner that still runs 0.1.6 or older asks its user once.
-
-## [0.1.6] - 2026-10-21
+  needed are deleted at start. A partner that still runs 0.1.2 asks its user once.
 
 ### Fixed
 
-- **Focus mode picture freezing because the laptop stopped capturing**: the laptop's screen
-  capture could stop delivering pictures without any error; the laptop kept sending keep-alives,
-  so the PC never noticed and the picture stood still for good. The laptop now notices when keys,
-  clicks or the wheel produce no new picture for 3 s and rebuilds the capture with a new graphics
-  device; if that does not help either, focus mode restarts itself on both sides (at most three
-  times a minute). A still desktop without input is left alone.
-- **Focus mode picture freezing because the PC's viewer hung**: when the PC's decode/display
-  thread hangs (in the decoder or the graphics driver), the PC notices within 3 s, closes the
-  window, takes a new graphics device and restarts focus mode. The log names the step it hung in.
-- **Split-mode window staying open on the PC after focus mode ended**: the window is now closed
-  directly when focus mode ends, also when the viewer thread hangs.
+Focus mode froze after a while (the picture stood still, sometimes the PC window stayed open after
+ending it, and once the laptop lost the connection). There were several independent causes:
+
+- **The PC ran out of graphics memory**: every bitrate change of the laptop made the PC's video
+  decoder re-create its picture pool, and the colour converter kept each old pool alive (about
+  120 MB at 2560x1440). After a few minutes the graphics card was full: the picture froze, and the
+  next focus start blocked the whole agent, so the laptop lost the connection. The converter now
+  only keeps what belongs to the current pool; measured on an RTX 3070 Ti, graphics memory stays
+  flat across bitrate changes. The laptop's encoder had the same problem whenever its screen
+  capture was re-created.
+- **The laptop stopped capturing**: Windows interrupts the screen capture when the displays change
+  (`DXGI_ERROR_ACCESS_LOST`) and renumbers them. The capture re-opened the old display number,
+  which no longer existed, and never got a picture again ("Die Bildschirmaufnahme am Laptop liefert
+  keine Bilder", or a frozen picture during use). It now finds the display again by its name (or
+  its size), keeps its graphics device and re-opens within a fraction of a second; if that keeps
+  failing it tries a new device now and then.
+- **A capture that stops without any error is revived**: the laptop kept sending keep-alives, so
+  the PC never noticed a silent capture. The laptop now notices when keys, clicks or the wheel
+  produce no new picture for 3 s and rebuilds the capture with a new graphics device; if that does
+  not help either, focus mode restarts itself on both sides (at most three times a minute). A still
+  desktop without input is left alone.
+- **A stuck viewer on the PC is replaced**: if the PC's decode/display thread hangs (in the decoder
+  or the graphics driver), the PC notices within 3 s, closes the window, takes a new graphics
+  device and restarts focus mode; the log names the step it hung in. A hardware decoder that
+  rejects every frame is rebuilt after three failed frames (and asks for a keyframe); if the rebuilt
+  one fails too, focus mode restarts with a fresh device. After three restarts within a minute it
+  stops with a message and the laptop is restored.
+- **Keyframes overtaken by later frames**: every video frame travels on its own QUIC stream and the
+  PC read them in parallel, so a large keyframe was regularly overtaken by the small frames behind
+  it and dropped as "late". The PC now puts frames back into order (waiting at most 80 ms for an
+  overtaken one), and the laptop sends older frames with higher priority.
+- **Split-mode window staying open on the PC** after focus mode ended: it is now closed directly,
+  also when the viewer thread hangs.
+- Opening the focus window and video decoder no longer happens on the agent's main loop: a stalled
+  graphics driver can only make that focus start fail (with a message); the connection stays up.
+- If the capture does have to create a new graphics device, the video encoder re-opens itself on
+  it instead of rejecting every frame.
+- A focus start that arrives while the laptop is still restoring the previous layout is queued and
+  started right after, instead of failing.
 - When the capture is interrupted for longer (lock screen, UAC prompt on the laptop), the picture
-  shows why instead of just standing still; it retries with a new graphics device now and then,
-  and also finds the virtual display again under a new name.
+  shows why instead of just standing still.
 - Partner logs (Settings -> Diagnostics) arrived empty for the log file that was still being
   written: its size was read from the stale directory entry.
-- The PC log shows how old the laptop's last picture is and any capture problem.
 
-## [0.1.5] - 2026-10-20
+### Diagnostics
 
-### Fixed
-
-- **"Die Bildschirmaufnahme am Laptop liefert keine Bilder" right after starting focus mode**:
-  switching to the virtual display makes Windows interrupt the screen capture
-  (`DXGI_ERROR_ACCESS_LOST`), and it renumbers the displays. The capture re-opened the old
-  display number, which no longer existed, so it never got a picture again and focus mode gave
-  up after 5 s. It now finds the display again by its name and keeps its graphics device, so it
-  continues within a fraction of a second. Re-open failures are logged.
-- If the capture does have to create a new graphics device, the video encoder re-opens itself
-  on it instead of rejecting every frame.
-
-## [0.1.4] - 2026-10-20
-
-### Fixed
-
-- **Focus mode picture freezing after a while (decoder)**: the PC's hardware video decoder could
-  get into a state in which it rejected every frame, keyframes included, and the picture stood
-  still until focus mode was restarted by hand. The viewer now rebuilds the decoder after three
-  failed frames in a row and asks for a keyframe; if the rebuilt decoder fails as well (lost GPU
-  device, e.g. a driver reset), focus mode restarts itself on both sides with a fresh device
-  (at most three times a minute, then it stops with a message and the laptop is restored).
-- A focus start that arrives while the laptop is still restoring the previous layout is now
-  queued and started right after, instead of failing.
-- Decode errors are logged with their text (they were only visible at debug level).
-
-## [0.1.3] - 2026-10-20
-
-### Fixed
-
-- **Focus mode picture freezing while the laptop keeps sending**: every video frame travels on its
-  own QUIC stream and the PC read them in parallel, so a large keyframe was regularly overtaken by
-  the small frames sent right after it. The viewer then dropped the keyframe as "late" and waited
-  for the next one, which was overtaken the same way: the picture stood still although frames kept
-  arriving. The PC now puts frames back into order (waiting at most 80 ms for an overtaken one),
-  and the laptop sends older frames with higher priority so they are not overtaken in the first
-  place. Install it on both devices; the PC side alone already fixes the freeze.
-- The viewer logs every 5 s how many frames it had to drop and why, so a standing picture is
-  diagnosable from the log (also via "Fetch logs").
+- The PC log shows the laptop's capture and encode rate, how old its last picture is and any
+  capture problem; the viewer logs every 5 s how many frames it dropped and why; decode errors and
+  capture re-open failures are logged with their text.
 
 ## [0.1.2] - 2026-10-20
 
@@ -236,9 +213,7 @@ code. Everything stays on your LAN: end-to-end encrypted, no cloud, no account, 
 - Install the same version on both devices.
 - Several hardware scenarios are not signed off yet, see [docs/testing.md](docs/testing.md).
 
-[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.5...HEAD
-[0.1.5]: https://github.com/auerth/desk_bridge/compare/v0.1.4...v0.1.5
-[0.1.4]: https://github.com/auerth/desk_bridge/compare/v0.1.3...v0.1.4
+[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.3...HEAD
 [0.1.3]: https://github.com/auerth/desk_bridge/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/auerth/desk_bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/auerth/desk_bridge/compare/v0.1.0...v0.1.1
