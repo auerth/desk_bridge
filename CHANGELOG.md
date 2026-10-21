@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-21
+
+Install it on both devices; the fix itself works on the laptop. After installing it on the PC,
+"<Partner> aktualisieren" updates the laptop over the connection.
+
 ### Fixed
 
 - **Teams calls were silent in the headset**: while the laptop's sound is forwarded, Desk Bridge
@@ -223,7 +228,8 @@ code. Everything stays on your LAN: end-to-end encrypted, no cloud, no account, 
 - Install the same version on both devices.
 - Several hardware scenarios are not signed off yet, see [docs/testing.md](docs/testing.md).
 
-[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/auerth/desk_bridge/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/auerth/desk_bridge/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/auerth/desk_bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/auerth/desk_bridge/compare/v0.1.0...v0.1.1
