@@ -29,11 +29,11 @@
 //! except Pause and the media/browser keys which are injected by virtual key (more reliable).
 //! AltGr = `R_ALT` alone; Windows adds the fake left Ctrl itself.
 //!
-//! Absolute placement uses `SetCursorPos` (exact physical pixels on the virtual desktop; the
-//! process must be Per-Monitor-DPI-aware v2, see [`init_dpi_awareness`]); `SendInput` with
-//! `MOUSEEVENTF_ABSOLUTE | VIRTUALDESK` (normalised 0..65535, see [`normalize_abs`]) is the
-//! fallback if `SetCursorPos` fails. `SetCursorPos` was chosen because the normalised path
-//! rounds on multi-monitor/mixed-DPI setups.
+//! Absolute placement sends `SendInput` with `MOUSEEVENTF_ABSOLUTE | VIRTUALDESK` (normalised
+//! 0..65535, see [`normalize_abs`]): only a real input event triggers hover effects such as the
+//! taskbar previews. The normalised path can round on multi-monitor/mixed-DPI setups, so the
+//! pointer is then put on the exact physical pixel with `SetCursorPos` (the process must be
+//! Per-Monitor-DPI-aware v2, see [`init_dpi_awareness`]).
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -968,13 +968,15 @@ impl WinInputInjector {
         Self::default()
     }
 
-    fn send(&self, inputs: &[INPUT]) {
+    /// `false` if Windows did not take every event.
+    fn send(&self, inputs: &[INPUT]) -> bool {
         if inputs.is_empty() {
-            return;
+            return true;
         }
         // SAFETY: `inputs` is a valid slice of fully initialised INPUT structs.
         let n = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
-        if n as usize != inputs.len() {
+        let ok = n as usize == inputs.len();
+        if !ok {
             let err = windows::core::Error::from_win32();
             let count = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
             // Rate limited: 1st, 2nd, 4th, 8th ... failure.
@@ -986,6 +988,7 @@ impl WinInputInjector {
                 );
             }
         }
+        ok
     }
 
     fn key_input(hid: u16, down: bool) -> Option<INPUT> {
@@ -1138,11 +1141,8 @@ impl InputInjector for WinInputInjector {
     }
 
     fn mouse_abs_px(&self, x: i32, y: i32) {
-        // SAFETY: no preconditions.
-        if unsafe { SetCursorPos(x, y) }.is_ok() {
-            return;
-        }
-        // Fallback: normalised absolute move over the whole virtual desktop.
+        // A real mouse event first: `SetCursorPos` alone moves the pointer without any input,
+        // so hover effects (taskbar previews, tooltips) never fired in focus mode.
         // SAFETY: GetSystemMetrics has no preconditions.
         let (vx, vy, vw, vh) = unsafe {
             (
@@ -1153,12 +1153,23 @@ impl InputInjector for WinInputInjector {
             )
         };
         let (nx, ny) = normalize_abs(x, y, vx, vy, vw, vh);
-        self.send(&[Self::mouse_input(
+        let sent = self.send(&[Self::mouse_input(
             nx,
             ny,
             0,
             MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
         )]);
+        // The normalised position can round to a neighbouring pixel on multi-monitor/mixed-DPI
+        // layouts: put the pointer exactly where it belongs.
+        let mut p = windows::Win32::Foundation::POINT::default();
+        // SAFETY: valid out pointer.
+        let exact = sent && unsafe { GetCursorPos(&mut p) }.is_ok() && (p.x, p.y) == (x, y);
+        if !exact {
+            // SAFETY: no preconditions.
+            if let Err(e) = unsafe { SetCursorPos(x, y) } {
+                tracing::debug!("SetCursorPos({x},{y}) failed: {e}");
+            }
+        }
     }
 
     fn button(&self, button: Button, down: bool) {
@@ -1522,6 +1533,28 @@ mod tests {
         inj.mouse_rel(-sign, 0);
         if !moved {
             eprintln!("skipped assertion: injected input had no visible effect (locked desktop?)");
+        }
+    }
+
+    /// Harmless: places the pointer one pixel away and back with absolute moves; it must land
+    /// on the exact pixel each time.
+    #[test]
+    fn injector_places_cursor_exactly() {
+        let Some(p0) = cursor_position() else {
+            eprintln!("skipped: no cursor (no interactive desktop)");
+            return;
+        };
+        let inj = WinInputInjector::new();
+        let x1 = if p0.0 > 4 { p0.0 - 1 } else { p0.0 + 1 };
+        inj.mouse_abs_px(x1, p0.1);
+        let at_x1 = cursor_position();
+        inj.mouse_abs_px(p0.0, p0.1);
+        let back = cursor_position();
+        if at_x1.is_some_and(|p| p.0 != x1) && back == Some(p0) {
+            panic!("pointer landed at {at_x1:?} instead of ({x1}, {})", p0.1);
+        }
+        if back != Some(p0) {
+            eprintln!("skipped assertion: pointer moved by the user or desktop locked ({back:?})");
         }
     }
 

@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+### Fixed
+
+- **No taskbar previews in focus mode**: hovering over an open program in the laptop's taskbar did
+  not show its preview window (nor tooltips). In focus mode the pointer was only placed with
+  `SetCursorPos`, which moves it without a mouse event, so Windows never saw a hover. Absolute
+  pointer moves are now sent as real mouse input; only if that lands a pixel off is the pointer
+  put on the exact spot afterwards.
+
 ## [0.1.4] - 2026-10-21
 
 Install it on both devices; the fix itself works on the laptop. After installing it on the PC,
