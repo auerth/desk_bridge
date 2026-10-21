@@ -92,11 +92,12 @@ impl Engine {
         link.set_uni_sink(uni::FILE, Some(tx));
         let reg = self.xfer.reg.clone();
         let pushes = self.pushes.clone();
+        let msgs = self.msg_tx.clone();
         tokio::spawn(async move {
             while let Some(r) = rx.recv().await {
                 let reg = reg.clone();
                 let pushes = pushes.clone();
-                tokio::spawn(handle_file_stream(r, reg, pushes));
+                tokio::spawn(handle_file_stream(r, reg, pushes, msgs.clone()));
             }
         });
     }
@@ -181,7 +182,7 @@ impl Engine {
         }
         let update_meta = self.update_meta_from_hint(&sf.target_hint);
         let root = if update_meta.is_some() {
-            self.paths.data_dir.join("Updates")
+            self.paths.updates_dir()
         } else {
             target_dir(&self.cfg)
         };
@@ -404,6 +405,7 @@ async fn handle_file_stream(
     mut r: quinn::RecvStream,
     reg: Arc<Registry>,
     pushes: tokio::sync::broadcast::Sender<crate::ipc::Push>,
+    msgs: tokio::sync::mpsc::UnboundedSender<super::Msg>,
 ) {
     let mut pre = [0u8; 12];
     if r.read_exact(&mut pre).await.is_err() {
@@ -451,20 +453,22 @@ async fn handle_file_stream(
                 i.handle.finish();
                 if let (Some(meta), Some(path)) = (&i.update, &i.last_path) {
                     let ok = super::update::sha256_file(path).is_ok_and(|h| h == meta.sha256);
-                    let event = if ok {
-                        UiEvent::PartnerUpdateReady {
-                            path: path.to_string_lossy().into_owned(),
+                    if ok {
+                        // The engine decides: install right away or ask the user.
+                        let _ = msgs.send(super::Msg::PartnerUpdateReceived {
+                            path: path.clone(),
                             version: meta.version.clone(),
-                        }
+                        });
                     } else {
                         let _ = std::fs::remove_file(path);
-                        UiEvent::Notification {
-                            level: "error".into(),
-                            text: "Das empfangene Update ist beschädigt und wurde verworfen."
-                                .into(),
-                        }
-                    };
-                    let _ = pushes.send(crate::ipc::Push::Event { event });
+                        let _ = pushes.send(crate::ipc::Push::Event {
+                            event: UiEvent::Notification {
+                                level: "error".into(),
+                                text: "Das empfangene Update ist beschädigt und wurde verworfen."
+                                    .into(),
+                            },
+                        });
+                    }
                 } else {
                     let _ = pushes.send(crate::ipc::Push::Event {
                         event: UiEvent::Notification {

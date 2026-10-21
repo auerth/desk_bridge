@@ -10,13 +10,13 @@ use deskbridge_platform::display::DisplayManager;
 use deskbridge_platform::input::{InputCapture, InputInjector};
 use deskbridge_platform::mock::{
     MockAudioCapture, MockAudioDevices, MockAudioPlayback, MockCapture, MockClipboard,
-    MockInjector, MockLocalOutput, MockScreens, MockVirtualAudio, MockWebClient, audio_device,
-    screen,
+    MockInjector, MockLocalOutput, MockScreens, MockSystem, MockVirtualAudio, MockWebClient,
+    audio_device, screen,
 };
 use deskbridge_platform::power::{PowerEvent, PowerManager};
 use deskbridge_platform::screen::ScreenProvider;
 use deskbridge_platform::secret::{PlainProtector, SecretProtector};
-use deskbridge_platform::system::{NullSystemServices, SystemServices};
+use deskbridge_platform::system::SystemServices;
 use deskbridge_platform::web::WebClient;
 use deskbridge_platform::{Result, UnboundedSender};
 use deskbridge_video::backend::{VideoBackend, mock::MockVideoBackend};
@@ -74,6 +74,7 @@ pub struct MockHandles {
     pub video: Arc<MockVideoBackend>,
     pub display: Arc<MockDisplayManager>,
     pub web: Arc<MockWebClient>,
+    pub system: Arc<MockSystem>,
 }
 
 impl Platform {
@@ -98,6 +99,7 @@ impl Platform {
         let video = Arc::new(MockVideoBackend::new((64, 36)));
         let display = Arc::new(MockDisplayManager::new());
         let web = Arc::new(MockWebClient::default());
+        let system = Arc::new(MockSystem::default());
         let p = Self {
             capture: capture.clone(),
             injector: injector.clone(),
@@ -110,7 +112,7 @@ impl Platform {
             audio_playback: audio_playback.clone(),
             virtual_audio: virtual_audio.clone(),
             local_output: local_output.clone(),
-            system: Arc::new(NullSystemServices),
+            system: system.clone(),
             video: video.clone(),
             display: display.clone(),
             web: web.clone(),
@@ -131,6 +133,7 @@ impl Platform {
                 video,
                 display,
                 web,
+                system,
             },
         )
     }

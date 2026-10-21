@@ -67,3 +67,21 @@ export function rttQuality(us: number | null | undefined, link?: string): Qualit
 export function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
+
+/** "1.2.3" style versions: < 0 when `a` is older than `b`, 0 when equal, `null` when unreadable. */
+export function compareVersions(a: string, b: string): number | null {
+  const parse = (v: string) => {
+    const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/i.exec(v.trim());
+    return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : null;
+  };
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return (x[i] ?? 0) - (y[i] ?? 0);
+  return 0;
+}
+
+/** Version from an installer file name like `DeskBridge-Setup-1.2.3.exe`. */
+export function installerVersion(path: string): string | null {
+  return /DeskBridge-Setup-(\d+\.\d+\.\d+)/i.exec(basename(path))?.[1] ?? null;
+}

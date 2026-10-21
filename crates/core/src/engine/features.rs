@@ -28,6 +28,8 @@ impl Engine {
             }
             M::UpdateOffer(o) => self.on_update_offer(o),
             M::UpdateAnswer(a) => self.on_update_answer(a),
+            M::UpdateRequest(_) => self.on_update_request(),
+            M::UpdateStatus(st) => self.on_update_status(st),
             M::SendFiles(sf) => self.on_send_files(sf),
             M::FileRequest(r) => self.on_file_request(r),
             M::TransferProgress(p) => self.on_transfer_progress(p),
@@ -39,12 +41,14 @@ impl Engine {
 
     pub(crate) fn on_session_up_features(&mut self) {
         self.start_transfers();
+        self.on_session_up_update();
         self.start_clipboard();
         self.start_audio();
     }
 
     pub(crate) fn on_session_down_features(&mut self) {
         self.focus_session_down();
+        self.on_session_down_update();
         self.stop_audio();
         self.stop_clipboard();
         self.stop_transfers();
@@ -101,7 +105,13 @@ impl Engine {
             R::ListAudioDevices => self.list_audio_devices(),
             R::PlayTestTone => self.play_test_tone(),
             R::ExportDiagnostics { target } => self.export_diagnostics(target),
-            R::OfferPartnerUpdate { path, version } => self.offer_partner_update(path, version),
+            R::OfferPartnerUpdate {
+                path,
+                version,
+                install,
+            } => self.offer_partner_update(path.into(), version, install),
+            R::UpdatePartner => self.update_partner(),
+            R::RequestPartnerUpdate => self.request_partner_update(),
             R::AnswerPartnerUpdate { accept } => self.answer_partner_update(accept),
             R::CheckForUpdate => {
                 self.start_release_check();

@@ -97,7 +97,7 @@ fn codec_policy(s: &str) -> CodecPolicy {
 }
 
 impl Engine {
-    fn peer_has_cap(&self, cap: &str) -> bool {
+    pub(super) fn peer_has_cap(&self, cap: &str) -> bool {
         self.session
             .as_ref()
             .is_some_and(|s| s.link.hello.caps.iter().any(|c| c.name == cap))

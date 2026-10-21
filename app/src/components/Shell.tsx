@@ -19,7 +19,7 @@ import { PRODUCT_NAME } from '../brand';
 import { hasKey, type MessageKey } from '../i18n';
 import { useLang, useT } from '../i18n/useT';
 import { ROUTES, useStore, type Route } from '../store';
-import { formatBytes } from '../lib/format';
+import { compareVersions, formatBytes, installerVersion } from '../lib/format';
 import { Banner, Button, Modal, Pill } from './ui';
 
 // ---------------------------------------------------------------------------------------------
@@ -163,6 +163,7 @@ export function WarningBanners() {
   const peerVersion = state?.connection.peer_version ?? null;
   const mixed = !!state && (state.connection.version_mismatch || (peerVersion != null && own !== '' && peerVersion !== own));
   const visible = warnings.filter((w) => !dismissed.includes(w.code) && !(mixed && w.code === 'version_mismatch'));
+  const pu = usePartnerUpdate();
   return (
     <div className="banners">
       {!conn.connected && state && <Banner tone="warn" title={t('agent.lost')} />}
@@ -173,9 +174,15 @@ export function WarningBanners() {
           onDismiss={() => dismiss('versions_mixed')}
           dismissLabel={t('warn.dismiss')}
           action={
-            <Button variant="secondary" size="sm" onClick={() => navigate('settings')}>
-              {t('nav.settings')}
-            </Button>
+            pu.direction ? (
+              <Button variant="primary" size="sm" loading={pu.busy} onClick={() => void pu.run()}>
+                {pu.direction === 'push' ? t('pu.pushButton', { name: pu.peerName }) : t('pu.pullButton', { version: pu.peer ?? '' })}
+              </Button>
+            ) : (
+              <Button variant="secondary" size="sm" onClick={() => navigate('settings')}>
+                {t('nav.settings')}
+              </Button>
+            )
           }
         >
           {t('update.mismatchBody', { own, peer: peerVersion ?? '?' })}
@@ -216,6 +223,50 @@ export function WarningBanners() {
       })}
     </div>
   );
+}
+
+/**
+ * Different versions on the two devices: the newer one pushes its installer ("push", installed
+ * there right away), the older one can fetch it ("pull", needs a partner that supports that).
+ */
+export function usePartnerUpdate() {
+  const t = useT();
+  const state = useStore((s) => s.state);
+  const send = useStore((s) => s.send);
+  const toast = useStore((s) => s.pushToast);
+  const own = state?.device.version ?? '';
+  const peer = state?.connection.peer_version ?? null;
+  const peerName = state?.connection.peer?.name ?? '';
+  const upd = state?.update;
+  const connected = state?.connection.state === 'connected' || state?.connection.state === 'degraded';
+  const cmp = connected && peer && own ? compareVersions(own, peer) : null;
+  const direction: 'push' | 'pull' | null = cmp == null || cmp === 0 ? null : cmp > 0 ? 'push' : upd?.partner_remote ? 'pull' : null;
+  const busy = direction === 'push' ? upd?.partner_updating != null : direction === 'pull' ? !!upd?.updating_from_partner : false;
+
+  const run = async () => {
+    if (direction === 'pull') {
+      await send({ type: 'request_partner_update' });
+      return;
+    }
+    if (direction !== 'push') return;
+    let r: { confirm_on_partner?: boolean } | undefined;
+    if (upd?.installer_available) {
+      r = await send({ type: 'update_partner' });
+    } else {
+      // No installer kept on this device (dev build, installed before 0.1.7): pick it.
+      const path = await getBackend().pickInstaller();
+      if (!path) return;
+      const version = installerVersion(path);
+      if (!version) {
+        toast({ level: 'error', text: t('settings.sendInstallerBadName') });
+        return;
+      }
+      r = await send({ type: 'offer_partner_update', path, version, install: true });
+    }
+    if (r?.confirm_on_partner) toast({ level: 'info', text: t('pu.confirmOnPartner', { name: peerName }) });
+  };
+
+  return { direction, own, peer, peerName, busy, run, installerAvailable: !!upd?.installer_available, partnerRemote: !!upd?.partner_remote };
 }
 
 /** Partner update flow: offer (accept/decline) and "received, start now?" - never silent. */

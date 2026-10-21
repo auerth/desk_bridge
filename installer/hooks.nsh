@@ -127,6 +127,17 @@ Var DbPurgeArg
     ${EndIf}
   ${EndIf}
 
+  ; Keep a copy of this installer next to the agent: with it this device can update an older
+  ; partner over the connection (Settings -> Updates -> "update the other device"). Only the
+  ; installed version is kept (~250 MB).
+  CreateDirectory "$DbPayloadDir\installer"
+  Delete "$DbPayloadDir\installer\DeskBridge-Setup-*.exe"
+  ClearErrors
+  CopyFiles /SILENT "$EXEPATH" "$DbPayloadDir\installer\DeskBridge-Setup-${VERSION}.exe"
+  ${If} ${Errors}
+    DetailPrint "Could not keep a copy of the installer for partner updates"
+  ${EndIf}
+
   ; Launch the UI de-elevated. Interactive installs use the finish page's "Run" checkbox
   ; (Tauri), the updater passes /R (handled in .onInstSuccess). For plain silent/passive installs
   ; nobody would start the app, so do it here.
@@ -175,6 +186,10 @@ Var DbPurgeArg
     ; Files that were not part of the bundle manifest and therefore not removed by Tauri.
     Delete "$INSTDIR\installed.json"
     Delete "$INSTDIR\installed.json.tmp"
+    Delete "$INSTDIR\installer\DeskBridge-Setup-*.exe"
+    RMDir "$INSTDIR\installer"
+    Delete "$INSTDIR\resources\installer\DeskBridge-Setup-*.exe"
+    RMDir "$INSTDIR\resources\installer"
     RMDir "$INSTDIR\drivers"
     RMDir "$INSTDIR\resources"
     RMDir "$INSTDIR"

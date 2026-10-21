@@ -140,6 +140,18 @@ pub(crate) enum Msg {
         session: std::sync::Arc<deskbridge_display::FocusDisplaySession>,
         result: Result<(), String>,
     },
+    /// The installer to offer the partner is hashed: `(size, sha256)`.
+    PartnerUpdateHashed {
+        path: std::path::PathBuf,
+        version: String,
+        install: bool,
+        result: Result<(u64, Vec<u8>), String>,
+    },
+    /// An update package from the partner arrived and matches the agreed SHA-256.
+    PartnerUpdateReceived {
+        path: std::path::PathBuf,
+        version: String,
+    },
     Tick,
     Shutdown,
 }
@@ -293,7 +305,8 @@ pub(crate) struct Engine {
     pub(crate) audio_rx_slots: Option<AudioSlots>,
     pub(crate) xfer: transfers::Transfers,
     pub(crate) update_out: Option<update::OutgoingUpdate>,
-    pub(crate) update_in: Option<pb::UpdateOffer>,
+    pub(crate) update_in: Option<update::IncomingUpdate>,
+    pub(crate) partner_update: update::PartnerUpdate,
     pub(crate) release_check: update::ReleaseCheck,
     pub cursor_locked: bool,
     pub warnings: Vec<WarningDto>,
@@ -476,6 +489,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         xfer: transfers::Transfers::new(Some(paths_data_dir)),
         update_out: None,
         update_in: None,
+        partner_update: update::PartnerUpdate::default(),
         release_check: update::ReleaseCheck::default(),
         cursor_locked: false,
         warnings: Vec::new(),
@@ -483,6 +497,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         last_publish: Instant::now(),
     };
     engine.refresh_hello();
+    engine.partner_update = update::PartnerUpdate::new(&engine.paths.updates_dir());
     engine.router.set_screens(engine.local_screens.clone());
     engine.router.set_config(router_config(&engine.cfg));
 
@@ -658,6 +673,15 @@ impl Engine {
             Msg::FocusViewer(u) => self.on_focus_viewer_update(u),
             Msg::AudioDevice(ev) => self.on_audio_device_event(ev),
             Msg::UpdateChecked(r) => self.on_update_checked(r),
+            Msg::PartnerUpdateHashed {
+                path,
+                version,
+                install,
+                result,
+            } => self.on_partner_update_hashed(path, version, install, result),
+            Msg::PartnerUpdateReceived { path, version } => {
+                self.on_partner_update_received(path, version);
+            }
             Msg::NetworkProfile(p) => self.on_network_profile(p),
             Msg::DisplayRestored { session, result } => self.on_display_restored(session, result),
             Msg::FocusViewerBroken { viewer, reason } => {
@@ -718,6 +742,7 @@ impl Engine {
             caps::AUDIO_PCM,
             caps::AUDIO_OPUS,
             caps::UPDATE,
+            caps::UPDATE_REMOTE,
             caps::LOGS,
         ];
         if d.input_source {
@@ -872,6 +897,7 @@ impl Engine {
         self.tick_network_profile();
         self.tick_display_restore();
         self.tick_remote_logs();
+        self.tick_partner_update();
         if self.tick_count.is_multiple_of(8) {
             self.report_mic_stats();
             self.tick_release_check();

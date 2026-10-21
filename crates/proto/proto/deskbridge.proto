@@ -302,8 +302,16 @@ message PairResult { bool ok = 1; string reason = 2; }
 // Updates
 // ---------------------------------------------------------------------------
 
-message UpdateOffer { string version = 1; uint64 size = 2; bytes sha256 = 3; }
-message UpdateAnswer { bool accept = 1; }
+// `install`: the sender asks the partner to install the package right away, without a dialog
+// (capability "update.remote"); a partner without it ignores the flag and asks its user.
+message UpdateOffer { string version = 1; uint64 size = 2; bytes sha256 = 3; bool install = 4; }
+// `reason`: why an `install` offer was declined (shown to the sender's user).
+message UpdateAnswer { bool accept = 1; string reason = 2; }
+// The older device asks the newer partner to send (and have installed) its own installer.
+message UpdateRequest {}
+// How a remote install went: `error` empty = the installer was started (`version`), otherwise
+// why it could not be. Also the answer to an `UpdateRequest` that cannot be served.
+message UpdateStatus { string version = 1; string error = 2; }
 
 // ---------------------------------------------------------------------------
 // Remote logs (capability "logs"): the partner sends the tails of its recent log files
@@ -363,6 +371,8 @@ message Control {
     TransferProgress transfer_progress = 35;
     UpdateOffer update_offer = 40;
     UpdateAnswer update_answer = 41;
+    UpdateRequest update_request = 42;
+    UpdateStatus update_status = 43;
     LogsRequest logs_request = 50;
     LogsResponse logs_response = 51;
   }

@@ -325,6 +325,9 @@ pub struct PlacementConfig {
 pub struct UpdateConfig {
     pub check_automatically: bool,
     pub offer_partner_update: bool,
+    /// The paired partner may install a newer version here without asking ("Partner
+    /// aktualisieren" on the other device). Off: its offer is shown as a question.
+    pub allow_partner_install: bool,
 }
 
 impl Default for UpdateConfig {
@@ -332,6 +335,7 @@ impl Default for UpdateConfig {
         Self {
             check_automatically: true,
             offer_partner_update: true,
+            allow_partner_install: true,
         }
     }
 }

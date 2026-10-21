@@ -94,11 +94,18 @@ pub enum UiRequest {
         target: Option<String>,
     },
     CheckForUpdate,
-    /// Offer the installer at `path` to the partner device (it asks its user first).
+    /// Offer the installer at `path` to the partner device. It asks its user first, unless
+    /// `install` is set and it can install pushed updates by itself (`update.remote`).
     OfferPartnerUpdate {
         path: String,
         version: String,
+        #[serde(default)]
+        install: bool,
     },
+    /// Send this device's own installer to the older partner and have it installed there.
+    UpdatePartner,
+    /// Ask the newer partner to send its installer and install it here.
+    RequestPartnerUpdate,
     /// Answer a partner's update offer.
     AnswerPartnerUpdate {
         accept: bool,
@@ -450,6 +457,15 @@ pub struct UpdateDto {
     pub error: Option<String>,
     /// Time of the last completed check.
     pub last_checked_unix_ms: Option<u64>,
+    /// This device has an installer of its own version to pass on to an older partner.
+    pub installer_available: bool,
+    /// The partner installs pushed updates by itself (capability `update.remote`); an older one
+    /// asks its user first.
+    pub partner_remote: bool,
+    /// Version the partner is being updated to, until it is back with it.
+    pub partner_updating: Option<String>,
+    /// This device asked the partner for its version or is installing it.
+    pub updating_from_partner: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

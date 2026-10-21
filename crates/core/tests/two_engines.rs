@@ -631,6 +631,7 @@ async fn partner_update_is_offered_accepted_transferred_and_verified() {
     pc.h.request(UiRequest::OfferPartnerUpdate {
         path: installer.to_string_lossy().into_owned(),
         version: "9.9.9".into(),
+        install: false,
     })
     .await
     .unwrap();
@@ -657,6 +658,143 @@ async fn partner_update_is_offered_accepted_transferred_and_verified() {
     let (path, version) = got.unwrap();
     assert_eq!(version, "9.9.9");
     assert_eq!(std::fs::read(path).unwrap(), payload);
+    pc.h.stop();
+    lp.h.stop();
+}
+
+fn fake_installer(dir: &std::path::Path, version: &str) -> (std::path::PathBuf, Vec<u8>) {
+    let path = dir.join(format!("DeskBridge-Setup-{version}.exe"));
+    let payload: Vec<u8> = (0..700_000u32).map(|i| (i * 13 % 251) as u8).collect();
+    std::fs::write(&path, &payload).unwrap();
+    (path, payload)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn partner_update_with_install_runs_the_installer_without_asking() {
+    use deskbridge_core::ipc::UiEvent;
+    let (pc, lp) = setup().await;
+    let src = tempfile::tempdir().unwrap();
+    let (installer, payload) = fake_installer(src.path(), "9.9.9");
+
+    let mut prx = pc.h.subscribe();
+    let mut lrx = lp.h.subscribe();
+    let r =
+        pc.h.request(UiRequest::OfferPartnerUpdate {
+            path: installer.to_string_lossy().into_owned(),
+            version: "9.9.9".into(),
+            install: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        r["confirm_on_partner"], false,
+        "the laptop installs by itself"
+    );
+    wait_event(
+        &mut prx,
+        "laptop reports the started installer",
+        |e| matches!(e, UiEvent::Notification { level, text } if level == "info" && text.contains("installiert jetzt Version 9.9.9")),
+    )
+    .await;
+    let launched = lp.m.system.launched.lock().clone();
+    assert_eq!(launched.len(), 1, "installer started once: {launched:?}");
+    assert_eq!(std::fs::read(&launched[0]).unwrap(), payload);
+    assert_eq!(
+        pc.h.state().await.update.partner_updating.as_deref(),
+        Some("9.9.9"),
+        "PC waits for the laptop to come back with 9.9.9"
+    );
+    // No dialog on the laptop.
+    while let Ok(p) = lrx.try_recv() {
+        if let deskbridge_core::ipc::Push::Event { event } = p {
+            assert!(
+                !matches!(
+                    event,
+                    UiEvent::PartnerUpdateOffered { .. } | UiEvent::PartnerUpdateReady { .. }
+                ),
+                "unexpected dialog: {event:?}"
+            );
+        }
+    }
+    // Same version as the partner: nothing to push.
+    assert!(pc.h.request(UiRequest::UpdatePartner).await.is_err());
+    assert!(pc.h.request(UiRequest::RequestPartnerUpdate).await.is_err());
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn partner_install_asks_when_not_allowed_and_falls_back_when_launch_fails() {
+    use deskbridge_core::ipc::UiEvent;
+    let pc = node("PC", true, 2560, 1440).await;
+    let lp = node_with("Laptop", false, 1920, 1080, |c| {
+        c.update.allow_partner_install = false;
+    })
+    .await;
+    let (pc, lp) = connect_nodes(pc, lp).await;
+    let src = tempfile::tempdir().unwrap();
+    let (installer, _) = fake_installer(src.path(), "9.9.9");
+
+    // Not allowed: the laptop's user is asked, as for a plain offer.
+    let mut lrx = lp.h.subscribe();
+    pc.h.request(UiRequest::OfferPartnerUpdate {
+        path: installer.to_string_lossy().into_owned(),
+        version: "9.9.9".into(),
+        install: true,
+    })
+    .await
+    .unwrap();
+    wait_event(
+        &mut lrx,
+        "laptop asks its user",
+        |e| matches!(e, UiEvent::PartnerUpdateOffered { version, .. } if version == "9.9.9"),
+    )
+    .await;
+    lp.h.request(UiRequest::AnswerPartnerUpdate { accept: false })
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if pc.h.state().await.update.partner_updating.is_none() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(pc.h.state().await.update.partner_updating, None);
+    assert!(lp.m.system.launched.lock().is_empty());
+
+    // Allowed, but the installer cannot be started: the laptop's user gets the "start" dialog,
+    // the PC the error.
+    let mut cfg = lp.h.request(UiRequest::GetConfig).await.unwrap();
+    cfg["update"]["allow_partner_install"] = serde_json::json!(true);
+    lp.h.request(UiRequest::SetConfig {
+        config: serde_json::from_value(cfg).unwrap(),
+    })
+    .await
+    .unwrap();
+    lp.m.system
+        .fail_launch
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let mut prx = pc.h.subscribe();
+    pc.h.request(UiRequest::OfferPartnerUpdate {
+        path: installer.to_string_lossy().into_owned(),
+        version: "9.9.9".into(),
+        install: true,
+    })
+    .await
+    .unwrap();
+    wait_event(
+        &mut lrx,
+        "laptop offers to start it by hand",
+        |e| matches!(e, UiEvent::PartnerUpdateReady { version, .. } if version == "9.9.9"),
+    )
+    .await;
+    wait_event(
+        &mut prx,
+        "PC shows the failure",
+        |e| matches!(e, UiEvent::Notification { level, text } if level == "error" && text.contains("fehlgeschlagen")),
+    )
+    .await;
+    assert_eq!(pc.h.state().await.update.partner_updating, None);
     pc.h.stop();
     lp.h.stop();
 }

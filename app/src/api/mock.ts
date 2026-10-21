@@ -113,7 +113,7 @@ function seedState(): AppState {
       since_unix_ms: connected ? Date.now() - 3 * 3600_000 - 17 * 60_000 : null,
       error: null,
       version_mismatch: false,
-      peer_version: connected ? (has('mismatch') ? '0.0.9' : '0.1.0') : null,
+      peer_version: connected ? (has('mismatch') ? '0.0.9' : has('newer') ? '0.2.0' : '0.1.0') : null,
     },
     peers: onboarding ? [] : [peer],
     discovered: onboarding
@@ -183,6 +183,10 @@ function seedState(): AppState {
       url: has('update') ? 'https://github.com/auerth/desk_bridge/releases' : null,
       error: null,
       last_checked_unix_ms: null,
+      installer_available: !has('noinstaller'),
+      partner_remote: true,
+      partner_updating: null,
+      updating_from_partner: false,
     },
     metrics: { rtt_history_us: connected ? Array.from({ length: 60 }, (_, i) => 900 + Math.round(Math.sin(i / 5) * 160 + ((i * 37) % 11) * 12)) : [], input_latency_p50_us: connected ? 480 : null, input_latency_p95_us: connected ? (params.get('p95') === 'high' ? 5200 : 1350) : null, input_latency_max_us: connected ? 3100 : null, audio_buffer_fill_ms: 9.6, audio_drift_ppm: 12, audio_loss_pct: 0, agent_cpu_pct: 0.4, agent_rss_mb: 42 },
     paused: false,
@@ -241,6 +245,19 @@ export function createMockBackend(): Backend {
     }
   };
   const setConn = (c: ConnectionInfo) => connSubs.forEach((cb) => cb(c));
+  /** "Partner aktualisieren": transfer, the partner installs, comes back with `version`. */
+  const simulatePartnerUpdate = (version: string) => {
+    const name = state.connection.peer?.name ?? 'Partner';
+    state.update.partner_updating = version;
+    pushState();
+    setTimeout(() => emitEvent({ kind: 'notification', level: 'info', text: `${name} installiert jetzt Version ${version}. Die Verbindung trennt sich kurz und kommt mit der neuen Version zurück.` }), 1500);
+    setTimeout(() => {
+      state.update.partner_updating = null;
+      state.connection.peer_version = version;
+      pushState();
+      emitEvent({ kind: 'notification', level: 'info', text: `${name} läuft jetzt mit Version ${version}.` });
+    }, 4500);
+  };
 
   const connected = () => state.connection.state === 'connected';
 
@@ -556,8 +573,29 @@ export function createMockBackend(): Backend {
         pushState();
         return null;
       case 'offer_partner_update':
+        if (req.install) {
+          simulatePartnerUpdate(req.version);
+          return { offered: true, confirm_on_partner: false };
+        }
         emitEvent({ kind: 'notification', level: 'info', text: `Update ${req.version} wird an das Partnergerät gesendet.` });
         return null;
+      case 'update_partner':
+        if (!state.update.installer_available) throw new Error(`Für Version ${state.device.version} liegt kein Installer vor.`);
+        simulatePartnerUpdate(state.device.version);
+        return { offered: true, confirm_on_partner: false };
+      case 'request_partner_update': {
+        const v = state.connection.peer_version ?? '';
+        state.update.updating_from_partner = true;
+        pushState();
+        emitEvent({ kind: 'notification', level: 'info', text: `${state.connection.peer?.name ?? 'Partner'} aktualisiert Desk Bridge auf Version ${v}. Desk Bridge startet danach neu.` });
+        setTimeout(() => {
+          state.update.updating_from_partner = false;
+          state.device.version = v;
+          state.update.current = v;
+          pushState();
+        }, 4000);
+        return { requested: true };
+      }
       case 'answer_partner_update':
         if (req.accept) {
           setTimeout(() => emitEvent({ kind: 'partner_update_ready', path: 'C:\Users\thorben\AppData\Local\softwelop\DeskBridge\Updates\DeskBridge-Setup-0.2.0.exe', version: '0.2.0' }), 1500);

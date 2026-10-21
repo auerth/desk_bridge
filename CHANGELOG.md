@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+### Added
+
+- **Update the other device from this one**: when the two devices run different versions, the
+  newer one shows "<Partner> aktualisieren" (version banner and Settings -> Updates). Its installer
+  is transferred over the connection and installed on the partner right away, without anyone at
+  the other device; the connection drops briefly and comes back with the new version, and the
+  result is shown on both devices. From the older device, "Auf <version> aktualisieren" fetches
+  the partner's version the same way. Only newer versions are installed, never older ones.
+- New setting "Partnergerät darf Updates hier installieren" (on by default); off, the partner's
+  update is shown as a question as before.
+- The installer keeps a copy of itself next to the agent (`installer\DeskBridge-Setup-<version>.exe`,
+  about 250 MB) so the device can pass its version on; received update packages that are no longer
+  needed are deleted at start. A partner that still runs 0.1.6 or older asks its user once.
+
 ## [0.1.6] - 2026-10-21
 
 ### Fixed

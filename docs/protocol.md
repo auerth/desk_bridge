@@ -152,7 +152,8 @@ connect anyway, the duplicate is closed with `0x409`.
 `caps` (list of `{name, version}`), `screens`, `video` (`VideoCaps`: encode/decode codecs, 4:4:4,
 max size/fps, encoder name). Well-known capability names live in `deskbridge_proto::caps`
 (`input`, `clipboard.text`, `clipboard.rich`, `files`, `files.virtual`, `audio.pcm`, `audio.opus`,
-`audio.speaker-source`, `audio.mic-sink`, `audio.headset`, `focus.source`, `focus.viewer`, `update`).
+`audio.speaker-source`, `audio.mic-sink`, `audio.headset`, `focus.source`, `focus.viewer`, `update`,
+`update.remote`, `logs`).
 
 ### Input stream
 
@@ -173,7 +174,16 @@ state always results in `release_all()` on the target.**
 | Audio | `AudioRoute{stream, enabled}`, `MicInUse{in_use, process}`, `AudioCodecChoice` |
 | Clipboard | `ClipboardOffer{id, formats, files, inline_text}`, `ClipboardRequest`, `ClipboardClear` (+ data on a uni stream) |
 | Files | `SendFiles`, `FileRequest{transfer_id, index, offset}`, `TransferProgress` |
-| Update | `UpdateOffer`, `UpdateAnswer` |
+| Update | `UpdateOffer{version, size, sha256, install}`, `UpdateAnswer{accept, reason}`, `UpdateRequest`, `UpdateStatus{version, error}` |
+
+Partner updates: the sender offers an installer (`UpdateOffer`), the partner answers
+(`UpdateAnswer`) and the file follows as a normal transfer (hint `update:<version>:<sha256>`,
+verified on arrival). With `install` set (only towards a newer version, capability
+`update.remote`) the partner accepts without a dialog when its setting
+`update.allow_partner_install` allows it or it asked for the update itself (`UpdateRequest`),
+starts the installer (`/P`) and reports the outcome with `UpdateStatus`; the installation ends the
+connection, which comes back with the new version. A partner without `update.remote` ignores
+`install` and asks its user.
 
 Text under 1 MiB is sent eagerly inside `ClipboardOffer.inline_text`; everything else is offered
 (delayed rendering) and fetched on paste with `ClipboardRequest`. Offers marked sensitive are never

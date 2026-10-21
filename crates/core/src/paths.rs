@@ -71,6 +71,12 @@ impl AppPaths {
         self.data_dir.join("Incoming")
     }
 
+    /// Update packages received from the partner.
+    #[must_use]
+    pub fn updates_dir(&self) -> PathBuf {
+        self.data_dir.join("Updates")
+    }
+
     #[must_use]
     pub fn topology_file(&self) -> PathBuf {
         self.data_dir.join("topology.json")

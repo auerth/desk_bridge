@@ -186,6 +186,10 @@ impl SystemServices for ServiceClient {
         }
     }
 
+    fn launch_installer(&self, path: &std::path::Path) -> Result<()> {
+        launch_installer(path)
+    }
+
     fn send_sas(&self) -> Result<()> {
         match self.call(&Request::SendSas) {
             Ok(Response::Ok) => Ok(()),
@@ -198,6 +202,35 @@ impl SystemServices for ServiceClient {
             )),
             Err(e) => Err(PlatformError::Other(format!("service pipe: {e}"))),
         }
+    }
+}
+
+/// Starts a partner's installer passively (`/P`: progress window, no questions; it restarts the
+/// UI afterwards). Through `cmd /c start` so the installer is not our child: its setup stops the
+/// agent with `taskkill /T`, which would take the installer down with our process tree.
+/// `start` (ShellExecute) also honours the installer's "requires administrator" manifest: from
+/// the elevated agent (logon task "highest") nothing is asked, otherwise Windows asks for consent.
+fn launch_installer(path: &std::path::Path) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut cmd = std::process::Command::new("cmd.exe");
+    // Not `.arg()`: cmd does not parse its command line like other programs.
+    cmd.raw_arg(format!("/d /c start \"\" \"{}\" /P", path.display()))
+        .creation_flags(CREATE_NO_WINDOW);
+    if let Some(dir) = path.parent() {
+        cmd.current_dir(dir);
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| PlatformError::Other(format!("cmd.exe: {e}")))?;
+    if status.success() {
+        tracing::info!(path = %path.display(), "installer started");
+        Ok(())
+    } else {
+        Err(PlatformError::Other(format!(
+            "der Installer ließ sich nicht starten (Code {}), z. B. weil die Rückfrage der Benutzerkontensteuerung abgelehnt wurde",
+            status.code().unwrap_or(-1)
+        )))
     }
 }
 

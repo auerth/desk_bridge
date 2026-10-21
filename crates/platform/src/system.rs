@@ -18,6 +18,14 @@ pub trait SystemServices: Send + Sync {
             "changing the network profile is not supported here",
         ))
     }
+    /// Starts a Desk Bridge installer unattended (a partner pushed it and asked for it to be
+    /// installed). Returns once it was started; the installer then stops this process.
+    fn launch_installer(&self, path: &std::path::Path) -> Result<()> {
+        let _ = path;
+        Err(crate::PlatformError::Unsupported(
+            "installing updates is not supported here",
+        ))
+    }
 }
 
 /// No service available (tests, unelevated dev runs).

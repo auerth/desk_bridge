@@ -605,6 +605,32 @@ impl crate::web::WebClient for MockWebClient {
     }
 }
 
+/// System services stand-in: no service, records the installers it was asked to start
+/// (`fail_launch` makes that fail).
+#[derive(Default)]
+pub struct MockSystem {
+    pub launched: Mutex<Vec<PathBuf>>,
+    pub fail_launch: std::sync::atomic::AtomicBool,
+}
+
+impl crate::system::SystemServices for MockSystem {
+    fn available(&self) -> bool {
+        false
+    }
+
+    fn send_sas(&self) -> Result<()> {
+        Err(crate::PlatformError::Unsupported("mock: no service"))
+    }
+
+    fn launch_installer(&self, path: &std::path::Path) -> Result<()> {
+        if self.fail_launch.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(crate::PlatformError::Other("mock: launch failed".into()));
+        }
+        self.launched.lock().push(path.to_path_buf());
+        Ok(())
+    }
+}
+
 /// Local speaker muting stand-in: remembers the mute state per device.
 #[derive(Default)]
 pub struct MockLocalOutput {

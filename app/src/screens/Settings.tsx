@@ -1,11 +1,12 @@
-import { ExternalLink, FileArchive, FileText, FolderOpen, Send, Laptop, Monitor, Pause, Play, Plus, RotateCw, Trash2, Unlink } from 'lucide-react';
+import { Download, ExternalLink, FileArchive, FileText, FolderOpen, Send, Laptop, Monitor, Pause, Play, Plus, RefreshCw, RotateCw, Trash2, Unlink } from 'lucide-react';
 import { useState } from 'react';
 import { getBackend } from '../api';
 import { PairedBadge, PairingPanel } from '../components/Pairing';
 import { PeerLogsDialog } from '../components/PeerLogs';
+import { usePartnerUpdate } from '../components/Shell';
 import { Button, Card, ConfirmDialog, Modal, PageHeader, Pill, PromptDialog, Row, Segmented, Select, SwitchRow, TextInput } from '../components/ui';
 import { useLang, useT } from '../i18n/useT';
-import { formatMs } from '../lib/format';
+import { formatMs, installerVersion } from '../lib/format';
 import { useStore } from '../store';
 import { RELEASES_URL } from '../brand';
 
@@ -67,6 +68,7 @@ export function Settings() {
   const [latency, setLatency] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
   const [peerLogsOpen, setPeerLogsOpen] = useState(false);
+  const pu = usePartnerUpdate();
 
   if (!state || !config) return null;
   const backend = getBackend();
@@ -90,12 +92,12 @@ export function Settings() {
   const sendInstaller = async () => {
     const path = await backend.pickInstaller();
     if (!path) return;
-    const m = /DeskBridge-Setup-(\d+\.\d+\.\d+)/i.exec(path.split(/[\\/]/).pop() ?? '');
-    if (!m || !m[1]) {
+    const version = installerVersion(path);
+    if (!version) {
       pushToast({ level: 'error', text: t('settings.sendInstallerBadName') });
       return;
     }
-    await send({ type: 'offer_partner_update', path, version: m[1] });
+    await send({ type: 'offer_partner_update', path, version });
   };
 
   const m = state.metrics;
@@ -259,6 +261,32 @@ export function Settings() {
             )}
           </div>
         </Row>
+        {pu.direction === 'push' && (
+          <Row
+            title={t('pu.pushTitle', { name: pu.peerName })}
+            description={
+              <span role="status">
+                {pu.busy
+                  ? t('pu.pushBusy', { version: upd.partner_updating ?? pu.own })
+                  : `${t(pu.partnerRemote ? 'pu.pushHint' : 'pu.pushHintConfirm', { peer: pu.peer ?? '', own: pu.own })}${pu.installerAvailable ? '' : ` ${t('pu.pickHint', { own: pu.own })}`}`}
+              </span>
+            }
+          >
+            <Button size="sm" variant="primary" icon={<RefreshCw size={15} aria-hidden />} loading={pu.busy} onClick={() => void pu.run()}>
+              {t('pu.pushButton', { name: pu.peerName })}
+            </Button>
+          </Row>
+        )}
+        {pu.direction === 'pull' && (
+          <Row
+            title={t('pu.pullTitle')}
+            description={<span role="status">{pu.busy ? t('pu.pullBusy', { version: pu.peer ?? '' }) : t('pu.pullHint', { name: pu.peerName, peer: pu.peer ?? '' })}</span>}
+          >
+            <Button size="sm" variant="primary" icon={<Download size={15} aria-hidden />} loading={pu.busy} onClick={() => void pu.run()}>
+              {t('pu.pullButton', { version: pu.peer ?? '' })}
+            </Button>
+          </Row>
+        )}
         <SwitchRow title={t('settings.updateAuto')} checked={config.update.check_automatically} onChange={(v) => update((c) => void (c.update.check_automatically = v))} />
         <Row title={t('settings.sendInstaller')} description={t('settings.sendInstallerHint')}>
           <Button size="sm" icon={<Send size={15} aria-hidden />} disabled={state.connection.state !== 'connected'} onClick={() => void sendInstaller()}>
@@ -266,6 +294,12 @@ export function Settings() {
           </Button>
         </Row>
         <SwitchRow title={t('settings.updatePartner')} checked={config.update.offer_partner_update} onChange={(v) => update((c) => void (c.update.offer_partner_update = v))} />
+        <SwitchRow
+          title={t('settings.allowPartnerInstall')}
+          description={t('settings.allowPartnerInstallHint')}
+          checked={config.update.allow_partner_install}
+          onChange={(v) => update((c) => void (c.update.allow_partner_install = v))}
+        />
       </Card>
 
       <Card title={t('settings.diagnostics')}>

@@ -42,7 +42,12 @@ export type UiRequest =
   | { type: 'clear_transfer_history' }
   | { type: 'export_diagnostics'; target: string | null }
   | { type: 'check_for_update' }
-  | { type: 'offer_partner_update'; path: string; version: string }
+  /** `install`: have it installed on the partner right away (no dialog there, if it supports that). */
+  | { type: 'offer_partner_update'; path: string; version: string; install?: boolean }
+  /** Send this device's own installer to the older partner and have it installed there. */
+  | { type: 'update_partner' }
+  /** Ask the newer partner to send its installer and install it here. */
+  | { type: 'request_partner_update' }
   | { type: 'answer_partner_update'; accept: boolean }
   | { type: 'make_network_private' }
   | { type: 'set_paused'; paused: boolean }
@@ -242,6 +247,14 @@ export interface UpdateDto {
   url: string | null;
   error: string | null;
   last_checked_unix_ms: number | null;
+  /** This device has an installer of its own version to pass on to an older partner. */
+  installer_available: boolean;
+  /** The partner installs pushed updates by itself; an older one asks its user first. */
+  partner_remote: boolean;
+  /** Version the partner is being updated to, until it is back with it. */
+  partner_updating: string | null;
+  /** This device asked the partner for its version or is installing it. */
+  updating_from_partner: boolean;
 }
 
 export interface MetricsDto {
@@ -380,6 +393,8 @@ export interface LayoutConfig {
 export interface UpdateConfig {
   check_automatically: boolean;
   offer_partner_update: boolean;
+  /** The partner may install a newer version here without asking. */
+  allow_partner_install: boolean;
 }
 
 export interface Config {
@@ -481,6 +496,6 @@ export function defaultConfig(): Config {
       lid_do_nothing: false,
     },
     layout: { placement: [], revision: 0, default_side: 'right' },
-    update: { check_automatically: true, offer_partner_update: true },
+    update: { check_automatically: true, offer_partner_update: true, allow_partner_install: true },
   };
 }
