@@ -20,7 +20,9 @@ use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use deskbridge_platform::video::{CursorShapeData, CursorState, Frame, FrameData, VideoPresenter};
+use deskbridge_platform::video::{
+    CursorShapeData, CursorState, Frame, FrameData, VideoPresenter, WindowCloser,
+};
 use deskbridge_platform::{
     PlatformError, Result, UnboundedReceiver, UnboundedSender, unbounded_channel,
 };
@@ -300,15 +302,21 @@ impl D3dPresenter {
     }
 
     fn close_window(&mut self) {
-        let h = self.shared.hwnd.load(Ordering::SeqCst);
-        if h != 0 && !self.shared.closed.load(Ordering::SeqCst) {
-            // SAFETY: posting to our own window; failure means it is already gone.
-            unsafe {
-                let _ = PostMessageW(HWND(h as *mut c_void), WM_CLOSE, WPARAM(0), LPARAM(0));
-            }
-        }
+        post_close(&self.shared);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
+        }
+    }
+}
+
+/// Asks the window thread to close the window; any thread, a no-op once it is gone (`closed` is
+/// set on `WM_DESTROY`, so a reused handle is never hit).
+fn post_close(shared: &Shared) {
+    let h = shared.hwnd.load(Ordering::SeqCst);
+    if h != 0 && !shared.closed.load(Ordering::SeqCst) {
+        // SAFETY: posting to our own window; failure means it is already gone.
+        unsafe {
+            let _ = PostMessageW(HWND(h as *mut c_void), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -350,6 +358,11 @@ impl VideoPresenter for D3dPresenter {
 
     fn close(&mut self) {
         self.close_window();
+    }
+
+    fn closer(&self) -> Option<WindowCloser> {
+        let shared = self.shared.clone();
+        Some(Box::new(move || post_close(&shared)))
     }
 
     fn window_rect(&self) -> Option<(i32, i32, u32, u32)> {

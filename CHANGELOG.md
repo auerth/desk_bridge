@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-21
+
+### Fixed
+
+- **Focus mode picture freezing because the laptop stopped capturing**: the laptop's screen
+  capture could stop delivering pictures without any error; the laptop kept sending keep-alives,
+  so the PC never noticed and the picture stood still for good. The laptop now notices when keys,
+  clicks or the wheel produce no new picture for 3 s and rebuilds the capture with a new graphics
+  device; if that does not help either, focus mode restarts itself on both sides (at most three
+  times a minute). A still desktop without input is left alone.
+- **Focus mode picture freezing because the PC's viewer hung**: when the PC's decode/display
+  thread hangs (in the decoder or the graphics driver), the PC notices within 3 s, closes the
+  window, takes a new graphics device and restarts focus mode. The log names the step it hung in.
+- **Split-mode window staying open on the PC after focus mode ended**: the window is now closed
+  directly when focus mode ends, also when the viewer thread hangs.
+- When the capture is interrupted for longer (lock screen, UAC prompt on the laptop), the picture
+  shows why instead of just standing still; it retries with a new graphics device now and then,
+  and also finds the virtual display again under a new name.
+- Partner logs (Settings -> Diagnostics) arrived empty for the log file that was still being
+  written: its size was read from the stale directory entry.
+- The PC log shows how old the laptop's last picture is and any capture problem.
+
 ## [0.1.5] - 2026-10-20
 
 ### Fixed

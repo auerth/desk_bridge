@@ -5,7 +5,9 @@
 //! * only real picture changes produce `CaptureOutput::Frame` (`LastPresentTime != 0`); pointer
 //!   movement alone produces `CaptureOutput::Cursor`;
 //! * pointer position and shape are delivered separately from the image (never burnt in);
-//! * `DXGI_ERROR_ACCESS_LOST` (mode change, UAC, lock screen) re-creates the duplication.
+//! * `DXGI_ERROR_ACCESS_LOST` (mode change, UAC, lock screen) re-creates the duplication; an
+//!   interruption that lasts is reported as `CaptureOutput::Status`;
+//! * `reset` re-creates it on request (the engine saw the picture stand still during input).
 //!
 //! IddCx virtual outputs are plain DXGI outputs on the render adapter selected in the driver
 //! settings, so the same code captures them (not testable on a machine without that driver).
@@ -21,6 +23,7 @@ use deskbridge_platform::video::{
     CaptureOutput, CursorShapeData, CursorState, Frame, FrameData, ScreenCapturer,
 };
 use deskbridge_platform::{PlatformError, Result, UnboundedSender};
+use windows::Win32::Foundation::E_ACCESSDENIED;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
     D3D11_USAGE_DEFAULT, ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
@@ -65,6 +68,8 @@ pub struct DxgiCapturer {
     target: Target,
     adapter_name: Arc<Mutex<String>>,
     stop: Arc<AtomicBool>,
+    /// Set by `reset`, taken by the capture thread.
+    reset: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     drops: Arc<std::sync::atomic::AtomicU64>,
 }
@@ -96,6 +101,7 @@ impl DxgiCapturer {
             target,
             adapter_name: Arc::new(Mutex::new(String::new())),
             stop: Arc::new(AtomicBool::new(false)),
+            reset: Arc::new(AtomicBool::new(false)),
             thread: None,
             drops: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
@@ -153,12 +159,16 @@ impl ScreenCapturer for DxgiCapturer {
         }
         *self.adapter_name.lock().expect("adapter name lock") = out.adapter_name.clone();
         self.stop = Arc::new(AtomicBool::new(false));
-        let stop = self.stop.clone();
-        let drops = self.drops.clone();
+        self.reset.store(false, Ordering::SeqCst);
+        let flags = ThreadFlags {
+            stop: self.stop.clone(),
+            reset: self.reset.clone(),
+            drops: self.drops.clone(),
+        };
         let (ready_tx, ready_rx) = mpsc::channel::<std::result::Result<(), String>>();
         let handle = std::thread::Builder::new()
             .name("db-dxgi-capture".into())
-            .spawn(move || capture_thread(out, fps.max(1), sink, stop, drops, ready_tx))
+            .spawn(move || capture_thread(out, fps.max(1), sink, flags, ready_tx))
             .map_err(|e| PlatformError::other(format!("spawn capture thread: {e}")))?;
         match ready_rx.recv() {
             Ok(Ok(())) => {
@@ -185,6 +195,10 @@ impl ScreenCapturer for DxgiCapturer {
 
     fn adapter_name(&self) -> String {
         self.adapter_name.lock().expect("adapter name lock").clone()
+    }
+
+    fn reset(&self) {
+        self.reset.store(true, Ordering::SeqCst);
     }
 }
 
@@ -290,12 +304,30 @@ fn refresh_output(out: &OutputInfo) -> Option<OutputInfo> {
                     && (o.x, o.y) == (out.x, out.y)
             })
         })
+        .or_else(|| {
+            // Last resort: the only attached output of that size (the virtual display can come
+            // back under a new name on a re-enumerated adapter).
+            let mut same = all
+                .iter()
+                .filter(|o| o.attached && (o.w, o.h) == (out.w, out.h));
+            match (same.next(), same.next()) {
+                (Some(o), None) => Some(o),
+                _ => None,
+            }
+        })
         .cloned()
 }
 
-/// Re-opens the duplication after `ACCESS_LOST` & co.: re-resolves the output and keeps the D3D11
-/// device while it is alive and on the same adapter (the zero-copy encoder is bound to it).
-fn reopen_session(out: &mut OutputInfo, old: &Session) -> Result<Session> {
+/// The device of a closed session, kept for the next one (the zero-copy encoder is bound to it).
+struct KeptDevice {
+    device: ID3D11Device,
+    context: ID3D11DeviceContext,
+    luid: i64,
+}
+
+/// Re-opens the duplication after `ACCESS_LOST` & co.: re-resolves the output and reuses the kept
+/// D3D11 device while it is alive and on the same adapter.
+fn reopen_session(out: &mut OutputInfo, kept: Option<&KeptDevice>) -> Result<Session> {
     if let Some(fresh) = refresh_output(out) {
         if (fresh.adapter_index, fresh.output_index) != (out.adapter_index, out.output_index) {
             tracing::info!(
@@ -307,11 +339,75 @@ fn reopen_session(out: &mut OutputInfo, old: &Session) -> Result<Session> {
         }
         *out = fresh;
     }
-    // SAFETY: plain COM call on a live device.
-    let alive = unsafe { old.device.GetDeviceRemovedReason() }.is_ok();
-    let keep =
-        (alive && old.luid == out.adapter_luid).then(|| (old.device.clone(), old.context.clone()));
-    open_session_on(out, keep)
+    let keep = kept.filter(|k| {
+        // SAFETY: plain COM call on a live device.
+        let alive = unsafe { k.device.GetDeviceRemovedReason() }.is_ok();
+        alive && k.luid == out.adapter_luid
+    });
+    open_session_on(out, keep.map(|k| (k.device.clone(), k.context.clone())))
+}
+
+/// Closes `old` and re-creates the duplication until it works (`None`: stopped meanwhile). The
+/// old duplication is released first: a second one on the same output is refused while it lives.
+/// `fresh_device`: do not reuse the old D3D11 device (it may look alive but be the problem).
+fn recover(
+    out: &mut OutputInfo,
+    old: Session,
+    fresh_device: bool,
+    stop: &AtomicBool,
+    sink: &UnboundedSender<CaptureOutput>,
+) -> Option<Session> {
+    let kept = (!fresh_device).then(|| KeptDevice {
+        device: old.device.clone(),
+        context: old.context.clone(),
+        luid: old.luid,
+    });
+    drop(old);
+    let started = Instant::now();
+    let mut last_report: Option<Instant> = None;
+    let mut reported = false;
+    let mut attempts = 0u32;
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+        attempts += 1;
+        // A device that only looks alive can be why the duplication keeps failing: every 10th
+        // attempt starts over with a new one.
+        let fresh = fresh_device || attempts.is_multiple_of(10);
+        match reopen_session(out, if fresh { None } else { kept.as_ref() }) {
+            Ok(s) => {
+                if attempts > 1 || fresh_device {
+                    tracing::info!(attempts, new_device = fresh, "capture re-opened");
+                }
+                if reported {
+                    let _ = sink.send(CaptureOutput::Status(None));
+                }
+                return Some(s);
+            }
+            Err(e) => {
+                if last_report.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) {
+                    last_report = Some(Instant::now());
+                    tracing::warn!(attempts, "capture re-open failed: {e}");
+                }
+                if !reported && started.elapsed() > Duration::from_secs(1) {
+                    reported = true;
+                    let _ = sink.send(CaptureOutput::Status(Some(interruption_reason(&e))));
+                }
+            }
+        }
+    }
+}
+
+/// What the viewer shows while the duplication cannot be re-opened.
+fn interruption_reason(e: &PlatformError) -> String {
+    match e {
+        PlatformError::Os { code, .. } if *code == i64::from(E_ACCESSDENIED.0) => {
+            "Der Laptop zeigt gerade den Sperrbildschirm oder eine Sicherheitsabfrage (UAC)".into()
+        }
+        _ => format!("Die Bildschirmaufnahme am Laptop ist unterbrochen ({e})"),
+    }
 }
 
 fn open_session_on(
@@ -514,14 +610,21 @@ struct Pending {
     ts_us: u64,
 }
 
+/// Flags shared between a `DxgiCapturer` and its thread.
+struct ThreadFlags {
+    stop: Arc<AtomicBool>,
+    reset: Arc<AtomicBool>,
+    drops: Arc<std::sync::atomic::AtomicU64>,
+}
+
 fn capture_thread(
     mut out: OutputInfo,
     fps: u32,
     sink: UnboundedSender<CaptureOutput>,
-    stop: Arc<AtomicBool>,
-    drops: Arc<std::sync::atomic::AtomicU64>,
+    flags: ThreadFlags,
     ready: mpsc::Sender<std::result::Result<(), String>>,
 ) {
+    let ThreadFlags { stop, reset, drops } = flags;
     // SAFETY: plain call on the current thread.
     unsafe {
         let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
@@ -550,6 +653,17 @@ fn capture_thread(
     let mut last_nudge = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
+        if reset.swap(false, Ordering::SeqCst) {
+            tracing::warn!("capture reset requested: the picture stood still during input");
+            drop(std::mem::take(&mut pending));
+            let Some(s) = recover(&mut out, session, true, &stop, &sink) else {
+                return;
+            };
+            session = s;
+            cursor = CursorTracker::default();
+            have_picture = false;
+            continue;
+        }
         // Poll instead of waiting inside AcquireNextFrame: the encoder works on the same
         // (multithread-protected) device, and a blocking wait held its lock for up to the whole
         // timeout. Every encode then queued behind it: 50-200 ms per frame at 5120x1440.
@@ -604,32 +718,12 @@ fn capture_thread(
                 // Re-create (duplication, pool, the device only if it is gone); retry until it
                 // works or we are stopped.
                 drop(std::mem::take(&mut pending));
-                let mut last_report: Option<Instant> = None;
-                let mut attempts = 0u32;
-                loop {
-                    if stop.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    std::thread::sleep(Duration::from_millis(150));
-                    attempts += 1;
-                    match reopen_session(&mut out, &session) {
-                        Ok(s) => {
-                            if attempts > 1 {
-                                tracing::info!(attempts, "capture re-opened");
-                            }
-                            session = s;
-                            cursor = CursorTracker::default();
-                            have_picture = false;
-                            break;
-                        }
-                        Err(e) => {
-                            if last_report.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) {
-                                last_report = Some(Instant::now());
-                                tracing::warn!(attempts, "capture re-open failed: {e}");
-                            }
-                        }
-                    }
-                }
+                let Some(s) = recover(&mut out, session, false, &stop, &sink) else {
+                    return;
+                };
+                session = s;
+                cursor = CursorTracker::default();
+                have_picture = false;
                 continue;
             }
         }

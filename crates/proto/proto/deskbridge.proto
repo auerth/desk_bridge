@@ -164,7 +164,9 @@ message FocusStart {
   uint32 scale_percent = 9;
 }
 message FocusReady { uint32 width = 1; uint32 height = 2; Codec codec = 3; uint32 fps = 4; uint32 screen_id = 5; string encoder = 6; bool yuv444 = 7; }
-message FocusFailed { string reason = 1; }
+// `restart`: the source's picture stands still and could not be revived; the viewer restarts
+// focus mode (rate limited) instead of ending it. Older viewers just end it.
+message FocusFailed { string reason = 1; bool restart = 2; }
 message FocusStop {}
 // Source -> viewer: what the source pipeline really does (logged on the PC; the laptop log is
 // usually out of reach).
@@ -177,6 +179,10 @@ message FocusSourceInfo {
   uint32 encoded_fps = 6;
   uint32 encode_us = 7;
   uint32 skipped = 8;
+  // Time since the last captured picture (a still desktop yields none).
+  uint32 picture_age_ms = 9;
+  // Why the capture is interrupted and retrying (lock screen, UAC, ...); empty while it works.
+  string capture_problem = 10;
 }
 // Target asks the viewer to start/stop focus mode (lid closed/opened).
 message FocusRequest { bool start = 1; }

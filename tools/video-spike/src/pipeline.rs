@@ -273,7 +273,7 @@ pub fn run(cfg: &RunConfig) -> Result<Report> {
                                         sh2.dropped_source.fetch_add(1, Ordering::Relaxed);
                                     }
                                 }
-                                Ok(CaptureOutput::Cursor(_)) => {}
+                                Ok(CaptureOutput::Cursor(_) | CaptureOutput::Status(_)) => {}
                                 Err(_) => thread::sleep(Duration::from_micros(300)),
                             }
                         }

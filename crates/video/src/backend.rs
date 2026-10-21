@@ -53,6 +53,9 @@ pub trait VideoBackend: Send + Sync {
         mode: PresenterMode,
         cfg: &EncoderConfig,
     ) -> Result<Box<dyn VideoPresenter>>;
+    /// Forgets the shared viewer device: a viewer thread hangs on it (inside the driver), so the
+    /// next decoder and presenter must not touch it.
+    fn discard_view_device(&self) {}
 }
 
 /// No video support (platform without a video stack): focus mode is reported unavailable.
@@ -103,7 +106,7 @@ pub mod mock {
     use super::{PresenterMode, VideoBackend};
     use deskbridge_platform::video::{
         CaptureOutput, CursorShapeData, CursorState, EncodedPacket, EncoderConfig, Frame,
-        FrameData, ScreenCapturer, VideoDecoder, VideoEncoder, VideoPresenter,
+        FrameData, ScreenCapturer, VideoDecoder, VideoEncoder, VideoPresenter, WindowCloser,
     };
     use deskbridge_platform::{Result, UnboundedSender};
     use deskbridge_proto::pb;
@@ -130,6 +133,14 @@ pub mod mock {
         /// Every `decode` fails (a lost GPU device).
         pub decode_always_fails: AtomicBool,
         pub decoders_created: AtomicU64,
+        /// The capturer delivers nothing (a duplication that silently stopped) ...
+        pub capture_stalled: AtomicBool,
+        /// ... and `reset` does not cure it.
+        pub stall_survives_reset: AtomicBool,
+        pub capture_resets: AtomicU64,
+        /// `present` blocks while set (a viewer thread hanging in the driver).
+        pub present_hangs: AtomicBool,
+        pub view_devices_discarded: AtomicU64,
     }
 
     pub struct MockVideoBackend {
@@ -175,6 +186,12 @@ pub mod mock {
 
         fn decoder_caps(&self) -> pb::VideoCaps {
             caps(self.decode, self.size, "mock-decoder")
+        }
+
+        fn discard_view_device(&self) {
+            self.stats
+                .view_devices_discarded
+                .fetch_add(1, Ordering::SeqCst);
         }
 
         fn create_capturer(&self) -> Result<Box<dyn ScreenCapturer>> {
@@ -253,6 +270,10 @@ pub mod mock {
                     }),
                 }));
                 while !stop.load(Ordering::SeqCst) {
+                    if stats.capture_stalled.load(Ordering::SeqCst) {
+                        std::thread::sleep(period);
+                        continue;
+                    }
                     let mut data = vec![0u8; (w * h * 4) as usize];
                     for px in data.chunks_exact_mut(4) {
                         px.copy_from_slice(&[(n % 251) as u8, 64, 128, 255]);
@@ -284,6 +305,13 @@ pub mod mock {
 
         fn adapter_name(&self) -> String {
             "Mock GPU".into()
+        }
+
+        fn reset(&self) {
+            self.stats.capture_resets.fetch_add(1, Ordering::SeqCst);
+            if !self.stats.stall_survives_reset.load(Ordering::SeqCst) {
+                self.stats.capture_stalled.store(false, Ordering::SeqCst);
+            }
         }
     }
 
@@ -381,6 +409,9 @@ pub mod mock {
 
     impl VideoPresenter for MockPresenter {
         fn present(&mut self, _frame: &Frame) -> Result<()> {
+            while self.stats.present_hangs.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             self.stats.frames_presented.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -391,6 +422,13 @@ pub mod mock {
 
         fn close(&mut self) {
             self.stats.presenter_open.store(false, Ordering::SeqCst);
+        }
+
+        fn closer(&self) -> Option<WindowCloser> {
+            let stats = self.stats.clone();
+            Some(Box::new(move || {
+                stats.presenter_open.store(false, Ordering::SeqCst);
+            }))
         }
     }
 

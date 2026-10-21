@@ -1027,3 +1027,156 @@ async fn broken_decoder_restarts_focus_and_finally_gives_up_cleanly() {
     pc.h.stop();
     lp.h.stop();
 }
+
+/// Points the PC at the stream (keyboard grabbed for the laptop) and types `n` keys there.
+async fn type_on_laptop(pc: &Node, n: usize) {
+    pc.m.capture
+        .feed(CaptureEvent::MouseMove { x: 100, y: 100 });
+    wait_for("pc keyboard grabbed", || {
+        *pc.m.capture.grab.lock() == GrabMode::KeyboardOnly
+    })
+    .await;
+    for _ in 0..n {
+        pc.m.capture.feed(CaptureEvent::Key {
+            hid: hid::A,
+            down: true,
+        });
+        pc.m.capture.feed(CaptureEvent::Key {
+            hid: hid::A,
+            down: false,
+        });
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn capture_that_stops_delivering_during_input_is_reset() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    start_streaming(&pc, &lp).await;
+    let stats = &lp.m.video.stats;
+    stats.capture_stalled.store(true, SeqCst);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    type_on_laptop(&pc, 4).await;
+    wait_for("capture reset on the laptop", || {
+        stats.capture_resets.load(SeqCst) >= 1
+    })
+    .await;
+    let before = pc.m.video.stats.frames_presented.load(SeqCst);
+    wait_for("picture moves again", || {
+        pc.m.video.stats.frames_presented.load(SeqCst) > before + 10
+    })
+    .await;
+    assert_eq!(stats.capture_resets.load(SeqCst), 1);
+    assert_eq!(
+        pc.m.video.stats.presenter_modes.lock().len(),
+        1,
+        "no restart"
+    );
+    assert_eq!(pc.h.state().await.features.focus.phase, "streaming");
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn capture_stall_that_a_reset_does_not_cure_restarts_focus() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    start_streaming(&pc, &lp).await;
+    let stats = &lp.m.video.stats;
+    stats.stall_survives_reset.store(true, SeqCst);
+    stats.capture_stalled.store(true, SeqCst);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    type_on_laptop(&pc, 4).await;
+    wait_for("capture reset on the laptop", || {
+        stats.capture_resets.load(SeqCst) >= 1
+    })
+    .await;
+    type_on_laptop(&pc, 4).await;
+    wait_for("focus restarted (a second viewer opened)", || {
+        pc.m.video.stats.presenter_modes.lock().len() >= 2
+    })
+    .await;
+    stats.capture_stalled.store(false, SeqCst);
+    let before = pc.m.video.stats.frames_presented.load(SeqCst);
+    wait_for("picture moves again", || {
+        pc.m.video.stats.frames_presented.load(SeqCst) > before + 10
+    })
+    .await;
+    assert_eq!(pc.h.state().await.features.focus.phase, "streaming");
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn still_desktop_without_input_is_left_alone() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    start_streaming(&pc, &lp).await;
+    let stats = &lp.m.video.stats;
+    stats.capture_stalled.store(true, SeqCst);
+    // Only Shift: changes nothing on the screen and must not count as evidence.
+    pc.m.capture
+        .feed(CaptureEvent::MouseMove { x: 100, y: 100 });
+    for _ in 0..5 {
+        pc.m.capture.feed(CaptureEvent::Key {
+            hid: hid::L_SHIFT,
+            down: true,
+        });
+        pc.m.capture.feed(CaptureEvent::Key {
+            hid: hid::L_SHIFT,
+            down: false,
+        });
+    }
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(stats.capture_resets.load(SeqCst), 0);
+    assert_eq!(pc.h.state().await.features.focus.phase, "streaming");
+    stats.capture_stalled.store(false, SeqCst);
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn window_closes_on_stop_even_when_the_viewer_thread_hangs() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    start_streaming(&pc, &lp).await;
+    let v = &pc.m.video.stats;
+    v.present_hangs.store(true, SeqCst);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    pc.h.request(UiRequest::SetFocus { mode: "off".into() })
+        .await
+        .unwrap();
+    wait_for("viewer window closed", || !v.presenter_open.load(SeqCst)).await;
+    wait_for("laptop display restored", || {
+        !lp.m.display.world().virtual_enabled
+    })
+    .await;
+    v.present_hangs.store(false, SeqCst);
+    pc.h.stop();
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hung_viewer_thread_is_replaced_by_a_restart() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    start_streaming(&pc, &lp).await;
+    let v = &pc.m.video.stats;
+    v.present_hangs.store(true, SeqCst);
+    wait_for("focus restarted (a second viewer opened)", || {
+        v.presenter_modes.lock().len() >= 2
+    })
+    .await;
+    assert!(v.view_devices_discarded.load(SeqCst) >= 1, "fresh device");
+    v.present_hangs.store(false, SeqCst);
+    let before = v.frames_presented.load(SeqCst);
+    wait_for("picture moves again", || {
+        v.frames_presented.load(SeqCst) > before + 10
+    })
+    .await;
+    // the woken old thread must not end the new session
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(pc.h.state().await.features.focus.phase, "streaming");
+    pc.h.stop();
+    lp.h.stop();
+}

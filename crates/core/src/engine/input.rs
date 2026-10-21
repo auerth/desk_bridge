@@ -184,6 +184,7 @@ impl Engine {
         }
         let link = s.link.clone();
         self.record_input_latency(&ev);
+        self.note_focus_input(&ev);
         match &ev.ev {
             Some(Ev::EdgeHit(h)) => {
                 let actions = self.router.on_edge_hit(h);

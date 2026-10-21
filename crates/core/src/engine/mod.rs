@@ -132,6 +132,7 @@ pub(crate) enum Msg {
     NetworkProfile(Option<Vec<String>>),
     /// The focus viewer cannot decode any more, even after rebuilding its decoder.
     FocusViewerBroken {
+        viewer: u64,
         reason: String,
     },
     /// A focus display session was ended (or a retry of that finished).
@@ -659,7 +660,9 @@ impl Engine {
             Msg::UpdateChecked(r) => self.on_update_checked(r),
             Msg::NetworkProfile(p) => self.on_network_profile(p),
             Msg::DisplayRestored { session, result } => self.on_display_restored(session, result),
-            Msg::FocusViewerBroken { reason } => self.on_focus_viewer_broken(&reason),
+            Msg::FocusViewerBroken { viewer, reason } => {
+                self.on_focus_viewer_broken(viewer, &reason);
+            }
             Msg::Shutdown => {}
         }
     }

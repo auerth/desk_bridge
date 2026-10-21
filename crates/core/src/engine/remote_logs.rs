@@ -168,7 +168,11 @@ fn collect_logs(dirs: &[(PathBuf, &str)]) -> Vec<pb::LogFile> {
             continue;
         };
         for e in rd.flatten() {
-            let Ok(m) = e.metadata() else { continue };
+            // Not `e.metadata()`: on Windows that is the directory entry, whose size and time
+            // stay stale while the log is open for writing (today's log arrived empty).
+            let Ok(m) = std::fs::metadata(e.path()) else {
+                continue;
+            };
             if !m.is_file() {
                 continue;
             }

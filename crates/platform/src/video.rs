@@ -38,6 +38,9 @@ pub struct CursorShapeData {
 pub enum CaptureOutput {
     Frame(Frame),
     Cursor(CursorState),
+    /// The capture is interrupted and keeps retrying (`Some(reason)`, e.g. the lock screen or a
+    /// UAC prompt is up) or works again (`None`).
+    Status(Option<String>),
 }
 
 pub trait ScreenCapturer: Send {
@@ -52,6 +55,9 @@ pub trait ScreenCapturer: Send {
     fn stop(&mut self);
     /// Name of the GPU adapter the frames live on.
     fn adapter_name(&self) -> String;
+    /// Re-creates the capture from scratch (new device, output looked up again) while it keeps
+    /// running: the picture stood still although the user kept typing and clicking.
+    fn reset(&self) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,10 +109,18 @@ pub trait VideoDecoder: Send {
     fn name(&self) -> String;
 }
 
+/// Closes a presenter's window from any thread (see [`VideoPresenter::closer`]).
+pub type WindowCloser = Box<dyn Fn() + Send + Sync>;
+
 pub trait VideoPresenter: Send {
     fn present(&mut self, frame: &Frame) -> Result<()>;
     fn set_cursor(&mut self, cursor: &CursorState);
     fn close(&mut self);
+    /// Closes the window without the thread that owns the presenter: that thread may hang in the
+    /// decoder or the driver, and the window must still go away when focus mode ends.
+    fn closer(&self) -> Option<WindowCloser> {
+        None
+    }
     /// Current rectangle of the picture on the virtual desktop (window mode can be moved).
     fn window_rect(&self) -> Option<(i32, i32, u32, u32)> {
         None

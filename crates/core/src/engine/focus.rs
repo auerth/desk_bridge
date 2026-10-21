@@ -15,10 +15,10 @@ use deskbridge_input::router::AbsRegion;
 use deskbridge_platform::display::Mode;
 use deskbridge_platform::video::{
     CaptureOutput, CursorState, EncoderConfig, Frame, ScreenCapturer, VideoCodec, VideoDecoder,
-    VideoEncoder, VideoPresenter,
+    VideoEncoder, VideoPresenter, WindowCloser,
 };
 use deskbridge_proto::media::VideoHeader;
-use deskbridge_proto::pb;
+use deskbridge_proto::pb::{self, input_event::Ev};
 use deskbridge_video::abr::{AbrSample, BitrateController, LinkClass};
 use deskbridge_video::backend::PresenterMode;
 use deskbridge_video::negotiate::{WantedStream, codec_from_pb, codec_to_pb, negotiate};
@@ -42,6 +42,9 @@ const START_TIMEOUT: Duration = Duration::from_secs(25);
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(8);
 /// After the first picture the source sends at least a keep-alive every 500 ms.
 const STREAM_GAP_TIMEOUT: Duration = Duration::from_secs(4);
+/// The viewer thread shows a sign of life at least every 40 ms; this long without one it hangs
+/// (in the decoder or the driver): the picture is frozen and it would never close its window.
+const VIEWER_HANG_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long the viewer waits for a frame that was overtaken by later ones (see `ReorderBuffer`).
 const REORDER_MAX_WAIT: Duration = Duration::from_millis(80);
 const REORDER_MAX_PENDING: usize = 24;
@@ -162,8 +165,97 @@ pub(crate) struct FocusRt {
     /// A `FocusStart` that arrived while the previous display session was still being restored
     /// (quick restart): started as soon as the restore finished.
     start_after_restore: Option<pb::FocusStart>,
-    // viewer side: automatic restarts after a broken decoder (rate limited)
+    // viewer side: automatic restarts after a broken or hung viewer or a stalled source (rate
+    // limited)
     auto_restarts: Vec<Instant>,
+    /// Id of the current viewer: messages from an older viewer thread (one that hung and woke up
+    /// later) must not touch the next one.
+    viewer_seq: u64,
+    // source side: the picture standing still while the user types and clicks
+    stall: StallWatch,
+}
+
+/// Picture-changing inputs (keys, clicks, wheel) without a new picture before the source assumes
+/// its capture stopped delivering ...
+const STALL_INPUTS: u32 = 3;
+/// ... counted over at least this long (typing into an idle desktop always changes something).
+const STALL_AFTER: Duration = Duration::from_secs(3);
+/// A picture this soon after a capture reset comes from the reset itself (a new duplication
+/// always hands out the current image first), not from a capture that works again.
+const RESET_GRACE: Duration = Duration::from_millis(1500);
+/// A reset longer ago than this no longer escalates to a restart.
+const RESET_MEMORY: Duration = Duration::from_secs(60);
+
+/// Source side: notices a capture that silently stopped delivering. A still desktop sends no
+/// pictures either, so only input that should change the picture counts as evidence.
+#[derive(Default)]
+struct StallWatch {
+    inputs: u32,
+    first_input: Option<Instant>,
+    /// `last_picture_us` of the source when last looked at.
+    seen_picture: u64,
+    /// The capture was reset because of a stall (a second stall then restarts focus mode).
+    reset_at: Option<Instant>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum StallAction {
+    None,
+    ResetCapture,
+    Restart,
+}
+
+impl StallWatch {
+    fn on_input(&mut self, now: Instant) {
+        self.inputs += 1;
+        self.first_input.get_or_insert(now);
+    }
+
+    fn on_picture(&mut self, now: Instant) {
+        self.clear_inputs();
+        if self
+            .reset_at
+            .is_some_and(|t| now.duration_since(t) > RESET_GRACE)
+        {
+            self.reset_at = None;
+        }
+    }
+
+    fn clear_inputs(&mut self) {
+        self.inputs = 0;
+        self.first_input = None;
+    }
+
+    fn poll(&mut self, now: Instant) -> StallAction {
+        if self
+            .reset_at
+            .is_some_and(|t| now.duration_since(t) > RESET_MEMORY)
+        {
+            self.reset_at = None;
+        }
+        let stalled = self.inputs >= STALL_INPUTS
+            && self
+                .first_input
+                .is_some_and(|t| now.duration_since(t) >= STALL_AFTER);
+        if !stalled {
+            return StallAction::None;
+        }
+        self.clear_inputs();
+        if self.reset_at.take().is_some() {
+            StallAction::Restart
+        } else {
+            self.reset_at = Some(now);
+            StallAction::ResetCapture
+        }
+    }
+}
+
+/// `FocusFailed` that ends focus mode on the viewer.
+fn focus_failed(reason: impl Into<String>) -> pb::control::Msg {
+    pb::control::Msg::FocusFailed(pb::FocusFailed {
+        reason: reason.into(),
+        restart: false,
+    })
 }
 
 /// Automatic focus restarts allowed per minute before giving up.
@@ -178,15 +270,47 @@ struct ViewerPlan {
 }
 
 struct Viewer {
+    id: u64,
     cmd: std_mpsc::Sender<ViewerCmd>,
     shared: Arc<ViewerShared>,
+    closer: Option<WindowCloser>,
     _thread: std::thread::JoinHandle<()>,
 }
 
 impl Drop for Viewer {
     fn drop(&mut self) {
         let _ = self.cmd.send(ViewerCmd::Stop);
+        // Close the window right here: a viewer thread that hangs in the decoder or the driver
+        // never gets to it, and the window stayed on the PC after focus mode ended.
+        if let Some(close) = &self.closer {
+            close();
+        }
     }
+}
+
+/// What the viewer thread is doing (logged when it hangs).
+#[derive(Clone, Copy)]
+enum ViewerStage {
+    Wait,
+    Window,
+    Cursor,
+    Overlay,
+    Decode,
+    Present,
+    Rebuild,
+}
+
+fn stage_name(v: u32) -> &'static str {
+    const NAMES: [&str; 7] = [
+        "waiting",
+        "window state",
+        "cursor",
+        "overlay",
+        "decode",
+        "present",
+        "decoder rebuild",
+    ];
+    NAMES.get(v as usize).copied().unwrap_or("?")
 }
 
 enum ViewerCmd {
@@ -214,12 +338,39 @@ struct ViewerShared {
     /// peer_clock - our_clock (µs), kept fresh by the actor.
     clock_offset_us: AtomicI64,
     last_text: Mutex<String>,
+    /// `clock::now_us()` of the viewer thread's last sign of life; 0 = not started.
+    beat_us: AtomicU64,
+    /// `ViewerStage` it was entering then.
+    stage: AtomicU32,
+}
+
+impl ViewerShared {
+    /// Sign of life from the viewer thread, with what it is about to do.
+    fn mark(&self, stage: ViewerStage) {
+        self.stage.store(stage as u32, Ordering::Relaxed);
+        self.beat_us
+            .store(crate::clock::now_us().max(1), Ordering::Relaxed);
+    }
+}
+
+/// The stage the viewer thread hangs in, if it has shown no sign of life for too long
+/// (`now_us`: `clock::now_us()`).
+fn viewer_hang(sh: &ViewerShared, now_us: u64) -> Option<&'static str> {
+    let beat = sh.beat_us.load(Ordering::Relaxed);
+    let silent = now_us.saturating_sub(beat);
+    (beat != 0 && silent > VIEWER_HANG_TIMEOUT.as_micros() as u64)
+        .then(|| stage_name(sh.stage.load(Ordering::Relaxed)))
 }
 
 struct Source {
     stop: Arc<AtomicBool>,
     force_key: Arc<AtomicBool>,
     feedback: Arc<Mutex<Option<pb::StreamStats>>>,
+    /// `clock::now_us()` of the last picture that went out encoded (0 = none yet): a capture
+    /// that works behind an encoder that fails is no better for the viewer.
+    last_picture_us: Arc<AtomicU64>,
+    /// Set while the capture reports an interruption it is retrying (lock screen, UAC).
+    capture_problem: Arc<Mutex<Option<String>>>,
     task: tokio::task::JoinHandle<()>,
     capturer_stop: Arc<Mutex<Option<Box<dyn ScreenCapturer>>>>,
 }
@@ -524,6 +675,9 @@ impl Engine {
                 return;
             }
         };
+        let closer = presenter.closer();
+        self.focus.viewer_seq += 1;
+        let viewer_id = self.focus.viewer_seq;
         let shared = Arc::new(ViewerShared::default());
         shared
             .clock_offset_us
@@ -539,7 +693,13 @@ impl Engine {
                     backend: self.platform.video.clone(),
                     cfg: plan.cfg.clone(),
                 };
-                move || viewer_thread(cmd_rx_plain, decoder, rebuild, presenter, sh, link_t, msg)
+                let io = ViewerIo {
+                    id: viewer_id,
+                    sh,
+                    link: link_t,
+                    msg,
+                };
+                move || viewer_thread(cmd_rx_plain, decoder, rebuild, presenter, io)
             })
             .ok();
         let Some(thread) = thread else {
@@ -585,8 +745,10 @@ impl Engine {
         let hint = format!("Fokusmodus beenden: {}", self.focus_exit_keys());
         let _ = cmd_tx_plain.send(ViewerCmd::Hint(Some(hint.clone())));
         self.focus.viewer = Some(Viewer {
+            id: viewer_id,
             cmd: cmd_tx_plain,
             shared,
+            closer,
             _thread: thread,
         });
         tracing::info!(
@@ -656,8 +818,17 @@ impl Engine {
             encoded_fps = i.encoded_fps,
             encode_ms = f64::from(i.encode_us) / 1000.0,
             skipped = i.skipped,
+            picture_age_ms = i.picture_age_ms,
+            capture_problem = %i.capture_problem,
             "focus source rate"
         );
+        if !i.capture_problem.is_empty()
+            && let Some(v) = &self.focus.viewer
+        {
+            // Stays on the picture while the reports (every 2 s) keep naming the problem.
+            let _ = v.cmd.send(ViewerCmd::Hint(Some(i.capture_problem.clone())));
+            self.focus.hint_until = Some(Instant::now() + Duration::from_secs(3));
+        }
         if i.capture_width != 0
             && (i.capture_width, i.capture_height) != (self.focus.width, self.focus.height)
         {
@@ -686,9 +857,7 @@ impl Engine {
         let Some(s) = &self.session else { return };
         let link = s.link.clone();
         if !self.cfg.device.stream_source {
-            link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
-                reason: "Dieses Gerät ist keine Stream-Quelle.".into(),
-            }));
+            link.send_control(focus_failed("Dieses Gerät ist keine Stream-Quelle."));
             return;
         }
         if self.focus.phase != Phase::Off {
@@ -707,15 +876,11 @@ impl Engine {
             {
                 self.spawn_display_end(d);
             }
-            link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
-                reason: "Der Laptop stellt seine Bildschirmanordnung noch wieder her. Bitte gleich noch einmal versuchen (ist er gesperrt, zuerst entsperren).".into(),
-            }));
+            link.send_control(focus_failed("Der Laptop stellt seine Bildschirmanordnung noch wieder her. Bitte gleich noch einmal versuchen (ist er gesperrt, zuerst entsperren)."));
             return;
         }
         let Some(codec) = codec_from_pb(fs.codec) else {
-            link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
-                reason: "Unbekannter Codec".into(),
-            }));
+            link.send_control(focus_failed("Unbekannter Codec"));
             return;
         };
         self.focus.phase = Phase::Preparing;
@@ -826,6 +991,9 @@ impl Engine {
         let stop = Arc::new(AtomicBool::new(false));
         let force_key = Arc::new(AtomicBool::new(true));
         let feedback = Arc::new(Mutex::new(None));
+        let last_picture_us = Arc::new(AtomicU64::new(0));
+        let capture_problem = Arc::new(Mutex::new(None));
+        self.focus.stall = StallWatch::default();
         let capturer_slot = Arc::new(Mutex::new(Some(capturer)));
         let encoder_name = encoder.name();
         let adapter = capturer_slot
@@ -842,6 +1010,8 @@ impl Engine {
                 stop: stop.clone(),
                 force_key: force_key.clone(),
                 feedback: feedback.clone(),
+                last_picture_us: last_picture_us.clone(),
+                capture_problem: capture_problem.clone(),
             },
             adapter,
         ));
@@ -849,6 +1019,8 @@ impl Engine {
             stop,
             force_key,
             feedback,
+            last_picture_us,
+            capture_problem,
             task,
             capturer_stop: capturer_slot,
         });
@@ -868,10 +1040,7 @@ impl Engine {
 
     pub(crate) fn on_focus_source_failed(&mut self, reason: &str) {
         if let Some(s) = &self.session {
-            s.link
-                .send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
-                    reason: reason.to_string(),
-                }));
+            s.link.send_control(focus_failed(reason.to_string()));
         }
         self.stop_focus_inner(false);
     }
@@ -933,18 +1102,40 @@ impl Engine {
                     && let Some(s) = &self.session
                 {
                     s.link
-                        .send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
-                            reason: "Der Laptop konnte seine Bildschirmanordnung nicht wiederherstellen (ist er gesperrt? Bitte entsperren).".into(),
-                        }));
+                        .send_control(focus_failed("Der Laptop konnte seine Bildschirmanordnung nicht wiederherstellen (ist er gesperrt? Bitte entsperren)."));
                 }
             }
         }
         self.dirty = true;
     }
 
-    /// Viewer: the decoder keeps failing even after a rebuild (lost GPU device): restart the
-    /// whole focus pipeline on both sides, at most [`MAX_AUTO_RESTARTS_PER_MIN`] times a minute.
-    pub(crate) fn on_focus_viewer_broken(&mut self, reason: &str) {
+    /// Viewer: the decoder keeps failing even after a rebuild (lost GPU device).
+    pub(crate) fn on_focus_viewer_broken(&mut self, viewer: u64, reason: &str) {
+        if self.focus.viewer.as_ref().is_none_or(|v| v.id != viewer) {
+            return;
+        }
+        self.auto_restart_focus(
+            &format!("broken decoder: {reason}"),
+            &format!(
+                "Das Bild vom Laptop lässt sich nicht dekodieren ({reason}). Bitte Fokusmodus neu starten."
+            ),
+        );
+    }
+
+    /// Viewer: the laptop's picture stood still during input and a capture reset did not help.
+    fn on_focus_source_stalled(&mut self, reason: &str) {
+        if self.focus.viewer.is_none() {
+            return;
+        }
+        self.auto_restart_focus(
+            &format!("source picture stands still: {reason}"),
+            &format!("Das Bild vom Laptop bleibt stehen ({reason}). Bitte Fokusmodus neu starten."),
+        );
+    }
+
+    /// Restarts the whole focus pipeline on both sides, at most [`MAX_AUTO_RESTARTS_PER_MIN`]
+    /// times a minute; after that focus mode ends with `give_up` as the message.
+    fn auto_restart_focus(&mut self, why: &str, give_up: &str) {
         if self.focus.phase == Phase::Off {
             return;
         }
@@ -954,14 +1145,12 @@ impl Engine {
             .retain(|t| now.duration_since(*t) < Duration::from_secs(60));
         let mode = self.focus.mode.clone();
         if self.focus.auto_restarts.len() >= MAX_AUTO_RESTARTS_PER_MIN {
-            tracing::error!(reason, "focus picture keeps failing; giving up");
-            self.abort_focus(&format!(
-                "Das Bild vom Laptop lässt sich nicht dekodieren ({reason}). Bitte Fokusmodus neu starten."
-            ));
+            tracing::error!(why, "focus picture keeps failing; giving up");
+            self.abort_focus(give_up);
             return;
         }
         self.focus.auto_restarts.push(now);
-        tracing::warn!(reason, mode = %mode, "restarting focus mode after a broken decoder");
+        tracing::warn!(why, mode = %mode, "restarting focus mode");
         self.stop_focus("", true);
         self.emit(UiEvent::Osd {
             icon: "monitor".into(),
@@ -1053,6 +1242,7 @@ impl Engine {
         match msg {
             M::FocusStart(fs) => self.on_focus_start(*fs),
             M::FocusReady(r) => self.on_focus_ready(r.clone()),
+            M::FocusFailed(f) if f.restart => self.on_focus_source_stalled(&f.reason),
             M::FocusFailed(f) => self.on_focus_failed(&f.reason),
             M::FocusStop(_) => self.on_focus_stop_msg(),
             M::FocusRequest(r) => self.on_focus_request(*r),
@@ -1099,6 +1289,7 @@ impl Engine {
 
     /// 250 ms tick: start timeout, window-mode pointer region, stats.
     pub(crate) fn tick_focus(&mut self) {
+        self.tick_focus_source();
         if let Some(d) = self.focus.deadline
             && Instant::now() > d
         {
@@ -1107,6 +1298,22 @@ impl Engine {
             return;
         }
         let Some(v) = &self.focus.viewer else { return };
+        if let Some(stage) = viewer_hang(&v.shared, crate::clock::now_us()) {
+            if let Some(close) = &v.closer {
+                close();
+            }
+            tracing::error!(
+                stage,
+                "focus viewer thread hangs; closing its window and restarting focus mode"
+            );
+            // It may hold the shared device inside the driver: the next viewer gets a new one.
+            self.platform.video.discard_view_device();
+            self.auto_restart_focus(
+                &format!("viewer thread hangs in {stage}"),
+                "Die Bildanzeige am PC hängt. Bitte Fokusmodus neu starten.",
+            );
+            return;
+        }
         if let Some(reason) = self.viewer_stalled(&v.shared) {
             tracing::warn!(reason, "focus mode: no picture from the source, stopping");
             self.abort_focus(reason);
@@ -1163,9 +1370,71 @@ impl Engine {
         }
     }
 
+    /// Source: input from the viewer that normally changes the picture (keys, clicks, wheel).
+    pub(crate) fn note_focus_input(&mut self, ev: &pb::InputEvent) {
+        if self.focus.source.is_none() {
+            return;
+        }
+        let changes_picture = match &ev.ev {
+            // 0xE0..=0xE7: Ctrl, Shift, Alt, Win alone change nothing.
+            Some(Ev::Key(k)) => k.down && !(0xE0..=0xE7).contains(&k.hid),
+            Some(Ev::Btn(b)) => b.down,
+            Some(Ev::Wheel(_)) => true,
+            _ => false,
+        };
+        if changes_picture {
+            self.focus.stall.on_input(Instant::now());
+        }
+    }
+
+    /// Source: the picture stood still although the user kept typing and clicking (the
+    /// duplication stopped delivering without an error): reset the capture; if that does not
+    /// help, the viewer restarts focus mode.
+    fn tick_focus_source(&mut self) {
+        let Some(src) = &self.focus.source else {
+            return;
+        };
+        let picture = src.last_picture_us.load(Ordering::Relaxed);
+        let interrupted = src.capture_problem.lock().is_some();
+        let capturer = src.capturer_stop.clone();
+        let now = Instant::now();
+        let w = &mut self.focus.stall;
+        if picture != w.seen_picture {
+            w.seen_picture = picture;
+            w.on_picture(now);
+        }
+        if interrupted {
+            // The capture knows and keeps retrying (lock screen, UAC): nothing to add.
+            w.clear_inputs();
+            return;
+        }
+        match w.poll(now) {
+            StallAction::None => {}
+            StallAction::ResetCapture => {
+                tracing::warn!("focus source: picture stood still during input; resetting capture");
+                if let Some(c) = capturer.lock().as_ref() {
+                    c.reset();
+                }
+            }
+            StallAction::Restart => {
+                tracing::warn!(
+                    "focus source: picture still stands after a capture reset; asking for a restart"
+                );
+                if let Some(s) = &self.session {
+                    s.link
+                        .send_control(pb::control::Msg::FocusFailed(pb::FocusFailed {
+                            reason: "die Bildschirmaufnahme am Laptop lieferte keine Bilder mehr"
+                                .into(),
+                            restart: true,
+                        }));
+                }
+            }
+        }
+    }
+
     /// The viewer window changed: picture rectangle, closed, covered by another window.
     pub(crate) fn on_focus_viewer_update(&mut self, u: ViewerUpdate) {
-        if self.focus.viewer.is_none() {
+        if self.focus.viewer.as_ref().is_none_or(|v| v.id != u.viewer) {
             return;
         }
         if u.closed {
@@ -1277,6 +1546,8 @@ fn codec_name(c: VideoCodec) -> &'static str {
 /// What the viewer window looks like now (sent to the actor on every change).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ViewerUpdate {
+    /// `Viewer::id` of the thread that sent it.
+    pub viewer: u64,
     /// Picture rectangle on the PC desktop; `None` while minimised.
     pub rect: Option<(i32, i32, u32, u32)>,
     pub closed: bool,
@@ -1297,15 +1568,22 @@ const DECODER_REBUILD_AFTER: u32 = 3;
 /// At most one rebuild per this interval (a broken GPU must not turn into a rebuild loop).
 const DECODER_REBUILD_SPACING: Duration = Duration::from_secs(1);
 
+/// What the viewer thread talks to besides its decoder and presenter.
+struct ViewerIo {
+    id: u64,
+    sh: Arc<ViewerShared>,
+    link: PeerLink,
+    msg: tokio::sync::mpsc::UnboundedSender<super::Msg>,
+}
+
 fn viewer_thread(
     rx: std_mpsc::Receiver<ViewerCmd>,
     mut decoder: Box<dyn VideoDecoder>,
     rebuild: DecoderFactory,
     mut presenter: Box<dyn VideoPresenter>,
-    sh: Arc<ViewerShared>,
-    link: PeerLink,
-    msg: tokio::sync::mpsc::UnboundedSender<super::Msg>,
+    io: ViewerIo,
 ) {
+    let ViewerIo { id, sh, link, msg } = io;
     let epoch = Instant::now();
     let mut filter = LateFrameFilter::new();
     let mut reorder = ReorderBuffer::new(REORDER_MAX_WAIT, REORDER_MAX_PENDING);
@@ -1324,12 +1602,15 @@ fn viewer_thread(
     'outer: loop {
         // Wake up regularly even without frames: window moves and clicks on the close button
         // must reach the pointer mapping quickly.
+        sh.mark(ViewerStage::Wait);
         let first = match rx.recv_timeout(Duration::from_millis(40)) {
             Ok(c) => Some(c),
             Err(std_mpsc::RecvTimeoutError::Timeout) => None,
             Err(std_mpsc::RecvTimeoutError::Disconnected) => break,
         };
+        sh.mark(ViewerStage::Window);
         let now_state = ViewerUpdate {
+            viewer: id,
             rect: presenter.window_rect(),
             closed: presenter.is_closed(),
             hover: presenter.pointer_over(),
@@ -1346,14 +1627,22 @@ fn viewer_thread(
         for cmd in first.into_iter().chain(rx.try_iter()) {
             match cmd {
                 ViewerCmd::Stop => break 'outer,
-                ViewerCmd::Cursor(c) => presenter.set_cursor(&c),
+                ViewerCmd::Cursor(c) => {
+                    sh.mark(ViewerStage::Cursor);
+                    presenter.set_cursor(&c);
+                }
                 ViewerCmd::Overlay(on) => {
+                    sh.mark(ViewerStage::Overlay);
                     overlay_on = on;
                     let text = sh.last_text.lock().clone();
                     presenter.set_stats_overlay(on, &text);
                 }
-                ViewerCmd::Hint(Some(text)) => presenter.set_stats_overlay(true, &text),
+                ViewerCmd::Hint(Some(text)) => {
+                    sh.mark(ViewerStage::Overlay);
+                    presenter.set_stats_overlay(true, &text);
+                }
                 ViewerCmd::Hint(None) => {
+                    sh.mark(ViewerStage::Overlay);
                     let text = sh.last_text.lock().clone();
                     presenter.set_stats_overlay(overlay_on, &text);
                 }
@@ -1390,12 +1679,14 @@ fn viewer_thread(
                 continue;
             }
             let t0 = Instant::now();
+            sh.mark(ViewerStage::Decode);
             match decoder.decode(&payload, h.is_key()) {
                 Ok(Some(frame)) => {
                     decode_errors_in_row = 0;
                     rebuilt_without_success = false;
                     let dec_us = t0.elapsed().as_micros() as u64;
                     let frame: Frame = frame;
+                    sh.mark(ViewerStage::Present);
                     let shown = !present_now || presenter.present(&frame).is_ok();
                     if shown {
                         if sh.presented_total.fetch_add(1, Ordering::Relaxed) == 0 {
@@ -1429,6 +1720,7 @@ fn viewer_thread(
                             "video decoder still failing after a rebuild; restarting focus mode: {e}"
                         );
                         let _ = msg.send(super::Msg::FocusViewerBroken {
+                            viewer: id,
                             reason: e.to_string(),
                         });
                     } else if stuck
@@ -1436,6 +1728,7 @@ fn viewer_thread(
                         && last_rebuild.is_none_or(|t| t.elapsed() >= DECODER_REBUILD_SPACING)
                     {
                         last_rebuild = Some(Instant::now());
+                        sh.mark(ViewerStage::Rebuild);
                         match rebuild.backend.create_decoder(&rebuild.cfg) {
                             Ok(d) => {
                                 tracing::warn!(
@@ -1496,7 +1789,10 @@ async fn run_source(
         stop,
         force_key,
         feedback,
+        last_picture_us,
+        capture_problem,
     } = signals;
+    let mut last_picture = Instant::now();
     let epoch = Instant::now();
     let inflight = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT));
     let mut frame_id = 0u32;
@@ -1533,6 +1829,7 @@ async fn run_source(
                         info.skipped += 1;
                     }
                     CaptureOutput::Frame(frame) => {
+                        last_picture = Instant::now();
                         info.captured += 1;
                         info.size = (frame.width, frame.height);
                         captured += 1;
@@ -1557,6 +1854,9 @@ async fn run_source(
                                 continue;
                             }
                         };
+                        if !packets.is_empty() {
+                            last_picture_us.store(crate::clock::now_us().max(1), Ordering::Relaxed);
+                        }
                         if !sent_any && !packets.is_empty() {
                             sent_any = true;
                             tracing::info!(encoder = %encoder.name(), "focus source: first frame encoded");
@@ -1611,6 +1911,13 @@ async fn run_source(
                             }
                         link.send_control(pb::control::Msg::CursorPos(pb::CursorPos { x: c.x, y: c.y, visible: c.visible, serial: c.shape_serial }));
                     }
+                    CaptureOutput::Status(problem) => {
+                        match &problem {
+                            Some(p) => tracing::warn!(problem = %p, "focus source: capture interrupted"),
+                            None => tracing::info!("focus source: capture works again"),
+                        }
+                        *capture_problem.lock() = problem;
+                    }
                 }
                 }
             }
@@ -1625,7 +1932,7 @@ async fn run_source(
                         }
                     });
                     tracing::warn!(reason, "focus source: nothing sent, giving up");
-                    link.send_control(pb::control::Msg::FocusFailed(pb::FocusFailed { reason }));
+                    link.send_control(focus_failed(reason));
                     break;
                 }
                 if keepalive.keepalive_due(now_ms) {
@@ -1644,7 +1951,9 @@ async fn run_source(
                     force_key.store(true, Ordering::SeqCst);
                 }
                 if sent_any && info_at.elapsed() >= Duration::from_secs(2) {
-                    let msg = info.take(info_at.elapsed(), encoder.describe(), &adapter);
+                    let mut msg = info.take(info_at.elapsed(), encoder.describe(), &adapter);
+                    msg.picture_age_ms = u32::try_from(last_picture.elapsed().as_millis()).unwrap_or(u32::MAX);
+                    msg.capture_problem = capture_problem.lock().clone().unwrap_or_default();
                     info_at = Instant::now();
                     link.send_control(pb::control::Msg::FocusSourceInfo(msg));
                 }
@@ -1675,6 +1984,8 @@ struct SourceSignals {
     stop: Arc<AtomicBool>,
     force_key: Arc<AtomicBool>,
     feedback: Arc<Mutex<Option<pb::StreamStats>>>,
+    last_picture_us: Arc<AtomicU64>,
+    capture_problem: Arc<Mutex<Option<String>>>,
 }
 
 /// Counters behind `FocusSourceInfo`.
@@ -1699,6 +2010,7 @@ impl SourceInfoAcc {
             encoded_fps: (self.encoded as f64 / secs).round() as u32,
             encode_us: (self.encode_us / self.encoded.max(1)) as u32,
             skipped: self.skipped as u32,
+            ..Default::default()
         };
         let size = self.size;
         *self = Self::default();
@@ -1732,5 +2044,81 @@ pub(crate) fn hello_video_caps(
         max_height: e.max_height.max(d.max_height),
         max_fps: e.max_fps.max(d.max_fps),
         encoder_name: e.encoder_name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn stall_needs_enough_input_over_enough_time() {
+        let t0 = Instant::now();
+        let mut w = StallWatch::default();
+        w.on_input(t0);
+        w.on_input(t0 + ms(100));
+        assert_eq!(w.poll(t0 + ms(5000)), StallAction::None, "two inputs only");
+        w.on_input(t0 + ms(200));
+        assert_eq!(w.poll(t0 + ms(2900)), StallAction::None, "not long enough");
+        assert_eq!(w.poll(t0 + ms(3100)), StallAction::ResetCapture);
+        assert_eq!(w.poll(t0 + ms(3200)), StallAction::None, "inputs consumed");
+    }
+
+    #[test]
+    fn a_picture_clears_the_evidence() {
+        let t0 = Instant::now();
+        let mut w = StallWatch::default();
+        for i in 0..5 {
+            w.on_input(t0 + ms(i * 100));
+        }
+        w.on_picture(t0 + ms(1000));
+        assert_eq!(w.poll(t0 + ms(4000)), StallAction::None);
+    }
+
+    #[test]
+    fn reset_that_only_produced_its_own_picture_escalates() {
+        let t0 = Instant::now();
+        let mut w = StallWatch::default();
+        for i in 0..3 {
+            w.on_input(t0 + ms(i));
+        }
+        assert_eq!(w.poll(t0 + ms(3000)), StallAction::ResetCapture);
+        // the re-created duplication hands out the current image at once ...
+        w.on_picture(t0 + ms(3300));
+        // ... but nothing after that
+        for i in 0..3 {
+            w.on_input(t0 + ms(3500 + i));
+        }
+        assert_eq!(w.poll(t0 + ms(6600)), StallAction::Restart);
+    }
+
+    #[test]
+    fn reset_that_helped_is_forgotten() {
+        let t0 = Instant::now();
+        let mut w = StallWatch::default();
+        for i in 0..3 {
+            w.on_input(t0 + ms(i));
+        }
+        assert_eq!(w.poll(t0 + ms(3000)), StallAction::ResetCapture);
+        // pictures keep coming after the grace period: the capture works again
+        w.on_picture(t0 + ms(5000));
+        for i in 0..3 {
+            w.on_input(t0 + ms(6000 + i));
+        }
+        assert_eq!(w.poll(t0 + ms(9100)), StallAction::ResetCapture);
+    }
+
+    #[test]
+    fn viewer_hang_needs_a_stale_beat() {
+        let sh = ViewerShared::default();
+        let later = crate::clock::now_us() + VIEWER_HANG_TIMEOUT.as_micros() as u64 + 1000;
+        assert_eq!(viewer_hang(&sh, later), None, "not started");
+        sh.mark(ViewerStage::Present);
+        assert_eq!(viewer_hang(&sh, crate::clock::now_us()), None);
+        assert_eq!(viewer_hang(&sh, later), Some("present"));
     }
 }

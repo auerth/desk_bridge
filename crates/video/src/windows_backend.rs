@@ -99,6 +99,10 @@ impl VideoBackend for WindowsVideoBackend {
             .clone()
     }
 
+    fn discard_view_device(&self) {
+        *self.view_device.lock() = None;
+    }
+
     fn create_capturer(&self) -> Result<Box<dyn ScreenCapturer>> {
         Ok(Box::new(DxgiCapturer::new(self.screens.clone())))
     }
