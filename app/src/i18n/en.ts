@@ -441,7 +441,9 @@ export const en: Record<MessageKey, string> = {
   'settings.pauseHint': 'Disconnects everything until you resume.',
   'settings.resume': 'Resume',
 
-  'warn.elevation.body': 'Desk Bridge is running without administrator rights. Input does not reach windows with elevated rights (for example Task Manager).',
+  'warn.elevation.body': 'Desk Bridge is running without administrator rights. Input does not reach windows with elevated rights (for example Task Manager). Restarting asks for confirmation once (UAC).',
+  'warn.elevation.action': 'Restart as administrator',
+  'warn.elevation.restarting': 'The agent is restarting – please confirm the Windows prompt.',
   'warn.sas_unavailable': 'Ctrl+Alt+Del is not available',
   'warn.sas_unavailable.body': 'This needs the Desk Bridge background service, which is not running on the target device yet.',
   'warn.capture_failed': 'Screen capture failed',

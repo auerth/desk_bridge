@@ -154,6 +154,7 @@ export function WarningBanners() {
   const dismissed = useStore((s) => s.dismissedWarnings);
   const dismiss = useStore((s) => s.dismissWarning);
   const send = useStore((s) => s.send);
+  const pushToast = useStore((s) => s.pushToast);
   const navigate = useStore((s) => s.navigate);
   const conn = useStore((s) => s.conn);
   const state = useStore((s) => s.state);
@@ -213,6 +214,20 @@ export function WarningBanners() {
                   }}
                 >
                   {t('warn.network_public.action')}
+                </Button>
+              ) : w.code === 'elevation' ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    const r = await send({ type: 'restart_agent', elevated: true });
+                    if (r !== undefined) pushToast({ level: 'info', text: t('warn.elevation.restarting') });
+                    setBusy(false);
+                  }}
+                >
+                  {t('warn.elevation.action')}
                 </Button>
               ) : undefined
             }

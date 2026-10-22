@@ -177,6 +177,7 @@ pub struct EngineHandle {
     device_id: Uuid,
     shutdown: Arc<tokio::sync::Notify>,
     restart: Arc<std::sync::atomic::AtomicBool>,
+    restart_elevated: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl EngineHandle {
@@ -222,6 +223,13 @@ impl EngineHandle {
         self.restart.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// The requested restart should run the new instance as administrator (UAC prompt).
+    #[must_use]
+    pub fn restart_elevated_requested(&self) -> bool {
+        self.restart_elevated
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn stop(&self) {
         let _ = self.tx.send(Msg::Shutdown);
     }
@@ -262,6 +270,8 @@ pub(crate) struct Engine {
     pub shutdown: Arc<tokio::sync::Notify>,
     /// Set by `RestartAgent` right before the shutdown is signalled.
     pub restart: Arc<std::sync::atomic::AtomicBool>,
+    /// `RestartAgent { elevated: true }`: the successor goes through the UAC prompt.
+    pub restart_elevated: Arc<std::sync::atomic::AtomicBool>,
     pub hello: Arc<parking_lot::RwLock<pb::Hello>>,
     pub session_ids: Arc<AtomicU64>,
 
@@ -409,6 +419,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
     let (pushes, _) = broadcast::channel(64);
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let restart = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let restart_elevated = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let own_id = identity.device_id;
     let local_screens = usable_screens(platform.screens.screens(), config.device.stream_source);
@@ -458,6 +469,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         pushes: pushes.clone(),
         shutdown: shutdown.clone(),
         restart: restart.clone(),
+        restart_elevated: restart_elevated.clone(),
         hello: Arc::new(parking_lot::RwLock::new(pb::Hello::default())),
         session_ids: Arc::new(AtomicU64::new(1)),
         session: None,
@@ -585,6 +597,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         device_id: own_id,
         shutdown,
         restart,
+        restart_elevated,
     };
     tokio::spawn(engine.run(msg_rx));
     Ok(handle)

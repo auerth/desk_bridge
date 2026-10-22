@@ -116,7 +116,12 @@ pub enum UiRequest {
     SetPaused {
         paused: bool,
     },
-    RestartAgent,
+    /// Start a fresh agent process. `elevated`: through the UAC prompt, as administrator (the
+    /// "Als Administrator neu starten" button of the elevation warning).
+    RestartAgent {
+        #[serde(default)]
+        elevated: bool,
+    },
     ShutdownAgent,
     Ping,
 }

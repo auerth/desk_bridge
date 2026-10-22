@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.6-beta] - 2026-10-22
+
+Beta test build, also for confirming the still-unverified 0.1.4/0.1.5 fixes on the laptop
+(taskbar hover previews, laptop sound at volume 0). Secure-desktop capture (showing the laptop's
+UAC prompt in focus mode) is designed in [ADR 0007](docs/adr/0007-secure-desktop-capture.md) but
+not yet implemented.
+
+### Added
+
+- "Eingeschränkte Rechte" warning: button **Als Administrator neu starten**. The agent starts its
+  successor through the UAC prompt (`restart_agent { elevated: true }`); a declined prompt falls
+  back to a plain restart so the agent never stays gone.
+
+### Fixed
+
+- The agent could come back *without* administrator rights after "Agent neu starten" or an
+  update: when the agent's pipe closed, the UI started `deskbridge-agent.exe` with its own
+  (limited) token right away and raced the agent's own elevated successor for the single-instance
+  mutex. The UI now waits 8 s after a pipe close (and up to 2 min while an elevated restart sits
+  at the UAC prompt) before starting an agent itself, and logs why `schtasks /run` failed.
+
 ## [0.1.5] - 2026-10-21
 
 Install it on both devices; the fix itself works on the laptop. After installing it on the PC,

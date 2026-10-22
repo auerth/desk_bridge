@@ -26,6 +26,11 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 const ERROR_PIPE_BUSY: i32 = 231;
 /// Give up starting the agent after this many attempts (the user can start it manually).
 const MAX_AGENT_STARTS: u32 = 4;
+/// After the pipe of a running agent closed, leave its own successor (`--after-pid`, "Agent neu
+/// starten", installer) this long before starting one from here. Otherwise the two race for the
+/// single-instance mutex and the one started by the UI wins now and then: that one runs with the
+/// UI's limited token, so the agent came back without administrator rights ("elevation" warning).
+const POST_SESSION_GRACE: Duration = Duration::from_secs(8);
 
 type Pending = Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>;
 
@@ -52,6 +57,8 @@ pub struct IpcClient {
     connected: AtomicBool,
     latest_state: Mutex<Option<Value>>,
     prefs: Mutex<Prefs>,
+    /// Until then the reconnect loop does not start an agent of its own (see [`Self::hold_starts`]).
+    hold_until: Mutex<Option<Instant>>,
 }
 
 impl IpcClient {
@@ -63,11 +70,31 @@ impl IpcClient {
             connected: AtomicBool::new(false),
             latest_state: Mutex::new(None),
             prefs: Mutex::new(Prefs::default()),
+            hold_until: Mutex::new(None),
         }
     }
 
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
+    }
+
+    /// Keeps the reconnect loop from starting an agent for `d`: the agent is restarting itself
+    /// (its successor may be waiting behind a UAC prompt) or the user just stopped it.
+    pub fn hold_starts(&self, d: Duration) {
+        if let Ok(mut h) = self.hold_until.lock() {
+            let until = Instant::now() + d;
+            if h.is_none_or(|u| u < until) {
+                *h = Some(until);
+            }
+        }
+    }
+
+    fn starts_on_hold(&self) -> bool {
+        self.hold_until
+            .lock()
+            .ok()
+            .and_then(|h| *h)
+            .is_some_and(|u| Instant::now() < u)
     }
 
     pub fn latest_state(&self) -> Option<Value> {
@@ -211,7 +238,17 @@ fn run_agent_task() -> bool {
         .creation_flags(CREATE_NO_WINDOW)
         .output()
     {
-        Ok(out) => out.status.success(),
+        Ok(out) if out.status.success() => true,
+        Ok(out) => {
+            // Typical: the task does not exist (installed without it) or "already running".
+            tracing::info!(
+                code = ?out.status.code(),
+                stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                stdout = %String::from_utf8_lossy(&out.stdout).trim(),
+                "schtasks /run failed"
+            );
+            false
+        }
         Err(e) => {
             tracing::debug!("schtasks not available: {e}");
             false
@@ -264,13 +301,18 @@ async fn run(app: AppHandle, client: Arc<IpcClient>) {
                 tracing::info!("connected to agent pipe");
                 session(&app, &client, pipe).await;
                 tracing::info!("agent pipe closed");
+                client.hold_starts(POST_SESSION_GRACE);
             }
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
             Err(e) => {
-                let started = launcher.maybe_start().await;
+                let started = if client.starts_on_hold() {
+                    None
+                } else {
+                    launcher.maybe_start().await
+                };
                 let reason = if e.kind() == std::io::ErrorKind::NotFound {
                     "not_running".to_owned()
                 } else {

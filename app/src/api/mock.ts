@@ -617,6 +617,7 @@ export function createMockBackend(): Backend {
         agentOnline = false;
         setConn({ connected: false, reason: 'disconnected' });
         if (req.type === 'restart_agent') {
+          if (req.elevated) state.warnings = state.warnings.filter((w) => w.code !== 'elevation');
           setTimeout(() => {
             agentOnline = true;
             setConn({ connected: true });

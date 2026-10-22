@@ -23,6 +23,19 @@ pub async fn agent_request(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
+    // The agent is about to go away on purpose: do not resurrect it from here meanwhile. The
+    // elevated restart waits for the user at the UAC prompt, so that one gets long.
+    match kind.as_str() {
+        "restart_agent" => {
+            let elevated = req
+                .get("elevated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            client.hold_starts(std::time::Duration::from_secs(if elevated { 120 } else { 15 }));
+        }
+        "shutdown_agent" => client.hold_starts(std::time::Duration::from_secs(15)),
+        _ => {}
+    }
     let reply = client.request(req).await?;
     if kind == "get_config" || kind == "set_config" {
         client.remember_config(&reply);

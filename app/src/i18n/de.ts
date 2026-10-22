@@ -441,7 +441,9 @@ export const de = {
   'settings.pauseHint': 'Trennt alles, bis du wieder fortsetzt.',
   'settings.resume': 'Fortsetzen',
 
-  'warn.elevation.body': 'Desk Bridge läuft ohne Administratorrechte. Eingaben in Fenster mit erhöhten Rechten (zum Beispiel der Task-Manager) kommen dort nicht an.',
+  'warn.elevation.body': 'Desk Bridge läuft ohne Administratorrechte. Eingaben in Fenster mit erhöhten Rechten (zum Beispiel der Task-Manager) kommen dort nicht an. Beim Neustart fragt Windows einmal nach (UAC).',
+  'warn.elevation.action': 'Als Administrator neu starten',
+  'warn.elevation.restarting': 'Der Agent startet neu – bitte die Windows-Abfrage bestätigen.',
   'warn.sas_unavailable': 'Strg+Alt+Entf ist nicht verfügbar',
   'warn.sas_unavailable.body': 'Dafür braucht Desk Bridge den Hintergrunddienst, und der läuft auf dem Zielgerät noch nicht.',
   'warn.capture_failed': 'Bildschirmaufnahme fehlgeschlagen',

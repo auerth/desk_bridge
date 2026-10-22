@@ -51,7 +51,8 @@ export type UiRequest =
   | { type: 'answer_partner_update'; accept: boolean }
   | { type: 'make_network_private' }
   | { type: 'set_paused'; paused: boolean }
-  | { type: 'restart_agent' }
+  /** `elevated`: start the new agent as administrator (UAC prompt) – button of the "elevation" warning. */
+  | { type: 'restart_agent'; elevated?: boolean }
   | { type: 'shutdown_agent' }
   | { type: 'ping' };
 

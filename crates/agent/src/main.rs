@@ -85,8 +85,12 @@ fn wait_for_exit(pid: u32, timeout: std::time::Duration) {
 /// Starts the successor of this agent (`--after-pid`): it waits until this process has exited
 /// and released the single-instance mutex, the UDP port and the pipe. When the service
 /// supervises the agent it sees a clean exit (no restart of its own) and adopts the successor.
+///
+/// `elevated`: start the successor as administrator through the UAC prompt ("Als Administrator
+/// neu starten" on the elevation warning). A declined prompt falls back to a plain successor so
+/// the agent never stays gone.
 #[cfg(windows)]
-fn spawn_successor() {
+fn spawn_successor(elevated: bool) {
     let exe = match std::env::current_exe() {
         Ok(e) => e,
         Err(e) => {
@@ -94,6 +98,19 @@ fn spawn_successor() {
             return;
         }
     };
+    if elevated && !deskbridge_platform_windows::input::is_elevated() {
+        match spawn_successor_elevated(&exe, std::process::id()) {
+            Ok(pid) => {
+                tracing::info!(pid, "restart: elevated successor started");
+                return;
+            }
+            Err(e) => tracing::warn!(
+                "restart: elevated start failed ({e}); starting the successor with the current rights"
+            ),
+        }
+    } else if elevated {
+        tracing::info!("restart: already elevated, plain restart");
+    }
     match std::process::Command::new(&exe)
         .arg("--after-pid")
         .arg(std::process::id().to_string())
@@ -104,6 +121,43 @@ fn spawn_successor() {
     {
         Ok(child) => tracing::info!(pid = child.id(), "restart: successor started"),
         Err(e) => tracing::error!("restart: cannot start successor: {e}"),
+    }
+}
+
+/// `ShellExecuteEx("runas")` on our own executable with `--after-pid`. Windows shows the UAC
+/// prompt and the call returns once it is answered: `Ok(pid)` of the elevated successor, `Err`
+/// when the prompt was declined (`ERROR_CANCELLED`) or the start failed.
+#[cfg(windows)]
+fn spawn_successor_elevated(exe: &std::path::Path, after_pid: u32) -> Result<u32, String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::GetProcessId;
+    use windows::Win32::UI::Shell::{
+        SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+    use windows::core::{HSTRING, PCWSTR};
+
+    let verb = HSTRING::from("runas");
+    let file = HSTRING::from(exe.as_os_str());
+    let params = HSTRING::from(format!("--after-pid {after_pid}"));
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOASYNC | SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(params.as_ptr()),
+        nShow: SW_HIDE.0,
+        ..Default::default()
+    };
+    // SAFETY: the strings outlive the call; the returned process handle is closed below.
+    unsafe {
+        ShellExecuteExW(&mut info).map_err(|e| e.to_string())?;
+        if info.hProcess.is_invalid() {
+            return Ok(0);
+        }
+        let pid = GetProcessId(info.hProcess);
+        let _ = CloseHandle(info.hProcess);
+        Ok(pid)
     }
 }
 
@@ -210,7 +264,7 @@ fn run_agent() -> i32 {
         pipe_task.abort();
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         if handle.restart_requested() {
-            spawn_successor();
+            spawn_successor(handle.restart_elevated_requested());
         }
         0
     })

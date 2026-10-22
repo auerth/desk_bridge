@@ -109,8 +109,10 @@ impl Engine {
                 self.shutdown.notify_waiters();
                 ok()
             }
-            UiRequest::RestartAgent => {
-                tracing::info!("agent restart requested");
+            UiRequest::RestartAgent { elevated } => {
+                tracing::info!(elevated, "agent restart requested");
+                self.restart_elevated
+                    .store(elevated, std::sync::atomic::Ordering::SeqCst);
                 self.restart
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 self.shutdown.notify_waiters();
