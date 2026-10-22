@@ -20,6 +20,7 @@ request.
 | [0004](0004-virtual-display-driver.md) | Virtual display driver for focus mode | Proposed |
 | [0005](0005-video-spike.md) | Video spike: 5120x1440@120 capture, encode, decode | see file |
 | [0006](0006-service-and-secure-desktop.md) | SYSTEM service, secure-desktop helper, Ctrl+Alt+Del | Accepted |
+| [0007](0007-secure-desktop-capture.md) | Showing the secure desktop in focus mode (UAC, lock, logon) | Proposed |
 
 Add new rows when you add a file.
 
