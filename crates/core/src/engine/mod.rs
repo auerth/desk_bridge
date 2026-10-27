@@ -986,6 +986,7 @@ impl Engine {
             self.proc_rss = rss;
         }
         self.tick_focus();
+        self.sync_mic_render_depth();
         self.update_idle_state();
         self.tick_input();
         if self.has_running_transfers() || self.audio_is_active() || self.focus_is_active() {

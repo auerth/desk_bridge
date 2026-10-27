@@ -12,7 +12,7 @@ use deskbridge_audio::{
 };
 use deskbridge_platform::audio::{
     AudioDeviceInfo, CaptureSource, DeviceEvent, DeviceKind, MicDefaults, OutputLevel, PullSource,
-    StreamHandle, VirtualAudio,
+    RenderDepth, StreamHandle, VirtualAudio,
 };
 use deskbridge_proto::media::{AudioPacket, STREAM_AUDIO_MIC, STREAM_AUDIO_SPEAKER};
 use deskbridge_proto::pb;
@@ -83,6 +83,8 @@ pub(crate) struct AudioState {
     mic_stats_packets: u64,
     /// PC: last microphone playout report of the laptop.
     mic_stats: Option<pb::MicStats>,
+    /// Laptop: buffer depth last handed to the virtual microphone.
+    mic_depth: RenderDepth,
     tone: Option<Box<dyn StreamHandle>>,
 }
 
@@ -516,6 +518,22 @@ impl Engine {
                 }
                 Err(e) => tracing::warn!("could not make the virtual mic the default: {e}"),
             }
+        }
+    }
+
+    /// Laptop: while focus mode captures and encodes here, the stream into the virtual microphone
+    /// keeps 40 instead of 15 ms queued. Under that load its render thread now and then wakes up
+    /// late; with the shallow buffer every late wake-up was a gap in the voice, and the audio not
+    /// taken piled up in the jitter buffer until an overrun threw ~100 ms away.
+    pub(crate) fn sync_mic_render_depth(&mut self) {
+        let depth = if self.focus_source_running() {
+            RenderDepth::Robust
+        } else {
+            RenderDepth::Low
+        };
+        if self.audio.mic_depth != depth {
+            self.audio.mic_depth = depth;
+            self.platform.virtual_audio.set_mic_render_depth(depth);
         }
     }
 

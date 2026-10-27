@@ -38,7 +38,7 @@ pub use devices::{
     DeviceDetails, EndpointVolume, WasapiDevices, WinLocalOutput, endpoint_volume, set_render_mute,
     set_render_volume,
 };
-pub use playback::{PlaybackHandle, PlaybackInfo, WasapiPlayback};
+pub use playback::{DepthControl, PlaybackHandle, PlaybackInfo, WasapiPlayback};
 pub use policy::{DefaultRole, policy_config_available, set_default_device, set_endpoint_enabled};
 pub use sessions::{MicSession, mic_session_enumeration};
 pub use stream::StreamEvent;

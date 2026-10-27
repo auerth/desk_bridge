@@ -517,6 +517,8 @@ pub struct MockVirtualAudio {
     pub default_claimed: std::sync::atomic::AtomicBool,
     /// Last `set_mic_enabled` call: `(enabled, managed)`.
     pub mic_endpoint: Mutex<Option<(bool, bool)>>,
+    /// Last `set_mic_render_depth` call.
+    pub mic_depth: Mutex<crate::audio::RenderDepth>,
     in_use: std::sync::atomic::AtomicBool,
     watchers: Mutex<Vec<UnboundedSender<MicUsage>>>,
 }
@@ -568,6 +570,10 @@ impl VirtualAudio for MockVirtualAudio {
     fn set_mic_enabled(&self, enabled: bool, managed: bool) -> Result<()> {
         *self.mic_endpoint.lock() = Some((enabled, managed));
         Ok(())
+    }
+
+    fn set_mic_render_depth(&self, depth: crate::audio::RenderDepth) {
+        *self.mic_depth.lock() = depth;
     }
 
     fn claim_default_mic(&self) -> Result<MicDefaults> {

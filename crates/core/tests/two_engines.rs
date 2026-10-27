@@ -6,6 +6,7 @@ use deskbridge_core::engine::{self, EngineHandle, EngineParams};
 use deskbridge_core::ipc::{ConnState, UiRequest};
 use deskbridge_core::paths::AppPaths;
 use deskbridge_core::platform::{MockHandles, Platform};
+use deskbridge_platform::audio::RenderDepth;
 use deskbridge_platform::hid;
 use deskbridge_platform::input::{CaptureEvent, GrabMode};
 use deskbridge_platform::mock::InjectedOp;
@@ -827,6 +828,11 @@ async fn focus_mode_streams_frames_and_restores_everything() {
         lp.m.display.world().virtual_enabled,
         "virtual display is on while streaming"
     );
+    // the laptop encodes now: the microphone into the virtual device gets the deep buffer
+    wait_for("virtual mic buffered deeper", || {
+        *lp.m.virtual_audio.mic_depth.lock() == RenderDepth::Robust
+    })
+    .await;
     let st = pc.h.state().await;
     assert_eq!(st.features.focus.phase, "streaming");
     assert_eq!(
@@ -859,6 +865,15 @@ async fn focus_mode_streams_frames_and_restores_everything() {
     assert!(
         !lp.m.display.ever_blackout(),
         "never left the laptop without a display"
+    );
+    wait_for("virtual mic back to low latency", || {
+        *lp.m.virtual_audio.mic_depth.lock() == RenderDepth::Low
+    })
+    .await;
+    assert_eq!(
+        *pc.m.virtual_audio.mic_depth.lock(),
+        RenderDepth::Low,
+        "the viewer keeps its latency"
     );
     wait_for("keyboard released", || {
         *pc.m.capture.grab.lock() == GrabMode::None

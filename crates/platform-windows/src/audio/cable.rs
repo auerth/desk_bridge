@@ -8,22 +8,26 @@
 //!
 //! The microphone stream is played into "CABLE Input" straight from the jitter buffer, so the
 //! cable's own clock paces it (a timer-driven writer thread loses blocks to the 15.6 ms timer
-//! granularity, which is heard as crackling). While the headset microphone is switched on,
+//! granularity, which is heard as crackling). While focus mode captures and encodes the screen
+//! on this machine the stream keeps 40 ms instead of 15 ms queued in the cable
+//! ([`RenderDepth::Robust`]), so a render thread that wakes up late does not leave the cable
+//! without audio. While the headset microphone is switched on,
 //! "CABLE Output" can be made the default recording device; the previous defaults are restored
 //! afterwards.
 
 use super::{
-    DefaultRole, WasapiDevices, WasapiPlayback, mic_session_enumeration, set_default_device,
+    DefaultRole, DepthControl, WasapiDevices, WasapiPlayback, mic_session_enumeration,
+    set_default_device,
 };
 use deskbridge_platform::audio::{
     AudioDeviceInfo, AudioDevices, AudioFrame, DeviceKind, MicDefaults, MicUsage, PullSource,
-    StreamHandle, VirtualAudio,
+    RenderDepth, StreamHandle, VirtualAudio,
 };
 use deskbridge_platform::{PlatformError, Result, UnboundedSender};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 const RENDER_NAME: &str = "CABLE Input";
@@ -143,6 +147,10 @@ struct Inner {
     switch: Option<MicEndpointSwitch>,
     /// Diagnostics of the last microphone render stream into the cable.
     output_info: Mutex<Option<String>>,
+    /// Wake-ups of that stream that found the cable's buffer empty (heard as a gap).
+    render_glitches: Mutex<Option<Arc<AtomicU32>>>,
+    /// Buffer depth of the microphone stream (kept across stream restarts).
+    depth: DepthControl,
 }
 
 /// Cheap to clone; all clones share the stream.
@@ -168,6 +176,8 @@ impl CableVirtualAudio {
                 watchers: Mutex::new(Vec::new()),
                 switch: None,
                 output_info: Mutex::new(None),
+                render_glitches: Mutex::new(None),
+                depth: DepthControl::default(),
             }),
         }
     }
@@ -241,7 +251,11 @@ impl VirtualAudio for CableVirtualAudio {
                 let Some(id) = Self::find(DeviceKind::Render, RENDER_NAME) else {
                     return;
                 };
-                match WasapiPlayback::new().start_concrete(Some(&id), self.inner.ring.clone()) {
+                match WasapiPlayback::new().start_adjustable(
+                    Some(&id),
+                    self.inner.ring.clone(),
+                    self.inner.depth.clone(),
+                ) {
                     Ok(h) => *p = Some(Box::new(h)),
                     Err(e) => {
                         tracing::warn!("opening the virtual cable failed: {e}");
@@ -263,7 +277,8 @@ impl VirtualAudio for CableVirtualAudio {
     fn start_mic_playback(&self, source: Arc<dyn PullSource>) -> Result<Box<dyn StreamHandle>> {
         let id = Self::find(DeviceKind::Render, RENDER_NAME)
             .ok_or_else(|| PlatformError::DeviceNotFound(RENDER_NAME.into()))?;
-        let h = WasapiPlayback::new().start_concrete(Some(&id), source)?;
+        let h =
+            WasapiPlayback::new().start_adjustable(Some(&id), source, self.inner.depth.clone())?;
         let i = h.info();
         let info = format!(
             "render low_latency={} period={} buffer={} fill={} latency={:.1}ms; mix formats: {}",
@@ -276,6 +291,7 @@ impl VirtualAudio for CableVirtualAudio {
         );
         tracing::info!("virtual microphone stream: {info}");
         *self.inner.output_info.lock() = Some(info);
+        *self.inner.render_glitches.lock() = Some(h.underrun_counter());
         Ok(Box::new(h))
     }
 
@@ -284,7 +300,25 @@ impl VirtualAudio for CableVirtualAudio {
     }
 
     fn mic_output_info(&self) -> Option<String> {
-        self.inner.output_info.lock().clone()
+        let info = self.inner.output_info.lock().clone()?;
+        let depth = match self.inner.depth.get() {
+            RenderDepth::Low => "low",
+            RenderDepth::Robust => "robust",
+        };
+        Some(match &*self.inner.render_glitches.lock() {
+            Some(g) => format!(
+                "{info}; depth {depth}, render gaps {}",
+                g.load(Ordering::Relaxed)
+            ),
+            None => info,
+        })
+    }
+
+    fn set_mic_render_depth(&self, depth: RenderDepth) {
+        if self.inner.depth.get() != depth {
+            tracing::info!(?depth, "virtual microphone buffer depth");
+            self.inner.depth.set(depth);
+        }
     }
 
     fn claim_default_mic(&self) -> Result<MicDefaults> {

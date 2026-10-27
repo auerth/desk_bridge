@@ -271,7 +271,12 @@ sequenceDiagram
 Laptop: WASAPI loopback (later: virtual speaker endpoint) -> f32/48 kHz -> PCM or Opus (auto) ->
 `AudioPacket` datagrams (QUIC unreliable). PC: adaptive jitter buffer (5-60 ms) -> `rubato`
 drift correction (+-0.2 %) -> WASAPI shared render on the headset device. Silence is sent as
-keep-alive packets only.
+keep-alive packets only. The network task only queues packets in the jitter buffer's inbox;
+reordering and decoding run on the render thread.
+
+The microphone takes the opposite way into the virtual cable on the laptop. That render stream
+keeps 15 ms queued, and 40 ms while the laptop is the focus-mode stream source
+(`RenderDepth::Robust`): capturing and encoding make its render thread wake up late now and then.
 
 ## 8. Persistence and trust
 

@@ -1,13 +1,16 @@
-//! Event-driven WASAPI shared-mode render with the smallest engine period the device allows.
+//! Event-driven WASAPI shared-mode render with the smallest engine period the device allows,
+//! or (adjustable streams) a deep buffer whose fill level follows a [`DepthControl`].
 
 use super::devices::friendly_name;
 use super::stream::{EndReason, StreamEvent, StreamThread, spawn_stream};
 use super::wasapi::{Event, device_id, float_format, is_device_lost, open_device, os_ctx, os_err};
-use deskbridge_platform::audio::{AudioPlayback, DeviceKind, PullSource, RATE, StreamHandle};
+use deskbridge_platform::audio::{
+    AudioPlayback, DeviceKind, PullSource, RATE, ROBUST_RENDER_BUFFER_MS, RenderDepth, StreamHandle,
+};
 use deskbridge_platform::{Result, UnboundedSender};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use windows::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::{
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
@@ -33,14 +36,34 @@ pub struct PlaybackInfo {
     pub period_frames: u32,
     /// Size of the render buffer in frames.
     pub buffer_frames: u32,
-    /// Fill level (frames) the render loop tops the buffer up to: 1.5 engine periods, which
-    /// bounds the queueing latency while tolerating ~5 ms of wake-up jitter at a 10 ms period.
+    /// Fill level (frames) the render loop tops the buffer up to, see [`RenderDepth`].
     pub fill_target_frames: u32,
     /// `IAudioClient::GetStreamLatency` (additional latency reported by the engine).
     pub engine_latency_ms: f32,
     /// Estimated latency from `PullSource::fill` to the endpoint: average queued audio plus the
     /// engine-reported latency. Excludes the device/dongle's own hardware latency.
     pub latency_ms: f32,
+}
+
+/// Buffer depth of a running adjustable stream. The render loop reads it at every engine event,
+/// so a change applies within one period, without reopening the stream.
+#[derive(Debug, Clone, Default)]
+pub struct DepthControl(Arc<AtomicBool>);
+
+impl DepthControl {
+    pub fn set(&self, depth: RenderDepth) {
+        self.0
+            .store(depth == RenderDepth::Robust, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn get(&self) -> RenderDepth {
+        if self.0.load(Ordering::Relaxed) {
+            RenderDepth::Robust
+        } else {
+            RenderDepth::Low
+        }
+    }
 }
 
 /// Running render stream. Dropping it stops the thread and joins it.
@@ -72,6 +95,12 @@ impl PlaybackHandle {
         self.underruns.load(Ordering::Relaxed)
     }
 
+    /// The live counter behind [`underruns`](Self::underruns), for diagnostics after the
+    /// handle was boxed.
+    pub fn underrun_counter(&self) -> Arc<AtomicU32> {
+        self.underruns.clone()
+    }
+
     /// Full negotiation details.
     pub fn info(&self) -> &PlaybackInfo {
         &self.info
@@ -95,7 +124,18 @@ impl WasapiPlayback {
         device_id: Option<&str>,
         source: Arc<dyn PullSource>,
     ) -> Result<PlaybackHandle> {
-        start_inner(device_id, source, None)
+        start_inner(device_id, source, None, None)
+    }
+
+    /// Like [`start_concrete`](Self::start_concrete), but with a buffer deep enough for
+    /// [`RenderDepth::Robust`] and the fill level taken from `depth` at every engine event.
+    pub fn start_adjustable(
+        &self,
+        device_id: Option<&str>,
+        source: Arc<dyn PullSource>,
+        depth: DepthControl,
+    ) -> Result<PlaybackHandle> {
+        start_inner(device_id, source, Some(depth), None)
     }
 
     /// [`start_concrete`](Self::start_concrete) plus lifecycle notifications. On device loss the
@@ -106,7 +146,7 @@ impl WasapiPlayback {
         source: Arc<dyn PullSource>,
         lifecycle_tx: UnboundedSender<StreamEvent>,
     ) -> Result<PlaybackHandle> {
-        start_inner(device_id, source, Some(lifecycle_tx))
+        start_inner(device_id, source, None, Some(lifecycle_tx))
     }
 
     /// Boxed-handle variant of [`start_concrete_with_events`](Self::start_concrete_with_events).
@@ -137,6 +177,7 @@ impl AudioPlayback for WasapiPlayback {
 fn start_inner(
     device_id: Option<&str>,
     source: Arc<dyn PullSource>,
+    depth: Option<DepthControl>,
     lifecycle: Option<UnboundedSender<StreamEvent>>,
 ) -> Result<PlaybackHandle> {
     let id = device_id.map(str::to_owned);
@@ -145,7 +186,7 @@ fn start_inner(
     let (thread, info) = spawn_stream(
         "db-audio-render",
         lifecycle,
-        move || open_render(id.as_deref()),
+        move || open_render(id.as_deref(), depth),
         move |st, stop| run_render(st, stop, source.as_ref(), &underruns_thread),
     )?;
     Ok(PlaybackHandle {
@@ -159,8 +200,19 @@ struct RenderState {
     client: IAudioClient,
     render: IAudioRenderClient,
     event: Event,
+    period_frames: u32,
     buffer_frames: u32,
+    /// Fill target of a fixed stream / at the start of an adjustable one.
     fill_target: u32,
+    depth: Option<DepthControl>,
+}
+
+impl RenderState {
+    fn current_fill_target(&self) -> u32 {
+        self.depth.as_ref().map_or(self.fill_target, |d| {
+            d.get().fill_target(self.period_frames, self.buffer_frames)
+        })
+    }
 }
 
 impl Drop for RenderState {
@@ -213,8 +265,9 @@ fn init_low_latency(dev: &IMMDevice) -> windows::core::Result<Negotiated> {
     }
 }
 
-/// Classic `IAudioClient::Initialize` with autoconversion and the device's default period.
-fn init_classic(dev: &IMMDevice) -> windows::core::Result<Negotiated> {
+/// Classic `IAudioClient::Initialize` with autoconversion and the device's default period. The
+/// buffer holds at least `buffer_ms` (0: one default period, the engine rounds up).
+fn init_classic(dev: &IMMDevice, buffer_ms: u32) -> windows::core::Result<Negotiated> {
     // SAFETY: as in `init_low_latency`.
     unsafe {
         let client: IAudioClient = dev.Activate(CLSCTX_ALL, None)?;
@@ -226,7 +279,7 @@ fn init_classic(dev: &IMMDevice) -> windows::core::Result<Negotiated> {
             AUDCLNT_STREAMFLAGS_EVENTCALLBACK
                 | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
                 | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-            default_period,
+            default_period.max(i64::from(buffer_ms) * 10_000),
             0,
             std::ptr::from_ref(&fmt).cast::<WAVEFORMATEX>(),
             None,
@@ -241,17 +294,28 @@ fn init_classic(dev: &IMMDevice) -> windows::core::Result<Negotiated> {
     }
 }
 
-fn open_render(id: Option<&str>) -> Result<(RenderState, PlaybackInfo)> {
+fn open_render(
+    id: Option<&str>,
+    depth: Option<DepthControl>,
+) -> Result<(RenderState, PlaybackInfo)> {
     let en = super::wasapi::enumerator().map_err(os_err)?;
     let dev = open_device(&en, DeviceKind::Render, id, eConsole)?;
     let dev_id = device_id(&dev).map_err(os_err)?;
     let dev_name = friendly_name(&dev);
 
-    let neg = match init_low_latency(&dev) {
-        Ok(n) => n,
-        Err(e) => {
-            tracing::debug!("low-latency shared stream unavailable ({e}); using default period");
-            init_classic(&dev).map_err(|e| os_ctx("initialise render stream", e))?
+    let neg = if depth.is_some() {
+        // The low-latency stream's buffer is only ~2 periods: too small to queue more.
+        init_classic(&dev, ROBUST_RENDER_BUFFER_MS)
+            .map_err(|e| os_ctx("initialise render stream", e))?
+    } else {
+        match init_low_latency(&dev) {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::debug!(
+                    "low-latency shared stream unavailable ({e}); using default period"
+                );
+                init_classic(&dev, 0).map_err(|e| os_ctx("initialise render stream", e))?
+            }
         }
     };
 
@@ -265,7 +329,8 @@ fn open_render(id: Option<&str>) -> Result<(RenderState, PlaybackInfo)> {
         let buffer_frames = neg.client.GetBufferSize().map_err(ctx("GetBufferSize"))?;
         let render: IAudioRenderClient = neg.client.GetService().map_err(ctx("GetService"))?;
         // Start with silence up to the fill target so the first period does not underrun.
-        let fill_target = fill_target(neg.period_frames, buffer_frames);
+        let start_depth = depth.as_ref().map_or(RenderDepth::Low, DepthControl::get);
+        let fill_target = start_depth.fill_target(neg.period_frames, buffer_frames);
         render.GetBuffer(fill_target).map_err(ctx("GetBuffer"))?;
         render
             .ReleaseBuffer(fill_target, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32)
@@ -275,8 +340,10 @@ fn open_render(id: Option<&str>) -> Result<(RenderState, PlaybackInfo)> {
             client: neg.client.clone(),
             render,
             event,
+            period_frames: neg.period_frames,
             buffer_frames,
             fill_target,
+            depth,
         }
     };
 
@@ -300,11 +367,6 @@ fn open_render(id: Option<&str>) -> Result<(RenderState, PlaybackInfo)> {
     Ok((state, info))
 }
 
-/// Render fill level: 1.5 periods, clamped to the buffer.
-fn fill_target(period_frames: u32, buffer_frames: u32) -> u32 {
-    (period_frames + period_frames / 2).clamp(1, buffer_frames.max(1))
-}
-
 fn end_reason(e: &windows::core::Error, what: &str) -> EndReason {
     if is_device_lost(e) {
         EndReason::DeviceLost
@@ -320,6 +382,7 @@ fn run_render(
     underruns: &AtomicU32,
 ) -> EndReason {
     let handles = [stop.raw(), st.event.raw()];
+    let mut last_target = st.fill_target;
     loop {
         // SAFETY: both handles are valid for the duration of the loop.
         let r = unsafe { WaitForMultipleObjects(&handles, false, WAIT_MS) };
@@ -338,10 +401,16 @@ fn run_render(
         if padding == 0 {
             underruns.fetch_add(1, Ordering::Relaxed);
         }
-        let avail = st.fill_target.saturating_sub(padding);
+        // A deeper target is reached with silence: taking the extra audio from the source at
+        // once would run its jitter buffer dry. A shallower one simply drains.
+        let target = st.current_fill_target();
+        let silent = target.saturating_sub(last_target);
+        last_target = target;
+        let avail = target.saturating_sub(padding);
         if avail == 0 {
             continue;
         }
+        let silent = silent.min(avail) as usize * CHANNELS;
         // SAFETY: GetBuffer/ReleaseBuffer protocol; the buffer holds `avail` stereo f32 frames and
         // is valid until ReleaseBuffer.
         unsafe {
@@ -350,8 +419,10 @@ fn run_render(
                 Err(e) => return end_reason(&e, "GetBuffer"),
             };
             let out = std::slice::from_raw_parts_mut(data.cast::<f32>(), avail as usize * CHANNELS);
+            let (gap, out) = out.split_at_mut(silent);
+            gap.fill(0.0);
             // A panicking source must not unwind through the audio thread; play silence instead.
-            let ok = catch_unwind(AssertUnwindSafe(|| source.fill(out))).is_ok();
+            let ok = out.is_empty() || catch_unwind(AssertUnwindSafe(|| source.fill(out))).is_ok();
             if !ok {
                 out.fill(0.0);
             }
@@ -367,13 +438,18 @@ fn run_render(
 
 #[cfg(test)]
 mod tests {
-    use super::fill_target;
+    use deskbridge_platform::audio::RenderDepth;
 
     #[test]
     fn fill_target_bounds() {
-        assert_eq!(fill_target(480, 1056), 720);
-        assert_eq!(fill_target(120, 240), 180);
-        assert_eq!(fill_target(480, 600), 600);
-        assert_eq!(fill_target(0, 0), 1);
+        let low = |p, b| RenderDepth::Low.fill_target(p, b);
+        assert_eq!(low(480, 1056), 720);
+        assert_eq!(low(120, 240), 180);
+        assert_eq!(low(480, 600), 600);
+        assert_eq!(low(0, 0), 1);
+        let robust = |p, b| RenderDepth::Robust.fill_target(p, b);
+        assert_eq!(robust(480, 4800), 1920, "40 ms");
+        assert_eq!(robust(480, 1056), 1056, "clamped to the buffer");
+        assert_eq!(robust(2400, 9600), 3600, "never below 1.5 periods");
     }
 }

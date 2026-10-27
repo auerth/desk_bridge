@@ -156,6 +156,7 @@ M3b: virtual driver and microphone (only if ADR 0003 selects a driver; otherwise
 - [ ] Split mode (`Ctrl+Alt+Shift+D`): maximise windows on the PC. Expected: they stay in their half (AppBar); mouse crosses the monitor centre seamlessly in both directions.
 - [ ] 4:4:4 option and AV1 option. Expected: work or are greyed out with an explanation.
 - [ ] Watch a 1 h video in the streamed desktop. Expected: no stutter or freeze.
+- [ ] Teams call on the laptop with the PC headset microphone while focus mode streams 5120x1440 at full rate (move windows, scroll a browser). Expected: the other party hears no choppy voice. The PC agent log line `laptop microphone playout` (every 2 s while there are glitches) shows `depth robust`, `overruns` and `render gaps` not climbing; after focus mode ends it shows `depth low` again.
 - [ ] Machine without hardware encoder (VM). Expected: focus mode disabled with a clear hint.
 - [ ] Uninstall with the virtual display installed. Expected: device and driver removed, no ghost monitor.
 

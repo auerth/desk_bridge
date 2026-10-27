@@ -1571,6 +1571,11 @@ impl Engine {
     pub(crate) fn focus_is_active(&self) -> bool {
         self.focus.phase != Phase::Off
     }
+
+    /// This device captures and encodes a focus stream.
+    pub(crate) fn focus_source_running(&self) -> bool {
+        self.focus.source.is_some()
+    }
 }
 
 fn codec_name(c: VideoCodec) -> &'static str {

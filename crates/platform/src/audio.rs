@@ -81,6 +81,37 @@ pub trait AudioPlayback: Send + Sync {
     ) -> Result<Box<dyn StreamHandle>>;
 }
 
+/// Audio a robust render stream keeps queued in the device buffer (ms).
+pub const ROBUST_RENDER_FILL_MS: u32 = 40;
+/// Device buffer a robust render stream asks for (ms); must exceed the fill level.
+pub const ROBUST_RENDER_BUFFER_MS: u32 = 100;
+
+/// How much audio a render stream keeps queued in front of the audio engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RenderDepth {
+    /// Smallest engine period, topped up to 1.5 periods (15 ms at a 10 ms period): the headset,
+    /// where every millisecond is heard. Tolerates ~5 ms of wake-up jitter.
+    #[default]
+    Low,
+    /// Topped up to [`ROBUST_RENDER_FILL_MS`]: the virtual microphone of the stream source, a
+    /// machine that is busy capturing and encoding in focus mode. The render thread may wake up
+    /// ~30 ms late before the engine runs dry.
+    Robust,
+}
+
+impl RenderDepth {
+    /// Frames the render loop tops the device buffer up to at every engine event.
+    #[must_use]
+    pub fn fill_target(self, period_frames: u32, buffer_frames: u32) -> u32 {
+        let low = period_frames + period_frames / 2;
+        let want = match self {
+            Self::Low => low,
+            Self::Robust => (ROBUST_RENDER_FILL_MS * RATE / 1000).max(low),
+        };
+        want.clamp(1, buffer_frames.max(1))
+    }
+}
+
 /// A render endpoint's mute switch and master volume, as found before it was silenced.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutputLevel {
@@ -139,6 +170,10 @@ pub trait VirtualAudio: Send + Sync {
     fn mic_output_info(&self) -> Option<String> {
         None
     }
+    /// How much audio the microphone stream keeps queued in the virtual device. Applies to the
+    /// running stream and to later ones; the stream source asks for [`RenderDepth::Robust`]
+    /// while focus mode captures and encodes on this machine.
+    fn set_mic_render_depth(&self, _depth: RenderDepth) {}
     /// Enables or disables the virtual microphone endpoint (like "Disable" in the Sound control
     /// panel), so apps fall back to another microphone while Desk Bridge does not feed it.
     /// `managed`: Desk Bridge owns the state and keeps the endpoint off while it is not running;

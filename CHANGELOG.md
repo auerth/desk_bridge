@@ -14,6 +14,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
   shows whether a Teams process was found. It does nothing on a locked screen. Not yet verified
   on real hardware with new Teams.
 
+### Fixed
+
+- **Headset microphone choppy on the laptop while focus mode runs.** The network was not the
+  cause (the laptop measured no loss and little jitter). With the laptop busy capturing and
+  encoding the screen, the stream into the virtual microphone ("CABLE Input") kept only 15 ms
+  queued, and its render thread sometimes woke up too late. Each time Teams got a gap, and the
+  audio not taken piled up in the jitter buffer until an overrun dropped ~100 ms of speech. While
+  this device streams in focus mode, that stream now keeps 40 ms queued. It switches without a
+  restart and inserts 25 ms of silence once. Outside focus mode the microphone keeps its latency.
+  The jitter buffer also decodes on the render thread now: the network task only queues packets,
+  so it can no longer hold the audio thread up on a loaded machine. The laptop's microphone
+  report in the PC log now includes the buffer depth and the number of render gaps. Not yet
+  verified on real hardware.
+
 ## [0.1.6] - 2026-10-27
 
 Install it on both devices; after installing it on the PC, "<Partner> aktualisieren" updates the

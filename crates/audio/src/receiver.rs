@@ -3,13 +3,20 @@
 //! Data flow:
 //!
 //! ```text
-//! on_packet (network task)                         fill (render callback)
-//!   reorder window (128 slots)                       ensure data (decode parked / conceal)
-//!   -> decode in order (Opus / PCM)  -> ring ------> windowed-sinc read (ratio ~ 1 +- 0.2 %)
-//!                                                    -> fade / volume -> stereo f32 out
+//! on_packet (network task)   fill (render callback)
+//!   -> inbox ----------------> reorder window (128 slots)
+//!                              -> decode in order (Opus / PCM) -> ring
+//!                              -> ensure data (decode parked / conceal)
+//!                              -> windowed-sinc read (ratio ~ 1 +- 0.2 %)
+//!                              -> fade / volume -> stereo f32 out
 //! ```
 //!
-//! Everything lives behind one short-held `parking_lot::Mutex`; `fill` never allocates.
+//! The network side only stamps the arrival time and appends the packet to an inbox (a lock
+//! held for a push). Reordering, decoding and playout run on the render thread behind the core
+//! lock, so a network task that is preempted on a busy machine (focus mode encodes on the same
+//! device) can never hold the render thread up. Without a render pull (stream paused) the
+//! network side processes the inbox itself once it holds [`INBOX_MAX`] packets. `fill` does not
+//! allocate.
 //!
 //! ## Playout control
 //!
@@ -35,6 +42,8 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+/// Packets the inbox holds before the network side processes them itself.
+pub const INBOX_MAX: usize = 32;
 /// Reorder window (packets).
 const SLOTS: usize = 128;
 const SLOT_MASK: usize = SLOTS - 1;
@@ -294,6 +303,8 @@ struct Core {
     /// The integrator is frozen until this time (after a step of the target).
     int_freeze_until_us: u64,
     late_ema: f32,
+    /// Packets taken from the inbox, with their arrival times (capacity reused).
+    arrived: Vec<(AudioPacket, u64)>,
 }
 
 impl Core {
@@ -367,6 +378,7 @@ impl Core {
             loss_slow: 0.0,
             int_freeze_until_us: 0,
             late_ema: 0.0,
+            arrived: Vec::with_capacity(INBOX_MAX),
         })
     }
 
@@ -1033,10 +1045,24 @@ impl Core {
 
 struct Shared {
     core: Mutex<Core>,
+    /// Packets that arrived since the last pull, with their arrival times.
+    inbox: Mutex<Vec<(AudioPacket, u64)>>,
     clock: Arc<dyn Clock>,
     volume: AtomicU32,
     muted: AtomicBool,
     peak: AtomicU32,
+}
+
+impl Shared {
+    /// Feeds the packets of the inbox to the core, in arrival order.
+    fn drain_inbox(&self, core: &mut Core) {
+        let mut arrived = std::mem::take(&mut core.arrived);
+        std::mem::swap(&mut *self.inbox.lock(), &mut arrived);
+        for (pkt, at) in arrived.drain(..) {
+            core.on_packet(&pkt, at);
+        }
+        core.arrived = arrived;
+    }
 }
 
 impl PullSource for Shared {
@@ -1048,6 +1074,7 @@ impl PullSource for Shared {
             f32::from_bits(self.volume.load(Ordering::Relaxed))
         };
         let mut core = self.core.lock();
+        self.drain_inbox(&mut core);
         core.pull(out, now, gain);
         self.peak
             .store(core.meter.peak().to_bits(), Ordering::Relaxed);
@@ -1070,6 +1097,7 @@ impl AudioReceiver {
         Ok(Self {
             shared: Arc::new(Shared {
                 core: Mutex::new(core),
+                inbox: Mutex::new(Vec::with_capacity(INBOX_MAX)),
                 clock,
                 volume: AtomicU32::new(1.0f32.to_bits()),
                 muted: AtomicBool::new(false),
@@ -1078,10 +1106,19 @@ impl AudioReceiver {
         })
     }
 
-    /// Thread-safe; called from the network task for every audio datagram.
+    /// Thread-safe; called from the network task for every audio datagram. Only queues the
+    /// packet: the next render pull processes it (see the module docs).
     pub fn on_packet(&self, pkt: AudioPacket) {
         let now = self.shared.clock.now_us();
-        self.shared.core.lock().on_packet(&pkt, now);
+        let queued = {
+            let mut inbox = self.shared.inbox.lock();
+            inbox.push((pkt, now));
+            inbox.len()
+        };
+        if queued >= INBOX_MAX {
+            let mut core = self.shared.core.lock();
+            self.shared.drain_inbox(&mut core);
+        }
     }
 
     /// Pull source for the OS render stream (always interleaved stereo, 48 kHz).
@@ -1092,7 +1129,9 @@ impl AudioReceiver {
 
     #[must_use]
     pub fn stats(&self) -> ReceiverStats {
-        self.shared.core.lock().stats()
+        let mut core = self.shared.core.lock();
+        self.shared.drain_inbox(&mut core);
+        core.stats()
     }
 
     /// Linear volume (`1.0` = unity); applied with a 10 ms ramp.
@@ -1114,7 +1153,9 @@ impl AudioReceiver {
 
     /// Drops all buffered audio and re-synchronises on the next packet.
     pub fn reset(&self) {
-        self.shared.core.lock().reset();
+        let mut core = self.shared.core.lock();
+        self.shared.inbox.lock().clear();
+        core.reset();
     }
 }
 

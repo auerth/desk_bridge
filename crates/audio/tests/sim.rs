@@ -6,7 +6,7 @@ use deskbridge_audio::{
     AudioReceiver, AudioSender, CodecPolicy, ManualClock, OpusApp, ReceiverConfig, ReceiverStats,
     SenderConfig,
 };
-use deskbridge_platform::audio::PullSource;
+use deskbridge_platform::audio::{PullSource, RenderDepth};
 use deskbridge_proto::media::{AudioPacket, STREAM_AUDIO_MIC, STREAM_AUDIO_SPEAKER, audio_flags};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -72,6 +72,24 @@ struct Sim {
     render_chunk: usize,
     /// (start s, duration s): packets sent in this window are delivered at its end.
     stall: Option<(f64, f64)>,
+    /// Model the OS render stream instead of pulling `render_chunk` frames every period.
+    device: Option<DeviceModel>,
+}
+
+/// A WASAPI shared-mode render stream: every period the engine takes `render_chunk` frames from
+/// the device buffer and signals the render thread, which tops the buffer up to the fill target
+/// of `depth`. The thread wakes up within 0.5 ms, except that from `busy_from_s` on it is not
+/// scheduled at all for `stall_ms` every `stall_every_s` seconds (a machine busy encoding
+/// video). With `robust_from_s` the depth turns robust at that time; like the render loop
+/// (`run_render`) the stream then reaches the deeper level with silence.
+#[derive(Clone, Copy)]
+struct DeviceModel {
+    depth: RenderDepth,
+    robust_from_s: Option<f64>,
+    buffer_frames: u32,
+    busy_from_s: f64,
+    stall_every_s: f64,
+    stall_ms: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -93,6 +111,8 @@ struct SimOut {
     packets_dropped: usize,
     /// (sim time of delivery, flags) for every datagram that left the sender.
     sent_log: Vec<(f64, u8)>,
+    /// Engine periods that found the device buffer short (`device` only): audible gaps.
+    device_gaps: usize,
     rx: AudioReceiver,
 }
 
@@ -119,6 +139,7 @@ impl Sim {
             start_seq: None,
             render_chunk: 480,
             stall: None,
+            device: None,
         }
     }
 
@@ -155,9 +176,24 @@ impl Sim {
             packets_sent: 0,
             packets_dropped: 0,
             sent_log: Vec::new(),
+            device_gaps: 0,
             rx,
         };
-        let mut buf = vec![0f32; self.render_chunk * 2];
+        let period = self.render_chunk as u32;
+        let target_at = |t: f64| {
+            self.device.map_or(period, |d| {
+                let robust = d.robust_from_s.is_some_and(|r| t >= t0 + r);
+                let depth = if robust { RenderDepth::Robust } else { d.depth };
+                depth.fill_target(period, d.buffer_frames)
+            })
+        };
+        // The stream starts with silence up to the fill target (see `open_render`).
+        let mut last_target = target_at(t0);
+        let mut dev_fill = last_target;
+        let mut wake: Option<f64> = None;
+        let mut wakes = 0u64;
+        let max_target = self.device.map_or(period, |d| d.buffer_frames);
+        let mut buf = vec![0f32; self.render_chunk.max(max_target as usize) * 2];
         let mut samples = vec![0f32; self.capture_chunk * ch];
 
         loop {
@@ -166,12 +202,56 @@ impl Sim {
             let t_net = net
                 .peek()
                 .map_or(f64::INFINITY, |Reverse((t, _, _))| *t as f64 * 1e-6);
-            let t_next = t_cap.min(t_ren).min(t_net);
+            let t_wake = wake.unwrap_or(f64::INFINITY);
+            let t_next = t_cap.min(t_ren).min(t_net).min(t_wake);
             if t_next > t0 + self.secs {
                 break;
             }
             clock.set_us((t_next * 1e6).round() as u64);
-            if t_net <= t_cap && t_net <= t_ren {
+            if t_wake <= t_net && t_wake <= t_cap && t_wake <= t_ren {
+                // render thread: top the device buffer up
+                wake = None;
+                let target = target_at(t_wake);
+                let silent = target.saturating_sub(last_target) as usize;
+                last_target = target;
+                let n = target.saturating_sub(dev_fill) as usize;
+                if n > 0 {
+                    let silent = silent.min(n);
+                    buf[..silent * 2].fill(0.0);
+                    src.fill(&mut buf[silent * 2..n * 2]);
+                    for f in buf[..n * 2].chunks_exact(2) {
+                        out.l.push(f[0]);
+                        out.r.push(f[1]);
+                    }
+                    dev_fill += n as u32;
+                }
+                if wakes.is_multiple_of(50) {
+                    out.series.push(Series {
+                        t: t_wake - t0,
+                        stats: out.rx.stats(),
+                    });
+                }
+                wakes += 1;
+            } else if let (Some(d), true) = (self.device, t_ren < t_net && t_ren < t_cap) {
+                // engine period: consume, then signal the render thread
+                if dev_fill >= period {
+                    dev_fill -= period;
+                } else {
+                    out.device_gaps += 1;
+                    dev_fill = 0;
+                }
+                let mut at = t_ren + rng.next_f64() * 0.0005;
+                let busy = at - t0 - d.busy_from_s;
+                if busy >= 0.0 {
+                    let into = busy % d.stall_every_s;
+                    if into < d.stall_ms * 1e-3 {
+                        at += d.stall_ms * 1e-3 - into;
+                    }
+                }
+                // An event signalled again before the thread ran wakes it only once.
+                wake.get_or_insert(at);
+                ren_k += 1;
+            } else if t_net <= t_cap && t_net <= t_ren {
                 let Reverse((_, _, data)) = net.pop().unwrap();
                 let pkt = AudioPacket::decode(Bytes::from(data)).unwrap();
                 out.rx.on_packet(pkt);
@@ -897,6 +977,106 @@ fn burst_after_stall_is_absorbed_without_runaway_latency() {
     );
     // The latency recovered and the tone is clean again.
     assert_eq!(g, 0);
+}
+
+/// The microphone on the stream source while focus mode captures and encodes there: a clean
+/// network (as measured in the field: no loss, ~2.5 ms jitter), but the thread that plays into
+/// the virtual cable is not scheduled for 25 ms every 2 s.
+fn busy_mic_sink(depth: RenderDepth) -> SimOut {
+    let mut sim = Sim::new(mic_cfg(CodecPolicy::Pcm), sine_signal(FREQ, AMP));
+    sim.secs = 40.0;
+    // the engine's microphone sink (`start_mic_sink`)
+    sim.rx_cfg = ReceiverConfig {
+        channels_in: 1,
+        wired: true,
+        min_ms: 5.0,
+        max_ms: 150.0,
+    };
+    sim.device = Some(DeviceModel {
+        depth,
+        robust_from_s: None,
+        // what the engine hands out for a 100 ms request / the low-latency stream (field log)
+        buffer_frames: if depth == RenderDepth::Robust {
+            4800
+        } else {
+            1056
+        },
+        busy_from_s: 1.0,
+        stall_every_s: 2.0,
+        stall_ms: 25.0,
+    });
+    sim.run()
+}
+
+#[test]
+fn shallow_render_buffer_turns_busy_cpu_into_gaps_and_skips() {
+    // Reproduces the field log of 0.1.6: every late wake-up leaves the cable without audio and
+    // the audio it did not take piles up in the jitter buffer until an overrun throws ~100 ms
+    // of speech away; loss and underruns stay at zero.
+    let o = busy_mic_sink(RenderDepth::Low);
+    let s = o.rx.stats();
+    report("busy-low", &o, 0, 0.0);
+    assert!(o.device_gaps >= 15, "gaps {}", o.device_gaps);
+    assert!(s.overruns >= 1, "overruns {}", s.overruns);
+    assert_eq!(s.underruns, 0);
+    assert_eq!(s.plc_count, 0);
+}
+
+#[test]
+fn robust_render_buffer_keeps_the_microphone_clean_under_load() {
+    let o = busy_mic_sink(RenderDepth::Robust);
+    let s = o.rx.stats();
+    let w = warmup_end(&o);
+    let (g, md) = analyse_sine(&o.l, w, o.l.len(), FREQ, AMP, 0.03);
+    report("busy-robust", &o, g, md);
+    assert_eq!(o.device_gaps, 0);
+    assert_eq!(s.overruns, 0);
+    assert_eq!(s.underruns, 0);
+    assert_eq!(g, 0, "the tone has glitches");
+    // the jitter buffer stays near its target instead of filling up
+    assert!(
+        s.fill_ms < s.target_ms + 10.0,
+        "fill {} target {}",
+        s.fill_ms,
+        s.target_ms
+    );
+}
+
+#[test]
+fn focus_start_deepens_the_running_stream_without_a_dropout() {
+    // The microphone runs shallow (15 ms, latency budget) until focus mode starts at 10 s and
+    // keeps 40 ms queued from then on. The engine switches within a tick of the source start,
+    // the capture pipeline takes about a second to load the machine.
+    let mut sim = Sim::new(mic_cfg(CodecPolicy::Pcm), sine_signal(FREQ, AMP));
+    sim.secs = 30.0;
+    sim.rx_cfg = ReceiverConfig {
+        channels_in: 1,
+        wired: true,
+        min_ms: 5.0,
+        max_ms: 150.0,
+    };
+    sim.device = Some(DeviceModel {
+        depth: RenderDepth::Low,
+        robust_from_s: Some(10.0),
+        buffer_frames: 4800,
+        busy_from_s: 11.0,
+        stall_every_s: 2.0,
+        stall_ms: 25.0,
+    });
+    let o = sim.run();
+    let s = o.rx.stats();
+    // one 25 ms stretch of inserted silence at the switch, nothing else
+    let switch = (10.0 * RATE) as usize;
+    let (before, _) = analyse_sine(&o.l, warmup_end(&o), switch - 4800, FREQ, AMP, 0.03);
+    let (after, md) = analyse_sine(&o.l, switch + 9600, o.l.len(), FREQ, AMP, 0.03);
+    report("focus-switch", &o, after, md);
+    assert_eq!(o.device_gaps, 0);
+    assert_eq!(
+        s.underruns, 0,
+        "the jitter buffer did not run dry at the switch"
+    );
+    assert_eq!(s.overruns, 0);
+    assert_eq!((before, after), (0, 0));
 }
 
 /// Long run with drifting clocks on both sides, loss and jitter. Run explicitly:
