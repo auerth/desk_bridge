@@ -4,16 +4,23 @@
 //! * [`SecureDesktopInjector`] injects with the normal injector while the user's desktop has the
 //!   input focus and forwards to the SYSTEM helper (`\\.\pipe\deskbridge-helper`) while the
 //!   secure desktop (UAC consent, lock screen, logon) is active.
+//! * [`HelperFrameSource`] fetches the picture of the secure desktop from the helper for the
+//!   capturer (the agent itself may not duplicate that desktop).
 //! * [`release_stuck_keys`] clears keys that a crashed predecessor left pressed.
 
 use deskbridge_platform::input::{Button, InputInjector};
 use deskbridge_platform::system::SystemServices;
 use deskbridge_platform::{PlatformError, Result};
 use deskbridge_platform_windows::input::INJECT_MARKER;
+use deskbridge_platform_windows::video::{
+    SecureFrameSource, SecurePoll, SecureStartInfo, SecureUpdate,
+};
 use deskbridge_service::client::PipeClient;
 use deskbridge_service::desktop::{self, DesktopKind};
 use deskbridge_service::helper::apply;
-use deskbridge_service::protocol::{ErrorCode, HELPER_PIPE, Request, Response, SERVICE_PIPE};
+use deskbridge_service::protocol::{
+    ErrorCode, HELPER_PIPE, Request, Response, SECURE_CAPTURE_VERSION, SERVICE_PIPE,
+};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -118,6 +125,140 @@ pub fn show_real_displays_via_helper() -> Result<()> {
 impl Default for ServiceClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Picture of the secure desktop
+// ---------------------------------------------------------------------------------------------
+
+/// Longest the helper may take to set up a capture (it waits 4 s itself).
+const SECURE_START_TIMEOUT: Duration = Duration::from_secs(6);
+/// One poll waits up to `wait_ms` in the helper; this is the margin for a wedged helper.
+const SECURE_POLL_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// [`SecureFrameSource`] over its own connection to the helper pipe (a poll waits, so it must not
+/// share the connection the input commands use). Used by the capturer when the duplication is
+/// refused with `E_ACCESSDENIED`; see ADR 0007.
+pub struct HelperFrameSource {
+    pipe: String,
+    conn: Mutex<Option<PipeClient>>,
+}
+
+impl HelperFrameSource {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::with_pipe(HELPER_PIPE)
+    }
+
+    #[must_use]
+    pub fn with_pipe(pipe: &str) -> Self {
+        Self {
+            pipe: pipe.to_string(),
+            conn: Mutex::new(None),
+        }
+    }
+
+    fn conn(&self) -> std::sync::MutexGuard<'_, Option<PipeClient>> {
+        self.conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl Default for HelperFrameSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The helper's answer to `SecureStart`.
+fn started_from(resp: Response) -> std::result::Result<SecureStartInfo, String> {
+    match resp {
+        Response::SecureStarted { luid, x, y, w, h } => Ok(SecureStartInfo { luid, x, y, w, h }),
+        Response::Error { text, .. } => Err(text),
+        other => Err(format!("unexpected helper answer: {other:?}")),
+    }
+}
+
+/// The helper's answer to `SecurePoll`. An error means the capture is over (the input desktop is
+/// the user's again, or the helper gave up).
+fn poll_from(resp: Response) -> std::result::Result<SecurePoll, String> {
+    match resp {
+        Response::SecureNoFrame => Ok(SecurePoll::Idle),
+        Response::SecureFrame {
+            generation,
+            name,
+            w,
+            h,
+            pointer_x,
+            pointer_y,
+            pointer_visible,
+            image,
+        } => Ok(SecurePoll::Update(SecureUpdate {
+            generation,
+            name,
+            w,
+            h,
+            pointer_x,
+            pointer_y,
+            pointer_visible,
+            image,
+        })),
+        Response::Error { text, .. } => Err(text),
+        other => Err(format!("unexpected helper answer: {other:?}")),
+    }
+}
+
+impl SecureFrameSource for HelperFrameSource {
+    fn start(&self, rect: (i32, i32, u32, u32)) -> std::result::Result<SecureStartInfo, String> {
+        let mut c = PipeClient::connect(&self.pipe, CONNECT_TIMEOUT * 5)
+            .map_err(|e| format!("helper pipe: {e}"))?;
+        // A helper from before protocol 2 answers `SecureStart` with "unknown tag"; say so plainly.
+        match c.call(&Request::Ping, CALL_TIMEOUT) {
+            Ok(Response::Pong { version, .. }) if version >= SECURE_CAPTURE_VERSION => {}
+            Ok(Response::Pong { version, .. }) => {
+                return Err(format!(
+                    "helper speaks protocol {version}, secure capture needs {SECURE_CAPTURE_VERSION}"
+                ));
+            }
+            Ok(other) => return Err(format!("unexpected helper answer: {other:?}")),
+            Err(e) => return Err(format!("helper pipe: {e}")),
+        }
+        let (x, y, w, h) = rect;
+        let resp = c
+            .call(&Request::SecureStart { x, y, w, h }, SECURE_START_TIMEOUT)
+            .map_err(|e| format!("helper pipe: {e}"))?;
+        let info = started_from(resp)?;
+        *self.conn() = Some(c);
+        Ok(info)
+    }
+
+    fn poll(&self, generation: u32, wait_ms: u16) -> std::result::Result<SecurePoll, String> {
+        let mut g = self.conn();
+        let c = g.as_mut().ok_or("secure capture not started")?;
+        let resp = c.call(
+            &Request::SecurePoll {
+                generation,
+                wait_ms,
+            },
+            SECURE_POLL_TIMEOUT,
+        );
+        match resp {
+            Ok(r) => poll_from(r),
+            Err(e) => {
+                *g = None;
+                Err(format!("helper pipe: {e}"))
+            }
+        }
+    }
+
+    fn stop(&self) {
+        // Dropping the connection stops the helper's capture as well; asking first lets it free
+        // the textures before the next episode.
+        if let Some(mut c) = self.conn().take() {
+            let _ = c.call(&Request::SecureStop, Duration::from_millis(500));
+        }
     }
 }
 
@@ -781,6 +922,184 @@ mod tests {
         .await
         .unwrap();
         let _ = (s1.send(true), s2.send(true));
+    }
+
+    // --- secure-desktop picture -------------------------------------------------------------
+
+    #[test]
+    fn helper_answers_map_to_capture_results() {
+        assert_eq!(
+            started_from(Response::SecureStarted {
+                luid: 3,
+                x: -1,
+                y: 2,
+                w: 4,
+                h: 5
+            }),
+            Ok(SecureStartInfo {
+                luid: 3,
+                x: -1,
+                y: 2,
+                w: 4,
+                h: 5
+            })
+        );
+        assert_eq!(
+            started_from(Response::error(ErrorCode::Unsupported, "no")),
+            Err("no".to_string())
+        );
+        assert!(started_from(Response::Ok).is_err());
+        assert_eq!(poll_from(Response::SecureNoFrame), Ok(SecurePoll::Idle));
+        assert!(matches!(
+            poll_from(Response::SecureFrame {
+                generation: 2,
+                name: "n-0".into(),
+                w: 8,
+                h: 6,
+                pointer_x: 1,
+                pointer_y: 2,
+                pointer_visible: true,
+                image: true,
+            }),
+            Ok(SecurePoll::Update(SecureUpdate {
+                generation: 2,
+                image: true,
+                ..
+            }))
+        ));
+        // the helper ending the capture is an error for the capturer, which then falls back
+        assert!(poll_from(Response::error(ErrorCode::Failed, "user desktop")).is_err());
+    }
+
+    #[test]
+    fn frame_source_without_helper_is_unavailable() {
+        let s = HelperFrameSource::with_pipe(r"\\.\pipe\deskbridge-agent-test-no-helper");
+        assert!(s.start((0, 0, 100, 100)).is_err());
+        assert!(s.poll(0, 10).is_err());
+        s.stop();
+    }
+
+    struct FakeCapture {
+        polls: std::sync::atomic::AtomicU32,
+        stopped: AtomicBool,
+    }
+
+    impl deskbridge_service::secure_capture::SecureCapture for FakeCapture {
+        fn start(&self, rect: (i32, i32, u32, u32)) -> Response {
+            self.stopped.store(false, Ordering::SeqCst);
+            Response::SecureStarted {
+                luid: 42,
+                x: rect.0,
+                y: rect.1,
+                w: rect.2,
+                h: rect.3,
+            }
+        }
+        fn poll(&self, generation: u32, _wait: Duration) -> Response {
+            match self.polls.fetch_add(1, Ordering::SeqCst) {
+                0 => Response::SecureFrame {
+                    generation: generation + 1,
+                    name: "DeskBridgeSecure-1-1-0".into(),
+                    w: 640,
+                    h: 480,
+                    pointer_x: 10,
+                    pointer_y: 20,
+                    pointer_visible: true,
+                    image: true,
+                },
+                1 => Response::SecureNoFrame,
+                _ => Response::error(ErrorCode::Failed, "the input desktop is the user's desktop"),
+            }
+        }
+        fn stop(&self) {
+            self.stopped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn spawn_helper_server(
+        name: &str,
+        capture: Arc<FakeCapture>,
+    ) -> (
+        tokio::sync::watch::Sender<bool>,
+        std::sync::mpsc::Receiver<deskbridge_service::helper::Cmd>,
+    ) {
+        use deskbridge_service::pipe_security::PipeAccess;
+        let (stop, rx) = tokio::sync::watch::channel(false);
+        let (tx, cmds) = std::sync::mpsc::channel();
+        let sid = deskbridge_service::winutil::current_user_sid();
+        let access: deskbridge_service::pipe_server::AccessFn = Arc::new(move || PipeAccess {
+            user_sid: sid.clone(),
+            require_high_integrity: false,
+        });
+        tokio::spawn(deskbridge_service::pipe_server::serve(
+            name.to_string(),
+            access,
+            Arc::new(deskbridge_service::helper::HelperHandler::with_capture(
+                tx, capture,
+            )),
+            rx,
+            Arc::new(tokio::sync::Notify::new()),
+        ));
+        (stop, cmds)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn frame_source_end_to_end_over_the_helper_pipe() {
+        let name = format!(
+            r"\\.\pipe\deskbridge-agent-test-secure-{}",
+            std::process::id()
+        );
+        let capture = Arc::new(FakeCapture {
+            polls: std::sync::atomic::AtomicU32::new(0),
+            stopped: AtomicBool::new(false),
+        });
+        let (stop, cmds) = spawn_helper_server(&name, capture.clone());
+        let cap = capture.clone();
+        tokio::task::spawn_blocking(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            let s = HelperFrameSource::with_pipe(&name);
+            let info = s.start((100, 200, 640, 480)).expect("start");
+            assert_eq!(
+                (info.luid, info.x, info.y, info.w, info.h),
+                (42, 100, 200, 640, 480)
+            );
+            match s.poll(0, 30).expect("first poll") {
+                SecurePoll::Update(u) => {
+                    assert_eq!(
+                        (u.generation, u.name.as_str(), u.image),
+                        (1, "DeskBridgeSecure-1-1-0", true)
+                    );
+                    assert_eq!(
+                        (u.pointer_x, u.pointer_y, u.pointer_visible),
+                        (10, 20, true)
+                    );
+                }
+                other => panic!("{other:?}"),
+            }
+            assert_eq!(s.poll(1, 30), Ok(SecurePoll::Idle));
+            assert!(s.poll(1, 30).is_err(), "the helper ended the capture");
+            s.stop();
+            assert!(cap.stopped.load(Ordering::SeqCst));
+
+            // A vanished agent ends the capture too: just drop the connection.
+            let s = HelperFrameSource::with_pipe(&name);
+            s.start((0, 0, 1, 1)).expect("second start");
+            assert!(!cap.stopped.load(Ordering::SeqCst));
+            drop(s);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !cap.stopped.load(Ordering::SeqCst) {
+                assert!(
+                    Instant::now() < deadline,
+                    "capture not stopped after disconnect"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        })
+        .await
+        .unwrap();
+        // neither connection touched the input side
+        assert!(cmds.try_recv().is_err());
+        let _ = stop.send(true);
     }
 
     // --- stuck keys -------------------------------------------------------------------------

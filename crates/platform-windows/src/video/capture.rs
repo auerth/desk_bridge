@@ -7,7 +7,11 @@
 //! * pointer position and shape are delivered separately from the image (never burnt in);
 //! * `DXGI_ERROR_ACCESS_LOST` (mode change, UAC, lock screen) re-creates the duplication; an
 //!   interruption that lasts is reported as `CaptureOutput::Status`;
-//! * `reset` re-creates it on request (the engine saw the picture stand still during input).
+//! * `reset` re-creates it on request (the engine saw the picture stand still during input);
+//! * while the secure desktop (UAC, lock screen, logon) is up the duplication is refused with
+//!   `E_ACCESSDENIED`. With a [`SecureFrameSource`] the picture then comes from the SYSTEM helper
+//!   as GPU-shared textures (ADR 0007) and takes the same `CaptureOutput` path; without one, or
+//!   when the helper cannot capture, the viewer keeps the "interruption" placeholder.
 //!
 //! IddCx virtual outputs are plain DXGI outputs on the render adapter selected in the driver
 //! settings, so the same code captures them (not testable on a machine without that driver).
@@ -41,9 +45,10 @@ use windows::Win32::System::Threading::{
 use windows::core::Interface;
 
 use super::common::{
-    D3dDevice, GpuFrame, OutputInfo, adapter_by_index, create_device, list_outputs, luid_to_i64,
-    now_us, os_err, qpc_to_us,
+    D3dDevice, GpuFrame, OutputInfo, adapter_by_index, adapter_by_luid, create_device,
+    list_outputs, luid_to_i64, now_us, os_err, qpc_to_us,
 };
+use super::secure::{CopyOutcome, SecureConsumer, SecureFrameSource, SecurePoll};
 
 const SHAPE_MONOCHROME: u32 = 1;
 const SHAPE_COLOR: u32 = 2;
@@ -72,9 +77,19 @@ pub struct DxgiCapturer {
     reset: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     drops: Arc<std::sync::atomic::AtomicU64>,
+    /// Where the picture of the secure desktop comes from (`None`: placeholder only).
+    secure: Option<Arc<dyn SecureFrameSource>>,
 }
 
 impl DxgiCapturer {
+    /// Shows the secure desktop (UAC, lock screen, logon) through `source` instead of the
+    /// "interruption" placeholder.
+    #[must_use]
+    pub fn with_secure_source(mut self, source: Arc<dyn SecureFrameSource>) -> Self {
+        self.secure = Some(source);
+        self
+    }
+
     /// Captures the output that backs the `ScreenProvider` screen id passed to `start`. Ids are
     /// resolved through `resolver` (use the engine's long-lived provider so ids match).
     #[must_use]
@@ -104,6 +119,7 @@ impl DxgiCapturer {
             reset: Arc::new(AtomicBool::new(false)),
             thread: None,
             drops: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            secure: None,
         }
     }
 
@@ -164,6 +180,10 @@ impl ScreenCapturer for DxgiCapturer {
             stop: self.stop.clone(),
             reset: self.reset.clone(),
             drops: self.drops.clone(),
+            secure: self.secure.clone().map(|source| SecureCtx {
+                source,
+                interval_us: 1_000_000 / u64::from(fps.max(1)),
+            }),
         };
         let (ready_tx, ready_rx) = mpsc::channel::<std::result::Result<(), String>>();
         let handle = std::thread::Builder::new()
@@ -350,12 +370,15 @@ fn reopen_session(out: &mut OutputInfo, kept: Option<&KeptDevice>) -> Result<Ses
 /// Closes `old` and re-creates the duplication until it works (`None`: stopped meanwhile). The
 /// old duplication is released first: a second one on the same output is refused while it lives.
 /// `fresh_device`: do not reuse the old D3D11 device (it may look alive but be the problem).
+/// While the duplication is refused with `E_ACCESSDENIED` (secure desktop) and `secure` is given,
+/// the helper's picture is shown until the normal duplication works again.
 fn recover(
     out: &mut OutputInfo,
     old: Session,
     fresh_device: bool,
     stop: &AtomicBool,
     sink: &UnboundedSender<CaptureOutput>,
+    secure: Option<&SecureCtx>,
 ) -> Option<Session> {
     let kept = (!fresh_device).then(|| KeptDevice {
         device: old.device.clone(),
@@ -367,6 +390,7 @@ fn recover(
     let mut last_report: Option<Instant> = None;
     let mut reported = false;
     let mut attempts = 0u32;
+    let mut next_secure_try = Instant::now();
     loop {
         if stop.load(Ordering::Relaxed) {
             return None;
@@ -387,6 +411,26 @@ fn recover(
                 return Some(s);
             }
             Err(e) => {
+                if let Some(ctx) = secure
+                    && is_access_denied(&e)
+                    && Instant::now() >= next_secure_try
+                {
+                    let keep = kept.as_ref().filter(|k| k.luid == out.adapter_luid);
+                    match run_secure(out, keep, ctx, stop, sink, &mut reported) {
+                        SecureOutcome::Stopped => return None,
+                        SecureOutcome::Resumed(s) => {
+                            tracing::info!("secure desktop is gone, normal capture resumes");
+                            return Some(s);
+                        }
+                        SecureOutcome::Unavailable(why) => {
+                            tracing::info!("no secure-desktop picture: {why}");
+                            next_secure_try = Instant::now() + SECURE_RETRY;
+                            // `reported` reflects what run_secure actually left on screen: if it
+                            // never cleared the placeholder it is still shown (no re-send); if it
+                            // did, the loop re-announces one after the usual delay.
+                        }
+                    }
+                }
                 if last_report.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) {
                     last_report = Some(Instant::now());
                     tracing::warn!(attempts, "capture re-open failed: {e}");
@@ -402,12 +446,16 @@ fn recover(
 
 /// What the viewer shows while the duplication cannot be re-opened.
 fn interruption_reason(e: &PlatformError) -> String {
-    match e {
-        PlatformError::Os { code, .. } if *code == i64::from(E_ACCESSDENIED.0) => {
-            "Der Laptop zeigt gerade den Sperrbildschirm oder eine Sicherheitsabfrage (UAC)".into()
-        }
-        _ => format!("Die Bildschirmaufnahme am Laptop ist unterbrochen ({e})"),
+    if is_access_denied(e) {
+        "Der Laptop zeigt gerade den Sperrbildschirm oder eine Sicherheitsabfrage (UAC)".into()
+    } else {
+        format!("Die Bildschirmaufnahme am Laptop ist unterbrochen ({e})")
     }
+}
+
+/// `DuplicateOutput` is refused while the secure desktop is the input desktop.
+fn is_access_denied(e: &PlatformError) -> bool {
+    matches!(e, PlatformError::Os { code, .. } if *code == i64::from(E_ACCESSDENIED.0))
 }
 
 fn open_session_on(
@@ -615,6 +663,7 @@ struct ThreadFlags {
     stop: Arc<AtomicBool>,
     reset: Arc<AtomicBool>,
     drops: Arc<std::sync::atomic::AtomicU64>,
+    secure: Option<SecureCtx>,
 }
 
 fn capture_thread(
@@ -624,7 +673,12 @@ fn capture_thread(
     flags: ThreadFlags,
     ready: mpsc::Sender<std::result::Result<(), String>>,
 ) {
-    let ThreadFlags { stop, reset, drops } = flags;
+    let ThreadFlags {
+        stop,
+        reset,
+        drops,
+        secure,
+    } = flags;
     // SAFETY: plain call on the current thread.
     unsafe {
         let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
@@ -656,7 +710,7 @@ fn capture_thread(
         if reset.swap(false, Ordering::SeqCst) {
             tracing::warn!("capture reset requested: the picture stood still during input");
             drop(std::mem::take(&mut pending));
-            let Some(s) = recover(&mut out, session, true, &stop, &sink) else {
+            let Some(s) = recover(&mut out, session, true, &stop, &sink, secure.as_ref()) else {
                 return;
             };
             session = s;
@@ -718,7 +772,8 @@ fn capture_thread(
                 // Re-create (duplication, pool, the device only if it is gone); retry until it
                 // works or we are stopped.
                 drop(std::mem::take(&mut pending));
-                let Some(s) = recover(&mut out, session, false, &stop, &sink) else {
+                let Some(s) = recover(&mut out, session, false, &stop, &sink, secure.as_ref())
+                else {
                     return;
                 };
                 session = s;
@@ -782,8 +837,281 @@ fn copy_frame(sess: &Session, res: Option<&IDXGIResource>) -> Result<Option<Pool
     Ok(Some(slot))
 }
 
+// ---------------------------------------------------------------------------------------------
+// Secure desktop (UAC, lock screen, logon)
+// ---------------------------------------------------------------------------------------------
+
+/// The secure-desktop source plus the frame pacing it has to keep.
+struct SecureCtx {
+    source: Arc<dyn SecureFrameSource>,
+    interval_us: u64,
+}
+
+enum SecureOutcome {
+    /// The user's desktop is back: this is the normal duplication, opened again.
+    Resumed(Session),
+    /// Stopped meanwhile.
+    Stopped,
+    /// No picture of the secure desktop (no helper, old helper, setup failed, helper gave up):
+    /// the placeholder stays.
+    Unavailable(String),
+}
+
+/// How long one poll waits in the helper; also the latency of the first picture of a still desktop.
+const SECURE_POLL_WAIT_MS: u16 = 30;
+/// How often the normal duplication is tried while the secure picture runs.
+const NORMAL_PROBE: Duration = Duration::from_millis(400);
+/// Pause before the helper is asked again after it could not capture.
+const SECURE_RETRY: Duration = Duration::from_secs(2);
+/// Consecutive failures to read a shared texture before the picture is given up.
+const MAX_SECURE_ERRORS: u32 = 20;
+/// Serial of the synthetic pointer shown on the secure desktop (its real shape is never captured,
+/// so the shape is sent once under this fixed serial and the viewer caches it).
+const SECURE_CURSOR_SERIAL: u32 = 0xE5EC_0001;
+
+/// A plain white arrow with a black outline, handed to the viewer once per secure session so the
+/// operator sees a pointer on the secure desktop even though its real shape is not captured. The
+/// hotspot is the tip at (0, 0). `rgba` is RGBA like every other [`CursorShapeData`].
+fn default_secure_cursor() -> CursorShapeData {
+    const ART: &[&str] = &[
+        "B",
+        "BB",
+        "BWB",
+        "BWWB",
+        "BWWWB",
+        "BWWWWB",
+        "BWWWWWB",
+        "BWWWWWWB",
+        "BWWWWWWWB",
+        "BWWWWWWWWB",
+        "BWWWWWBBBBB",
+        "BWWBWWB",
+        "BWB BWWB",
+        "BB  BWWB",
+        "B    BWWB",
+        "     BWWB",
+        "      BB",
+    ];
+    let h = ART.len() as u32;
+    let w = ART.iter().map(|r| r.len()).max().unwrap_or(0) as u32;
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for (y, row) in ART.iter().enumerate() {
+        for (x, ch) in row.bytes().enumerate() {
+            let color = match ch {
+                b'B' => [0u8, 0, 0, 255],
+                b'W' => [255, 255, 255, 255],
+                _ => continue, // leave transparent
+            };
+            let px = ((y as u32 * w + x as u32) * 4) as usize;
+            rgba[px..px + 4].copy_from_slice(&color);
+        }
+    }
+    CursorShapeData {
+        width: w,
+        height: h,
+        hot_x: 0,
+        hot_y: 0,
+        rgba,
+    }
+}
+
+/// Tells the helper to drop its textures however the loop ends.
+struct SecureGuard<'a>(&'a dyn SecureFrameSource);
+
+impl Drop for SecureGuard<'_> {
+    fn drop(&mut self) {
+        self.0.stop();
+    }
+}
+
+/// A device on the adapter the helper's textures live on: the kept one if it fits, else a new one.
+fn secure_device(kept: Option<&KeptDevice>, luid: i64) -> Result<D3dDevice> {
+    if let Some(k) = kept
+        && k.luid == luid
+        // SAFETY: plain COM call on a live device.
+        && unsafe { k.device.GetDeviceRemovedReason() }.is_ok()
+    {
+        return Ok(D3dDevice {
+            device: k.device.clone(),
+            context: k.context.clone(),
+            adapter_luid: luid,
+            adapter_name: String::new(),
+        });
+    }
+    create_device(Some(&adapter_by_luid(luid)?))
+}
+
+/// Streams the secure desktop from the helper into `sink` until the normal duplication works
+/// again. The pictures take the same path as local ones (a pool texture in a `GpuFrame`), the
+/// pointer goes out as `CaptureOutput::Cursor` without a shape (the viewer's own cursor is drawn).
+/// `reported`: whether the "interruption" placeholder is currently shown. It is cleared (and the
+/// flag set to `false`) with the first picture handed over, so the caller never re-announces a
+/// placeholder this function already withdrew, and keeps showing one this function never cleared.
+fn run_secure(
+    out: &mut OutputInfo,
+    kept: Option<&KeptDevice>,
+    ctx: &SecureCtx,
+    stop: &AtomicBool,
+    sink: &UnboundedSender<CaptureOutput>,
+    reported: &mut bool,
+) -> SecureOutcome {
+    let info = match ctx.source.start((out.x, out.y, out.w, out.h)) {
+        Ok(i) => i,
+        Err(e) => return SecureOutcome::Unavailable(e),
+    };
+    let _stop_helper = SecureGuard(ctx.source.as_ref());
+    let setup = || -> Result<(D3dDevice, SecureConsumer, Arc<Pool>)> {
+        let dev = secure_device(kept, info.luid)?;
+        let consumer = SecureConsumer::new(&dev.device, &dev.context)?;
+        let pool = Pool::new(&dev.device, info.w, info.h)?;
+        Ok((dev, consumer, pool))
+    };
+    let (dev, mut consumer, mut pool) = match setup() {
+        Ok(s) => s,
+        Err(e) => {
+            return SecureOutcome::Unavailable(format!("device for the helper's adapter: {e}"));
+        }
+    };
+    // Frames name the adapter they live on; keep the kept device's own identity when reused.
+    let keep_for_reopen = KeptDevice {
+        device: dev.device.clone(),
+        context: dev.context.clone(),
+        luid: info.luid,
+    };
+    tracing::info!(
+        w = info.w,
+        h = info.h,
+        "secure desktop: showing the helper's picture"
+    );
+
+    let mut last_generation = 0u32;
+    let mut last_probe = Instant::now();
+    let mut last_cursor: Option<(i32, i32, bool)> = None;
+    let mut size = (info.w, info.h);
+    let mut pending: Option<Pending> = None;
+    let mut next_emit_us = 0u64;
+    let mut errors = 0u32;
+    let mut sent_cursor_shape = false;
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return SecureOutcome::Stopped;
+        }
+        if last_probe.elapsed() >= NORMAL_PROBE {
+            last_probe = Instant::now();
+            if let Ok(s) = reopen_session(out, Some(&keep_for_reopen)) {
+                return SecureOutcome::Resumed(s);
+            }
+        }
+        match ctx.source.poll(last_generation, SECURE_POLL_WAIT_MS) {
+            Err(e) => return SecureOutcome::Unavailable(format!("helper: {e}")),
+            Ok(SecurePoll::Idle) => {}
+            Ok(SecurePoll::Update(u)) => {
+                let mut consumed = true;
+                if u.image {
+                    if (u.w, u.h) != size {
+                        match Pool::new(&dev.device, u.w, u.h) {
+                            Ok(p) => {
+                                pool = p;
+                                size = (u.w, u.h);
+                                pending = None;
+                            }
+                            Err(e) => {
+                                return SecureOutcome::Unavailable(format!("texture pool: {e}"));
+                            }
+                        }
+                    }
+                    match pool.take() {
+                        // Every pool texture is still downstream. A still desktop sends this
+                        // picture only once, so ask for it again rather than lose it.
+                        None => consumed = false,
+                        Some(slot) => match consumer.copy_to(&u.name, &slot.tex, size, 5) {
+                            Ok(CopyOutcome::Copied) => {
+                                errors = 0;
+                                pending = Some(Pending {
+                                    slot,
+                                    ts_us: now_us(),
+                                });
+                            }
+                            Ok(CopyOutcome::NotReady) => consumed = false,
+                            Err(e) => {
+                                consumed = false;
+                                errors += 1;
+                                tracing::debug!("secure texture {}: {e}", u.name);
+                                if errors >= MAX_SECURE_ERRORS {
+                                    return SecureOutcome::Unavailable(format!(
+                                        "cannot read the shared texture: {e}"
+                                    ));
+                                }
+                            }
+                        },
+                    }
+                }
+                let cursor = (u.pointer_x, u.pointer_y, u.pointer_visible);
+                if last_cursor != Some(cursor) {
+                    last_cursor = Some(cursor);
+                    // The real shape is not captured; hand over a default arrow once so the
+                    // viewer has a pointer to draw (otherwise a focus session that starts on the
+                    // secure desktop would show no cursor at all).
+                    let shape = (!sent_cursor_shape).then(|| {
+                        sent_cursor_shape = true;
+                        default_secure_cursor()
+                    });
+                    let state = CursorState {
+                        x: u.pointer_x as f32 / size.0.max(1) as f32,
+                        y: u.pointer_y as f32 / size.1.max(1) as f32,
+                        visible: u.pointer_visible,
+                        shape_serial: SECURE_CURSOR_SERIAL,
+                        shape,
+                    };
+                    if sink.send(CaptureOutput::Cursor(state)).is_err() {
+                        return SecureOutcome::Stopped;
+                    }
+                }
+                if consumed {
+                    last_generation = u.generation;
+                } else {
+                    // The picture is still wanted; do not spin on it.
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
+        if pending.is_some() && now_us() >= next_emit_us {
+            let p = pending.take().expect("checked is_some");
+            let frame = Frame {
+                width: size.0,
+                height: size.1,
+                ts_us: p.ts_us,
+                data: FrameData::Gpu(Box::new(GpuFrame {
+                    texture: p.slot.tex.clone(),
+                    device: dev.device.clone(),
+                    adapter_luid: info.luid,
+                    subresource: 0,
+                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    width: size.0,
+                    height: size.1,
+                    hold: Some(Box::new(p.slot)),
+                })),
+            };
+            if sink.send(CaptureOutput::Frame(frame)).is_err() {
+                return SecureOutcome::Stopped;
+            }
+            if *reported {
+                *reported = false;
+                let _ = sink.send(CaptureOutput::Status(None));
+            }
+            let now = now_us();
+            next_emit_us = if now.saturating_sub(next_emit_us) > ctx.interval_us {
+                now + ctx.interval_us
+            } else {
+                next_emit_us + ctx.interval_us
+            };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::secure::{Pump, SecureProducer, SecureUpdate};
     use super::*;
     use windows::Win32::Foundation::POINT;
 
@@ -795,6 +1123,143 @@ mod tests {
             Pitch: pitch,
             HotSpot: POINT { x: 1, y: 2 },
         }
+    }
+
+    /// A [`SecureFrameSource`] backed by a producer in this process (instead of the helper).
+    #[derive(Default)]
+    struct LoopbackSource {
+        producer: Mutex<Option<ProducerBox>>,
+        latest: Mutex<(u32, String)>,
+        /// A picture went out: the "secure desktop" ends (the duplication is released, as the
+        /// helper does when the input desktop returns to the user), which in this one process
+        /// also frees the output for the normal duplication.
+        delivered: AtomicBool,
+        stopped: AtomicBool,
+    }
+    struct ProducerBox(SecureProducer);
+    // SAFETY: the test drives the source from one thread only; the producer holds a raw handle.
+    unsafe impl Send for ProducerBox {}
+
+    impl SecureFrameSource for LoopbackSource {
+        fn start(
+            &self,
+            rect: (i32, i32, u32, u32),
+        ) -> std::result::Result<super::super::secure::SecureStartInfo, String> {
+            let prefix = format!("DeskBridgeSecureCapTest-{}", std::process::id());
+            let p = SecureProducer::open(rect, &prefix, None).map_err(|e| e.to_string())?;
+            let i = p.info();
+            *self.producer.lock().unwrap() = Some(ProducerBox(p));
+            Ok(super::super::secure::SecureStartInfo {
+                luid: i.luid,
+                x: i.x,
+                y: i.y,
+                w: i.w,
+                h: i.h,
+            })
+        }
+
+        fn poll(&self, _generation: u32, wait_ms: u16) -> std::result::Result<SecurePoll, String> {
+            let mut g = self.producer.lock().unwrap();
+            if self.delivered.load(Ordering::SeqCst) {
+                *g = None;
+                std::thread::sleep(Duration::from_millis(u64::from(wait_ms)));
+                return Ok(SecurePoll::Idle);
+            }
+            let p = g.as_mut().ok_or("not started")?;
+            match p.0.pump(u32::from(wait_ms)).map_err(|e| e.to_string())? {
+                Pump::Idle => Ok(SecurePoll::Idle),
+                Pump::Lost => Err("lost".into()),
+                Pump::Update { image, pointer } => {
+                    let i = p.0.info();
+                    let mut l = self.latest.lock().unwrap();
+                    l.0 += 1;
+                    if let Some(n) = &image {
+                        l.1.clone_from(n);
+                        self.delivered.store(true, Ordering::SeqCst);
+                    }
+                    let ptr = pointer.unwrap_or_default();
+                    Ok(SecurePoll::Update(SecureUpdate {
+                        generation: l.0,
+                        name: l.1.clone(),
+                        w: i.w,
+                        h: i.h,
+                        pointer_x: ptr.x,
+                        pointer_y: ptr.y,
+                        pointer_visible: ptr.visible,
+                        image: image.is_some(),
+                    }))
+                }
+            }
+        }
+
+        fn stop(&self) {
+            *self.producer.lock().unwrap() = None;
+            self.stopped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// The whole agent-side path with the helper replaced by an in-process producer: pictures
+    /// reach the sink as GPU frames, and once the normal duplication works (it does on the user's
+    /// desktop) the loop hands back a regular session and tells the source to stop.
+    #[test]
+    fn secure_pictures_reach_the_sink_until_the_normal_duplication_returns() {
+        let _one_at_a_time = super::super::common::DUPLICATION_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(mut out) = list_outputs()
+            .ok()
+            .and_then(|v| v.into_iter().find(|o| o.attached && !o.software))
+        else {
+            eprintln!("skipped: no output");
+            return;
+        };
+        let src = Arc::new(LoopbackSource::default());
+        let ctx = SecureCtx {
+            source: src.clone(),
+            interval_us: 16_000,
+        };
+        let stop = AtomicBool::new(false);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        // Watchdog: never hang the test run if the normal duplication does not come back.
+        let outcome = std::thread::scope(|s| {
+            s.spawn(|| {
+                let end = Instant::now() + Duration::from_secs(8);
+                while !stop.load(Ordering::SeqCst) && Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                stop.store(true, Ordering::SeqCst);
+            });
+            let mut reported = true;
+            let r = run_secure(&mut out, None, &ctx, &stop, &tx, &mut reported);
+            stop.store(true, Ordering::SeqCst);
+            r
+        });
+        match outcome {
+            SecureOutcome::Resumed(_) => {}
+            SecureOutcome::Unavailable(why) => {
+                eprintln!("skipped: {why}");
+                return;
+            }
+            SecureOutcome::Stopped => panic!("the normal duplication did not come back in 8 s"),
+        }
+        let (mut frames, mut cleared) = (0, false);
+        while let Ok(o) = rx.try_recv() {
+            match o {
+                CaptureOutput::Frame(f) => {
+                    assert_eq!((f.width, f.height), (out.w, out.h));
+                    assert!(matches!(f.data, FrameData::Gpu(_)));
+                    frames += 1;
+                }
+                CaptureOutput::Status(None) => cleared = true,
+                _ => {}
+            }
+        }
+        assert!(frames >= 1, "no picture reached the sink");
+        assert!(cleared, "the placeholder status must be withdrawn");
+        assert!(
+            src.stopped.load(Ordering::SeqCst),
+            "the helper must be told to stop"
+        );
     }
 
     #[test]

@@ -1,9 +1,10 @@
 //! Entry point of `deskbridge-service.exe --helper`.
 
 use crate::helper::{HelperHandler, SystemDesktopFollower, run_worker};
-use crate::pipe_security::{PipeAccess, is_valid_sid_string};
+use crate::pipe_security::{PipeAccess, build_sddl, is_valid_sid_string};
 use crate::pipe_server::{self, AccessFn};
 use crate::protocol::HELPER_PIPE;
+use crate::secure_capture::SecureCaptureHost;
 use deskbridge_platform_windows::input::WinInputInjector;
 use std::sync::Arc;
 use tokio::sync::{Notify, watch};
@@ -100,7 +101,14 @@ pub fn run(args: &HelperArgs) -> i32 {
 
     let user_sid = args.user_sid.clone();
     let access: AccessFn = Arc::new(move || PipeAccess::production(user_sid.clone()));
-    let handler = Arc::new(HelperHandler::new(cmd_tx));
+    // The shared textures carry a picture of the secure desktop: SYSTEM and the interactive user
+    // only, like the pipe (without its integrity label, which does not apply to texture handles).
+    let texture_sddl = build_sddl(&PipeAccess {
+        user_sid: args.user_sid.clone(),
+        require_high_integrity: false,
+    });
+    let capture = Arc::new(SecureCaptureHost::new(texture_sddl));
+    let handler = Arc::new(HelperHandler::with_capture(cmd_tx, capture));
     tracing::info!(pipe = %args.pipe_name, user = ?args.user_sid, "helper serving");
     rt.block_on(pipe_server::serve(
         args.pipe_name.clone(),

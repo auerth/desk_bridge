@@ -4,6 +4,7 @@
 pub mod capture;
 pub mod common;
 pub mod present;
+pub mod secure;
 pub mod vp;
 
 pub use capture::DxgiCapturer;
@@ -13,4 +14,8 @@ pub use common::{
     qpc_to_us,
 };
 pub use present::{D3dPresenter, PresentMode, PresenterEvent, PxRect};
+pub use secure::{
+    CopyOutcome, Pointer, ProducerInfo, Pump, SecureConsumer, SecureFrameSource, SecurePoll,
+    SecureProducer, SecureStartInfo, SecureUpdate,
+};
 pub use vp::{ConvKind, VpConverter};

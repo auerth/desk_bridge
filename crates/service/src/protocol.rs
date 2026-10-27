@@ -1,6 +1,7 @@
 //! Wire protocol of the two service pipes (portable, no OS calls).
 //!
-//! * `\\.\pipe\deskbridge-helper`  agent -> secure-desktop helper: input injection
+//! * `\\.\pipe\deskbridge-helper`  agent -> secure-desktop helper: input injection and (from
+//!   protocol 2) the picture of the secure desktop, handed over as named GPU-shared textures
 //! * `\\.\pipe\deskbridge-service` agent -> service: `ping`, `send_sas`, `helper_status`,
 //!   `cable_mic`, `make_network_private`
 //!
@@ -12,7 +13,9 @@
 use deskbridge_platform::input::Button;
 
 /// Bumped on incompatible changes; reported by `Pong`.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
+/// First protocol version whose helper can capture the secure desktop.
+pub const SECURE_CAPTURE_VERSION: u16 = 2;
 /// Pipe of the SYSTEM helper on the secure desktop.
 pub const HELPER_PIPE: &str = r"\\.\pipe\deskbridge-helper";
 /// Control pipe of the service.
@@ -21,6 +24,8 @@ pub const SERVICE_PIPE: &str = r"\\.\pipe\deskbridge-service";
 pub const MAX_PAYLOAD: usize = 256;
 /// Longest error text carried by [`Response::Error`].
 pub const MAX_ERROR_TEXT: usize = 120;
+/// Longest name of a shared texture carried by [`Response::SecureFrame`].
+pub const MAX_SHARED_NAME: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Request {
@@ -67,6 +72,23 @@ pub enum Request {
     },
     /// Release every key and button the helper has pressed.
     ReleaseAll,
+    /// Start capturing the secure desktop on the output that covers this desktop rectangle
+    /// (helper pipe only, protocol 2). Answered with [`Response::SecureStarted`].
+    SecureStart {
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    },
+    /// Ask for the next picture (helper pipe only, protocol 2). `generation` is the last one the
+    /// agent has seen; the helper waits up to `wait_ms` for a newer one and answers
+    /// [`Response::SecureFrame`] or [`Response::SecureNoFrame`].
+    SecurePoll {
+        generation: u32,
+        wait_ms: u16,
+    },
+    /// Stop capturing and drop the shared textures (helper pipe only, protocol 2).
+    SecureStop,
 }
 
 impl Request {
@@ -81,6 +103,19 @@ impl Request {
                 | Self::CableMic { .. }
                 | Self::MakeNetworkPrivate
                 | Self::ShowRealDisplays
+                | Self::SecureStart { .. }
+                | Self::SecurePoll { .. }
+                | Self::SecureStop
+        )
+    }
+
+    /// True for the secure-desktop capture requests (served by the helper on their own
+    /// connection: a poll may wait, and a lost connection ends the capture).
+    #[must_use]
+    pub fn is_secure_capture(&self) -> bool {
+        matches!(
+            self,
+            Self::SecureStart { .. } | Self::SecurePoll { .. } | Self::SecureStop
         )
     }
 
@@ -135,6 +170,32 @@ pub enum Response {
         pid: u32,
         session: u32,
     },
+    /// Answer to [`Request::SecureStart`].
+    SecureStarted {
+        /// LUID of the adapter the shared textures live on (`LowPart | HighPart << 32`).
+        luid: i64,
+        /// Desktop rectangle of the captured output in physical pixels.
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    },
+    /// Something new on the secure desktop. `name` is the shared texture that holds the latest
+    /// picture (opened with `OpenSharedResourceByName`); the name changes with the ring slot
+    /// and with every re-created duplication.
+    SecureFrame {
+        generation: u32,
+        name: String,
+        w: u32,
+        h: u32,
+        pointer_x: i32,
+        pointer_y: i32,
+        pointer_visible: bool,
+        /// The picture itself changed since the polled generation (otherwise only the pointer).
+        image: bool,
+    },
+    /// Nothing new since the polled generation.
+    SecureNoFrame,
 }
 
 impl Response {
@@ -175,6 +236,9 @@ mod tag {
     pub const CABLE_MIC: u8 = 0x04;
     pub const MAKE_NETWORK_PRIVATE: u8 = 0x05;
     pub const SHOW_REAL_DISPLAYS: u8 = 0x06;
+    pub const SECURE_START: u8 = 0x07;
+    pub const SECURE_POLL: u8 = 0x08;
+    pub const SECURE_STOP: u8 = 0x09;
     pub const KEY: u8 = 0x10;
     pub const MOUSE_REL: u8 = 0x11;
     pub const MOUSE_ABS: u8 = 0x12;
@@ -186,6 +250,9 @@ mod tag {
     pub const R_OK: u8 = 0x81;
     pub const R_ERROR: u8 = 0x82;
     pub const R_HELPER_STATUS: u8 = 0x83;
+    pub const R_SECURE_STARTED: u8 = 0x84;
+    pub const R_SECURE_FRAME: u8 = 0x85;
+    pub const R_SECURE_NO_FRAME: u8 = 0x86;
 }
 
 /// Cursor over a payload.
@@ -213,6 +280,12 @@ impl<'a> Reader<'a> {
     }
     fn i32(&mut self) -> Result<i32, ProtocolError> {
         Ok(self.u32()? as i32)
+    }
+    fn i64(&mut self) -> Result<i64, ProtocolError> {
+        let b = self.take(8)?;
+        Ok(i64::from_le_bytes([
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+        ]))
     }
     fn bool(&mut self) -> Result<bool, ProtocolError> {
         match self.u8()? {
@@ -281,6 +354,22 @@ impl Request {
                 p.extend_from_slice(&dy.to_le_bytes());
             }
             Self::ReleaseAll => p.push(tag::RELEASE_ALL),
+            Self::SecureStart { x, y, w, h } => {
+                p.push(tag::SECURE_START);
+                p.extend_from_slice(&x.to_le_bytes());
+                p.extend_from_slice(&y.to_le_bytes());
+                p.extend_from_slice(&w.to_le_bytes());
+                p.extend_from_slice(&h.to_le_bytes());
+            }
+            Self::SecurePoll {
+                generation,
+                wait_ms,
+            } => {
+                p.push(tag::SECURE_POLL);
+                p.extend_from_slice(&generation.to_le_bytes());
+                p.extend_from_slice(&wait_ms.to_le_bytes());
+            }
+            Self::SecureStop => p.push(tag::SECURE_STOP),
         }
         p
     }
@@ -329,6 +418,17 @@ impl Request {
                 dy: r.i32()?,
             },
             tag::RELEASE_ALL => Self::ReleaseAll,
+            tag::SECURE_START => Self::SecureStart {
+                x: r.i32()?,
+                y: r.i32()?,
+                w: r.u32()?,
+                h: r.u32()?,
+            },
+            tag::SECURE_POLL => Self::SecurePoll {
+                generation: r.u32()?,
+                wait_ms: r.u16()?,
+            },
+            tag::SECURE_STOP => Self::SecureStop,
             other => return Err(ProtocolError::UnknownTag(other)),
         };
         r.finish()?;
@@ -364,6 +464,37 @@ impl Response {
                 p.extend_from_slice(&pid.to_le_bytes());
                 p.extend_from_slice(&session.to_le_bytes());
             }
+            Self::SecureStarted { luid, x, y, w, h } => {
+                p.push(tag::R_SECURE_STARTED);
+                p.extend_from_slice(&luid.to_le_bytes());
+                p.extend_from_slice(&x.to_le_bytes());
+                p.extend_from_slice(&y.to_le_bytes());
+                p.extend_from_slice(&w.to_le_bytes());
+                p.extend_from_slice(&h.to_le_bytes());
+            }
+            Self::SecureFrame {
+                generation,
+                name,
+                w,
+                h,
+                pointer_x,
+                pointer_y,
+                pointer_visible,
+                image,
+            } => {
+                p.push(tag::R_SECURE_FRAME);
+                p.extend_from_slice(&generation.to_le_bytes());
+                let n = truncate_utf8(name, MAX_SHARED_NAME);
+                p.push(n.len() as u8);
+                p.extend_from_slice(n.as_bytes());
+                p.extend_from_slice(&w.to_le_bytes());
+                p.extend_from_slice(&h.to_le_bytes());
+                p.extend_from_slice(&pointer_x.to_le_bytes());
+                p.extend_from_slice(&pointer_y.to_le_bytes());
+                p.push(u8::from(*pointer_visible));
+                p.push(u8::from(*image));
+            }
+            Self::SecureNoFrame => p.push(tag::R_SECURE_NO_FRAME),
         }
         p
     }
@@ -394,11 +525,49 @@ impl Response {
                 pid: r.u32()?,
                 session: r.u32()?,
             },
+            tag::R_SECURE_STARTED => Self::SecureStarted {
+                luid: r.i64()?,
+                x: r.i32()?,
+                y: r.i32()?,
+                w: r.u32()?,
+                h: r.u32()?,
+            },
+            tag::R_SECURE_FRAME => {
+                let generation = r.u32()?;
+                let n = usize::from(r.u8()?);
+                let name = r.take(n)?;
+                if !is_valid_shared_name(name) {
+                    return Err(ProtocolError::BadPayload("shared name"));
+                }
+                Self::SecureFrame {
+                    generation,
+                    // ASCII, validated above
+                    name: String::from_utf8_lossy(name).into_owned(),
+                    w: r.u32()?,
+                    h: r.u32()?,
+                    pointer_x: r.i32()?,
+                    pointer_y: r.i32()?,
+                    pointer_visible: r.bool()?,
+                    image: r.bool()?,
+                }
+            }
+            tag::R_SECURE_NO_FRAME => Self::SecureNoFrame,
             other => return Err(ProtocolError::UnknownTag(other)),
         };
         r.finish()?;
         Ok(resp)
     }
+}
+
+/// A shared-texture name is `[A-Za-z0-9_-]+`: no namespace prefix (`Global\`) and no path
+/// characters, so a name can only ever refer to an object in the caller's own session namespace.
+#[must_use]
+pub fn is_valid_shared_name(name: &[u8]) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_SHARED_NAME
+        && name
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_')
 }
 
 /// Longest prefix of `s` that is at most `max` bytes and ends on a char boundary.
@@ -478,6 +647,17 @@ mod tests {
             },
             Request::Wheel { dx: 0, dy: -120 },
             Request::ReleaseAll,
+            Request::SecureStart {
+                x: -1920,
+                y: 0,
+                w: 2560,
+                h: 1440,
+            },
+            Request::SecurePoll {
+                generation: u32::MAX,
+                wait_ms: 30,
+            },
+            Request::SecureStop,
         ]
     }
 
@@ -508,6 +688,24 @@ mod tests {
                 pid: 77,
                 session: 2,
             },
+            Response::SecureStarted {
+                luid: (2i64 << 32) | 0xABCD,
+                x: -1920,
+                y: 0,
+                w: 2560,
+                h: 1440,
+            },
+            Response::SecureFrame {
+                generation: 7,
+                name: "DeskBridgeSecure-4242-1-2".into(),
+                w: 2560,
+                h: 1440,
+                pointer_x: -3,
+                pointer_y: 700,
+                pointer_visible: true,
+                image: false,
+            },
+            Response::SecureNoFrame,
         ];
         for r in all {
             let f = r.encode();
@@ -526,6 +724,9 @@ mod tests {
                     | Request::CableMic { .. }
                     | Request::MakeNetworkPrivate
                     | Request::ShowRealDisplays
+                    | Request::SecureStart { .. }
+                    | Request::SecurePoll { .. }
+                    | Request::SecureStop
             );
             assert_eq!(r.expects_response(), control, "{r:?}");
             assert_eq!(r.is_injection(), !control);
@@ -552,6 +753,48 @@ mod tests {
         assert!(Response::decode(&[tag::R_ERROR, 99, 0, 0]).is_err());
         // error text longer than the payload
         assert!(Response::decode(&[tag::R_ERROR, 1, 0, 5, b'a']).is_err());
+    }
+
+    #[test]
+    fn secure_capture_requests_are_flagged() {
+        let flagged: Vec<_> = all_requests()
+            .into_iter()
+            .filter(Request::is_secure_capture)
+            .collect();
+        assert_eq!(flagged.len(), 3);
+        assert!(flagged.iter().all(Request::expects_response));
+    }
+
+    #[test]
+    fn secure_frame_rejects_bad_names() {
+        let frame = |name: &[u8]| {
+            let mut p = vec![tag::R_SECURE_FRAME, 1, 0, 0, 0, name.len() as u8];
+            p.extend_from_slice(name);
+            p.extend_from_slice(&[0; 16]);
+            p.extend_from_slice(&[0, 0]);
+            p
+        };
+        assert!(Response::decode(&frame(b"Name-1_2")).is_ok());
+        for bad in [&b""[..], b"Global\\x", b"a b", b"../x", "ä".as_bytes()] {
+            assert!(Response::decode(&frame(bad)).is_err(), "{bad:?}");
+        }
+        let long = vec![b'a'; MAX_SHARED_NAME + 1];
+        assert!(Response::decode(&frame(&long)).is_err());
+    }
+
+    #[test]
+    fn secure_messages_fit_the_frame_limit() {
+        let big = Response::SecureFrame {
+            generation: u32::MAX,
+            name: "a".repeat(MAX_SHARED_NAME),
+            w: u32::MAX,
+            h: u32::MAX,
+            pointer_x: i32::MIN,
+            pointer_y: i32::MIN,
+            pointer_visible: true,
+            image: true,
+        };
+        assert!(big.encode_payload().len() <= MAX_PAYLOAD);
     }
 
     #[test]

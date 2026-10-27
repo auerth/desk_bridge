@@ -48,7 +48,12 @@ pub fn build() -> Platform {
         virtual_audio: virtual_audio(),
         local_output: Arc::new(WinLocalOutput::new()),
         system: Arc::new(ServiceClient::new()),
-        video: Arc::new(deskbridge_video::WindowsVideoBackend::new()),
+        // UAC, lock screen and logon are captured by the SYSTEM helper and handed over as shared
+        // textures; without a (current) helper the viewer keeps the "interruption" placeholder.
+        video: Arc::new(
+            deskbridge_video::WindowsVideoBackend::new()
+                .with_secure_source(Arc::new(crate::secure::HelperFrameSource::new())),
+        ),
         display: Arc::new(
             deskbridge_platform_windows::display::WinDisplayManager::new()
                 .with_activation_fallback(Arc::new(crate::secure::show_real_displays_via_helper)),

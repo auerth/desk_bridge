@@ -24,9 +24,30 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_MAPPED_SUBRESOURCE, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING,
     ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
 };
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{IDXGIAdapter, IDXGIDevice};
 use windows::core::Interface;
+
+/// Largest rectangle with `src`'s aspect ratio that fits inside `dst`, centred, with even
+/// coordinates (NV12 needs them). Used as the video-processor destination so a frame whose aspect
+/// differs from the encoder output is letterboxed (black bars) instead of stretched; for a frame
+/// of the same aspect it returns the whole output, so the common path is unchanged.
+fn fit_rect(src: (u32, u32), dst: (u32, u32)) -> RECT {
+    let (sw, sh) = (f64::from(src.0.max(1)), f64::from(src.1.max(1)));
+    let (dw, dh) = (dst.0 as i32, dst.1 as i32);
+    let scale = (f64::from(dw) / sw).min(f64::from(dh) / sh);
+    let w = ((sw * scale).round() as i32).clamp(2, dw) & !1;
+    let h = ((sh * scale).round() as i32).clamp(2, dh) & !1;
+    let left = ((dw - w) / 2) & !1;
+    let top = ((dh - h) / 2) & !1;
+    RECT {
+        left,
+        top,
+        right: left + w,
+        bottom: top + h,
+    }
+}
 
 use crate::ff::{self, AvD3d11vaDeviceContext, AvD3d11vaFramesContext, BufRef, CodecCtx, Dict};
 
@@ -387,7 +408,7 @@ impl VideoEncoder for FfmpegEncoder {
                         g.subresource,
                         tex,
                         idx,
-                        None,
+                        Some(fit_rect((g.width, g.height), cfg_size)),
                     )?;
                     ctx.Flush();
                 }
@@ -804,7 +825,8 @@ unsafe fn readback_nv12(
     f: *mut ffi::AVFrame,
     size: (u32, u32),
 ) -> Result<()> {
-    rb.vp.blt(&g.texture, g.subresource, &rb.nv12, 0, None)?;
+    rb.vp
+        .blt(&g.texture, g.subresource, &rb.nv12, 0, Some(fit_rect((g.width, g.height), size)))?;
     let dst: ID3D11Resource = rb
         .staging
         .cast()
@@ -863,4 +885,37 @@ unsafe fn readback_nv12(
 pub fn describe_device(device: &ID3D11Device) -> String {
     let (luid, name) = device_adapter_info(device);
     format!("{name} (LUID {luid:#x})")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_rect;
+
+    #[test]
+    fn fit_rect_keeps_a_full_output_for_equal_aspect() {
+        // same size, and a same-aspect downscale: the whole output, no bars.
+        let r = fit_rect((5120, 1440), (5120, 1440));
+        assert_eq!((r.left, r.top, r.right, r.bottom), (0, 0, 5120, 1440));
+        let r = fit_rect((1920, 1080), (960, 540));
+        assert_eq!((r.left, r.top, r.right, r.bottom), (0, 0, 960, 540));
+    }
+
+    #[test]
+    fn fit_rect_letterboxes_a_narrower_aspect_with_even_side_bars() {
+        // 16:9 into a 32:9 output: full height, centred, pillar-boxed.
+        let r = fit_rect((2560, 1440), (5120, 1440));
+        assert_eq!((r.left, r.top, r.right, r.bottom), (1280, 0, 3840, 1440));
+        assert_eq!(r.left % 2, 0);
+        assert_eq!((r.right - r.left) % 2, 0);
+    }
+
+    #[test]
+    fn fit_rect_letterboxes_a_wider_aspect_with_even_top_bottom_bars() {
+        // 32:9 into a 16:9 output: full width, centred, letter-boxed.
+        let r = fit_rect((5120, 1440), (1920, 1080));
+        assert_eq!((r.left, r.right), (0, 1920));
+        assert!(r.top > 0 && r.bottom < 1080);
+        assert_eq!(r.top % 2, 0);
+        assert_eq!((r.bottom - r.top) % 2, 0);
+    }
 }

@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ### Added
 
+- **Secure desktop in focus mode** ([ADR 0007](docs/adr/0007-secure-desktop-capture.md)): the UAC
+  consent dialog, the lock screen and the logon screen of the source machine are now shown instead
+  of the "Sperrbildschirm oder UAC" placeholder. The SYSTEM helper duplicates the secure desktop
+  and hands the picture to the agent as GPU-shared textures (named handles, keyed mutex), so no
+  frame is copied through the pipe; the encoder, ABR and viewer are unchanged. Helper protocol is
+  now version 2; an older helper keeps the placeholder. The real pointer shape is not captured, so
+  a default arrow is shown at the reported position. A secure desktop whose resolution differs from
+  the focus stream is letterboxed, not stretched. Not yet verified on real hardware.
+
 - **Control at the Windows logon screen** ([ADR 0008](docs/adr/0008-logon-screen-agent.md)): right
   after booting, before anybody signs in, the partner's mouse and keyboard already work (password,
   Ctrl+Alt+Del via Ctrl+Alt+End). The service runs a restricted agent (SYSTEM, input only) at the

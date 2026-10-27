@@ -19,6 +19,11 @@ pub trait Handler: Send + Sync + 'static {
     /// A client connection ended (cleanly, broken pipe or protocol error). The helper releases
     /// all keys here: a crashed agent must never leave a key pressed.
     fn on_disconnect(&self) {}
+
+    /// A connection that carried secure-desktop capture requests ended. Called instead of
+    /// [`Handler::on_disconnect`]: the capture connection must not release the keys the (separate)
+    /// injection connection is holding, and a vanished agent must not leave the capture running.
+    fn on_capture_disconnect(&self) {}
 }
 
 /// Supplies the pipe access policy; re-evaluated every time a new pipe instance is created so a
@@ -73,11 +78,19 @@ pub async fn serve(
 }
 
 /// Runs `on_disconnect` even if the connection task panics or is cancelled.
-struct DisconnectGuard(Arc<dyn Handler>);
+struct DisconnectGuard {
+    handler: Arc<dyn Handler>,
+    /// The connection carried secure-desktop capture requests.
+    capture: bool,
+}
 
 impl Drop for DisconnectGuard {
     fn drop(&mut self) {
-        self.0.on_disconnect();
+        if self.capture {
+            self.handler.on_capture_disconnect();
+        } else {
+            self.handler.on_disconnect();
+        }
     }
 }
 
@@ -87,7 +100,10 @@ async fn connection(
     mut shutdown: watch::Receiver<bool>,
     label: String,
 ) {
-    let _guard = DisconnectGuard(handler.clone());
+    let mut guard = DisconnectGuard {
+        handler: handler.clone(),
+        capture: false,
+    };
     let mut frames = FrameBuffer::default();
     let mut buf = [0u8; 512];
     loop {
@@ -109,6 +125,17 @@ async fn connection(
                 }
             };
             let response = match Request::decode(&payload) {
+                Ok(req) if req.is_secure_capture() => {
+                    guard.capture = true;
+                    // A poll waits for the next picture and a start sets up the GPU: neither may
+                    // hold a runtime worker (the pipe also serves input).
+                    let h = handler.clone();
+                    tokio::task::spawn_blocking(move || h.handle(req))
+                        .await
+                        .unwrap_or_else(|_| {
+                            Some(Response::error(ErrorCode::Failed, "capture handler failed"))
+                        })
+                }
                 Ok(req) => handler.handle(req),
                 Err(e) => Some(Response::error(ErrorCode::BadRequest, e.to_string())),
             };

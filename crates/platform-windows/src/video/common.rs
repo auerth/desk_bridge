@@ -325,6 +325,11 @@ pub fn find_output_by_rect(
         .map(|(_, o)| o)
 }
 
+/// Desktop duplications of one process and output are exclusive, so tests that duplicate the real
+/// screen run one at a time.
+#[cfg(test)]
+pub(crate) static DUPLICATION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,8 +10,8 @@ use deskbridge_platform::video::{
 use deskbridge_platform::{PlatformError, Result};
 use deskbridge_platform_windows::screen::WinScreenProvider;
 use deskbridge_platform_windows::video::{
-    D3dDevice, D3dPresenter, DxgiCapturer, PresentMode, PxRect, adapter_by_index, create_device,
-    list_outputs,
+    D3dDevice, D3dPresenter, DxgiCapturer, PresentMode, PxRect, SecureFrameSource,
+    adapter_by_index, create_device, list_outputs,
 };
 use deskbridge_proto::pb;
 use parking_lot::Mutex;
@@ -28,6 +28,8 @@ pub struct WindowsVideoBackend {
     view_device: Mutex<Option<D3dDevice>>,
     enc_caps: Mutex<Option<pb::VideoCaps>>,
     dec_caps: Mutex<Option<pb::VideoCaps>>,
+    /// Picture of the secure desktop (UAC, lock screen) for the capturers; `None`: placeholder.
+    secure: Option<Arc<dyn SecureFrameSource>>,
 }
 
 impl WindowsVideoBackend {
@@ -44,7 +46,16 @@ impl WindowsVideoBackend {
             view_device: Mutex::new(None),
             enc_caps: Mutex::new(None),
             dec_caps: Mutex::new(None),
+            secure: None,
         }
+    }
+
+    /// Lets the capturers show the secure desktop through `source` (the SYSTEM helper) instead of
+    /// the "interruption" placeholder.
+    #[must_use]
+    pub fn with_secure_source(mut self, source: Arc<dyn SecureFrameSource>) -> Self {
+        self.secure = Some(source);
+        self
     }
 
     /// Device for decoding/presenting: on the adapter that owns the given desktop rectangle, or the
@@ -104,7 +115,11 @@ impl VideoBackend for WindowsVideoBackend {
     }
 
     fn create_capturer(&self) -> Result<Box<dyn ScreenCapturer>> {
-        Ok(Box::new(DxgiCapturer::new(self.screens.clone())))
+        let capturer = DxgiCapturer::new(self.screens.clone());
+        Ok(Box::new(match &self.secure {
+            Some(source) => capturer.with_secure_source(source.clone()),
+            None => capturer,
+        }))
     }
 
     fn create_encoder(&self, cfg: &EncoderConfig, adapter: &str) -> Result<Box<dyn VideoEncoder>> {

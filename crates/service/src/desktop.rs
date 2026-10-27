@@ -151,6 +151,19 @@ impl ThreadDesktop {
     }
 }
 
+impl Drop for ThreadDesktop {
+    fn drop(&mut self) {
+        if let Some((h, _)) = self.current.take() {
+            // SAFETY: handle opened by `follow` and owned here. Fails harmlessly while the
+            // calling thread is still attached to it; a thread that finished (the capture
+            // sessions hand their `ThreadDesktop` back to the controller) lets it close.
+            unsafe {
+                let _ = CloseDesktop(h);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

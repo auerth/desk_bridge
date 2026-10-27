@@ -4,7 +4,8 @@
 //!   this crate as a library for the types and the blocking [`client`].
 //! * the supervisor ([`supervisor`], [`launch`], [`session`]) keeps the agent alive in the console
 //!   session and the secure-desktop helper running on `winsta0\Winlogon`;
-//! * the helper ([`helper`], [`helper_proc`], [`desktop`]) injects input on the secure desktop;
+//! * the helper ([`helper`], [`helper_proc`], [`desktop`]) injects input on the secure desktop and
+//!   ([`secure_capture`]) hands its picture to the agent as GPU-shared textures;
 //! * [`control`] serves `ping` / `send_sas` / `helper_status`;
 //! * [`winsvc`] is the raw SCM glue, [`runtime`] the SCM-independent core (used by `--console`).
 //!
@@ -38,6 +39,8 @@ pub mod pipe_security;
 pub mod pipe_server;
 #[cfg(windows)]
 pub mod runtime;
+#[cfg(windows)]
+pub mod secure_capture;
 #[cfg(windows)]
 pub mod session;
 #[cfg(windows)]

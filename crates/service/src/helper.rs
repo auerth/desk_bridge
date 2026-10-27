@@ -8,11 +8,16 @@
 //! Threading: all pipe I/O runs on tokio; every command is forwarded over a channel to one plain
 //! thread ([`run_worker`]) that owns the injector and the desktop attachment, because
 //! `SetThreadDesktop` is per thread and `SendInput` must come from the attached thread.
+//!
+//! The secure-desktop picture (`SecureStart` / `SecurePoll` / `SecureStop`, protocol 2) is served
+//! by [`SecureCapture`] on its own threads and never passes through the injection worker.
 
 use crate::desktop::ThreadDesktop;
 use crate::pipe_server::Handler;
 use crate::protocol::{ErrorCode, PROTOCOL_VERSION, Request, Response};
+use crate::secure_capture::SecureCapture;
 use deskbridge_platform::input::InputInjector;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
@@ -27,13 +32,43 @@ pub enum Cmd {
 /// Pipe-side handler: validates and forwards, never blocks on injection.
 pub struct HelperHandler {
     tx: parking_lot::Mutex<Sender<Cmd>>,
+    /// `None`: the capture requests are answered with `Unsupported`.
+    capture: Option<Arc<dyn SecureCapture>>,
 }
 
 impl HelperHandler {
+    /// Input only (no secure-desktop picture).
     #[must_use]
     pub fn new(tx: Sender<Cmd>) -> Self {
         Self {
             tx: parking_lot::Mutex::new(tx),
+            capture: None,
+        }
+    }
+
+    /// Input plus the secure-desktop picture.
+    #[must_use]
+    pub fn with_capture(tx: Sender<Cmd>, capture: Arc<dyn SecureCapture>) -> Self {
+        Self {
+            capture: Some(capture),
+            ..Self::new(tx)
+        }
+    }
+
+    fn capture_request(&self, req: Request) -> Response {
+        let Some(capture) = &self.capture else {
+            return Response::error(ErrorCode::Unsupported, "secure capture not available");
+        };
+        match req {
+            Request::SecureStart { x, y, w, h } => capture.start((x, y, w, h)),
+            Request::SecurePoll {
+                generation,
+                wait_ms,
+            } => capture.poll(generation, Duration::from_millis(u64::from(wait_ms))),
+            _ => {
+                capture.stop();
+                Response::Ok
+            }
         }
     }
 }
@@ -53,6 +88,9 @@ impl Handler for HelperHandler {
                 "not served by the helper pipe",
             )),
             Request::ShowRealDisplays => Some(show_real_displays()),
+            capture @ (Request::SecureStart { .. }
+            | Request::SecurePoll { .. }
+            | Request::SecureStop) => Some(self.capture_request(capture)),
             injection => {
                 // A closed channel means the worker died; the helper process is restarted by the
                 // service, nothing sensible to answer for fire-and-forget commands.
@@ -64,6 +102,13 @@ impl Handler for HelperHandler {
 
     fn on_disconnect(&self) {
         let _ = self.tx.lock().send(Cmd::ReleaseAll);
+    }
+
+    fn on_capture_disconnect(&self) {
+        // The agent ended or crashed: nobody polls any more.
+        if let Some(c) = &self.capture {
+            c.stop();
+        }
     }
 }
 
@@ -134,7 +179,10 @@ pub fn apply(inj: &dyn InputInjector, req: &Request) {
         | Request::HelperStatus
         | Request::CableMic { .. }
         | Request::MakeNetworkPrivate
-        | Request::ShowRealDisplays => {}
+        | Request::ShowRealDisplays
+        | Request::SecureStart { .. }
+        | Request::SecurePoll { .. }
+        | Request::SecureStop => {}
     }
 }
 
@@ -242,6 +290,90 @@ mod tests {
         );
         assert_eq!(rx.try_recv().unwrap(), Cmd::ReleaseAll);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[derive(Default)]
+    struct FakeCapture {
+        calls: parking_lot::Mutex<Vec<String>>,
+    }
+    impl SecureCapture for FakeCapture {
+        fn start(&self, rect: (i32, i32, u32, u32)) -> Response {
+            self.calls.lock().push(format!("start {rect:?}"));
+            Response::SecureStarted {
+                luid: 9,
+                x: rect.0,
+                y: rect.1,
+                w: rect.2,
+                h: rect.3,
+            }
+        }
+        fn poll(&self, generation: u32, wait: Duration) -> Response {
+            self.calls
+                .lock()
+                .push(format!("poll {generation} {}ms", wait.as_millis()));
+            Response::SecureNoFrame
+        }
+        fn stop(&self) {
+            self.calls.lock().push("stop".into());
+        }
+    }
+
+    #[test]
+    fn capture_requests_are_served_without_touching_the_injection_worker() {
+        let (tx, rx) = channel();
+        let fake = Arc::new(FakeCapture::default());
+        let h = HelperHandler::with_capture(tx, fake.clone());
+        assert!(matches!(
+            h.handle(Request::SecureStart {
+                x: 1,
+                y: 2,
+                w: 3,
+                h: 4
+            }),
+            Some(Response::SecureStarted { luid: 9, .. })
+        ));
+        assert_eq!(
+            h.handle(Request::SecurePoll {
+                generation: 7,
+                wait_ms: 30
+            }),
+            Some(Response::SecureNoFrame)
+        );
+        assert_eq!(h.handle(Request::SecureStop), Some(Response::Ok));
+        h.on_capture_disconnect();
+        assert_eq!(
+            *fake.calls.lock(),
+            ["start (1, 2, 3, 4)", "poll 7 30ms", "stop", "stop"]
+        );
+        // nothing reached the injector, and a capture connection does not release keys
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn capture_requests_without_capture_are_unsupported() {
+        let (tx, _rx) = channel();
+        let h = HelperHandler::new(tx);
+        for req in [
+            Request::SecureStart {
+                x: 0,
+                y: 0,
+                w: 1,
+                h: 1,
+            },
+            Request::SecurePoll {
+                generation: 0,
+                wait_ms: 0,
+            },
+            Request::SecureStop,
+        ] {
+            assert!(matches!(
+                h.handle(req),
+                Some(Response::Error {
+                    code: ErrorCode::Unsupported,
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

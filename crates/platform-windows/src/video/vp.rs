@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use deskbridge_platform::{PlatformError, Result};
 use windows::Win32::Foundation::{BOOL, RECT};
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_TEX2D_ARRAY_VPOV, D3D11_TEX2D_VPIV, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
+    D3D11_TEX2D_ARRAY_VPOV, D3D11_TEX2D_VPIV, D3D11_VIDEO_COLOR, D3D11_VIDEO_COLOR_0,
+    D3D11_VIDEO_COLOR_RGBA, D3D11_VIDEO_COLOR_YCbCrA, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
     D3D11_VIDEO_PROCESSOR_CONTENT_DESC, D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT,
     D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC,
     D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC,
@@ -174,7 +175,48 @@ impl VpConverter {
             out_views: ViewCache::new(),
         };
         this.configure_colour_spaces();
+        this.set_black_background();
         Ok(this)
+    }
+
+    /// Fills the pixels outside the stream destination rectangle (the letterbox bars, when a
+    /// picture is scaled with a dest rect smaller than the output) with opaque black in the
+    /// output colour space. A no-op for a full-output blt, where no such pixels exist.
+    fn set_black_background(&self) {
+        // SAFETY: plain COM call on an interface we own.
+        unsafe {
+            let (ycbcr, color) = match self.kind {
+                // Studio-range BT.709 black: Y=16, Cb=Cr=128 (normalized).
+                ConvKind::BgraToNv12 => (
+                    BOOL(1),
+                    D3D11_VIDEO_COLOR {
+                        Anonymous: D3D11_VIDEO_COLOR_0 {
+                            YCbCr: D3D11_VIDEO_COLOR_YCbCrA {
+                                Y: 16.0 / 255.0,
+                                Cb: 128.0 / 255.0,
+                                Cr: 128.0 / 255.0,
+                                A: 1.0,
+                            },
+                        },
+                    },
+                ),
+                ConvKind::Nv12ToBgra => (
+                    BOOL(0),
+                    D3D11_VIDEO_COLOR {
+                        Anonymous: D3D11_VIDEO_COLOR_0 {
+                            RGBA: D3D11_VIDEO_COLOR_RGBA {
+                                R: 0.0,
+                                G: 0.0,
+                                B: 0.0,
+                                A: 1.0,
+                            },
+                        },
+                    },
+                ),
+            };
+            self.vctx
+                .VideoProcessorSetOutputBackgroundColor(&self.vp, ycbcr, &color);
+        }
     }
 
     fn configure_colour_spaces(&self) {
