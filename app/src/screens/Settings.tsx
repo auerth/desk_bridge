@@ -114,6 +114,12 @@ export function Settings() {
         {!config.device.input_source && (
           <SwitchRow title={t('settings.logonScreen')} description={t('settings.logonScreenHint')} checked={config.general.logon_screen} onChange={(v) => update((c) => void (c.general.logon_screen = v))} />
         )}
+        <SwitchRow
+          title={t('settings.keepTeamsOnline')}
+          description={t(state.teams_running ? 'settings.keepTeamsOnlineHint' : 'settings.keepTeamsOnlineIdle')}
+          checked={config.general.keep_teams_online}
+          onChange={(v) => update((c) => void (c.general.keep_teams_online = v))}
+        />
         <Row title={t('settings.language')}>
           <Select
             ariaLabel={t('settings.language')}

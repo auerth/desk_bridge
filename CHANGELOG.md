@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+### Added
+
+- **Keep Teams available** (Settings, off by default): while Microsoft Teams runs on this device
+  and nobody has typed for 90 seconds, the agent presses F15 (invisible, marked as Desk Bridge
+  input) so Teams does not switch you to "away" while you work on the partner PC. The setting
+  shows whether a Teams process was found. It does nothing on a locked screen. Not yet verified
+  on real hardware with new Teams.
+
 ## [0.1.6] - 2026-10-27
 
 Install it on both devices; after installing it on the PC, "<Partner> aktualisieren" updates the

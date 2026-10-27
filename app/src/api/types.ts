@@ -290,6 +290,8 @@ export interface AppState {
   update: UpdateDto;
   metrics: MetricsDto;
   paused: boolean;
+  /** Microsoft Teams runs on this device. */
+  teams_running: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -312,6 +314,8 @@ export interface GeneralConfig {
   paused: boolean;
   /** Can be controlled from the partner already at the Windows sign-in screen (ADR 0008). */
   logon_screen: boolean;
+  /** While Teams runs here, register input so it does not show the user as away. */
+  keep_teams_online: boolean;
 }
 
 export interface NetworkConfig {
@@ -449,7 +453,7 @@ export function defaultConfig(): Config {
   return {
     schema_version: 1,
     device: { name: '', input_source: true, headset_sink: true, stream_source: false, onboarding_done: false },
-    general: { autostart: true, language: 'auto', theme: 'system', log_level: 'info', paused: false, logon_screen: true },
+    general: { autostart: true, language: 'auto', theme: 'system', log_level: 'info', paused: false, logon_screen: true, keep_teams_online: false },
     network: { port: 47820, manual_hosts: [], bind_address: '', advertise_addresses: [] },
     input: {
       enabled: true,

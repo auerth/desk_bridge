@@ -211,6 +211,7 @@ impl Engine {
                 audio_loss_pct: self.audio_metrics().2,
             },
             paused: self.cfg.general.paused,
+            teams_running: self.teams_running,
         }
     }
 

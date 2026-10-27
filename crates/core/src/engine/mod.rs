@@ -10,6 +10,7 @@ mod focus;
 mod input;
 mod netprofile;
 mod pairing;
+mod presence;
 mod remote_logs;
 pub mod session;
 mod transfers;
@@ -297,6 +298,8 @@ pub(crate) struct Engine {
     pub proc_cpu: f32,
     pub proc_rss: f32,
     pub tick_count: u64,
+    /// A Teams process runs on this device (shown next to the "keep Teams online" setting).
+    pub teams_running: bool,
     /// A network category check is running in the background.
     pub net_check_pending: bool,
     /// Connected networks classified as Public at the last check.
@@ -500,6 +503,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         proc_cpu: 0.0,
         proc_rss: 0.0,
         tick_count: 0,
+        teams_running: false,
         net_check_pending: false,
         public_networks: Vec::new(),
         pairing: None,
@@ -938,6 +942,7 @@ impl Engine {
         }
 
         self.tick_network_profile();
+        self.tick_presence();
         self.tick_display_restore();
         self.tick_remote_logs();
         self.tick_partner_update();

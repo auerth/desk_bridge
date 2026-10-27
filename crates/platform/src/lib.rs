@@ -13,6 +13,7 @@ pub mod hotkey;
 pub mod input;
 pub mod mock;
 pub mod power;
+pub mod presence;
 pub mod screen;
 pub mod secret;
 pub mod system;

@@ -7,6 +7,7 @@ use deskbridge_platform_windows::{
     clipboard::WinClipboard,
     input::{WinInputCapture, WinInputInjector},
     power::WinPowerManager,
+    presence::WinPresence,
     screen::WinScreenProvider,
     secret::DpapiProtector,
 };
@@ -48,6 +49,7 @@ pub fn build() -> Platform {
         virtual_audio: virtual_audio(),
         local_output: Arc::new(WinLocalOutput::new()),
         system: Arc::new(ServiceClient::new()),
+        presence: Arc::new(WinPresence::new()),
         // UAC, lock screen and logon are captured by the SYSTEM helper and handed over as shared
         // textures; without a (current) helper the viewer keeps the "interruption" placeholder.
         video: Arc::new(

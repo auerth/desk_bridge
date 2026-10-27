@@ -191,6 +191,7 @@ function seedState(): AppState {
     },
     metrics: { rtt_history_us: connected ? Array.from({ length: 60 }, (_, i) => 900 + Math.round(Math.sin(i / 5) * 160 + ((i * 37) % 11) * 12)) : [], input_latency_p50_us: connected ? 480 : null, input_latency_p95_us: connected ? (params.get('p95') === 'high' ? 5200 : 1350) : null, input_latency_max_us: connected ? 3100 : null, audio_buffer_fill_ms: 9.6, audio_drift_ppm: 12, audio_loss_pct: 0, agent_cpu_pct: 0.4, agent_rss_mb: 42 },
     paused: false,
+    teams_running: !has('noteams'),
   };
   return state;
 }

@@ -631,6 +631,34 @@ impl crate::system::SystemServices for MockSystem {
     }
 }
 
+/// Presence stand-in: Teams running and the idle time are set by the test, nudges are counted.
+#[derive(Default)]
+pub struct MockPresence {
+    pub teams: std::sync::atomic::AtomicBool,
+    pub idle_secs: std::sync::atomic::AtomicU64,
+    pub nudges: std::sync::atomic::AtomicU32,
+}
+
+impl crate::presence::Presence for MockPresence {
+    fn teams_running(&self) -> bool {
+        self.teams.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn idle_for(&self) -> Option<std::time::Duration> {
+        Some(std::time::Duration::from_secs(
+            self.idle_secs.load(std::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+
+    fn nudge(&self) -> Result<()> {
+        self.nudges
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.idle_secs
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+}
+
 /// Local speaker silencing stand-in: remembers mute switch and volume per device (unknown
 /// devices are unmuted at full volume).
 #[derive(Default)]

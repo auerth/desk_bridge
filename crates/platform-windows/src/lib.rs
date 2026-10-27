@@ -11,6 +11,7 @@ pub mod input;
 pub mod keymap;
 pub mod network;
 pub mod power;
+pub mod presence;
 pub mod screen;
 pub mod secret;
 pub mod video;

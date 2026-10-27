@@ -252,6 +252,8 @@ pub struct AppState {
     pub update: UpdateDto,
     pub metrics: MetricsDto,
     pub paused: bool,
+    /// Microsoft Teams runs on this device (for the "keep Teams online" setting).
+    pub teams_running: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

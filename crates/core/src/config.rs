@@ -82,6 +82,9 @@ pub struct GeneralConfig {
     /// Control this device from the partner already at the Windows logon screen (after boot,
     /// before anyone signed in). The service then runs a restricted agent there (ADR 0008).
     pub logon_screen: bool,
+    /// While Teams runs on this device, register input now and then so Teams does not show the
+    /// user as away (they are working on the partner device).
+    pub keep_teams_online: bool,
 }
 
 impl Default for GeneralConfig {
@@ -93,6 +96,7 @@ impl Default for GeneralConfig {
             log_level: "info".into(),
             paused: false,
             logon_screen: true,
+            keep_teams_online: false,
         }
     }
 }
@@ -495,6 +499,14 @@ mod tests {
         c.sanitize();
         assert_eq!(c.input.switch_delay_ms, 500);
         assert_eq!(c.network.port, deskbridge_proto::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn keep_teams_online_is_opt_in() {
+        let old: Config = toml::from_str("[general]\nautostart = true\n").unwrap();
+        assert!(!old.general.keep_teams_online);
+        let on: Config = toml::from_str("[general]\nkeep_teams_online = true\n").unwrap();
+        assert!(on.general.keep_teams_online);
     }
 
     #[test]

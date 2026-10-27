@@ -10,10 +10,11 @@ use deskbridge_platform::display::DisplayManager;
 use deskbridge_platform::input::{InputCapture, InputInjector};
 use deskbridge_platform::mock::{
     MockAudioCapture, MockAudioDevices, MockAudioPlayback, MockCapture, MockClipboard,
-    MockInjector, MockLocalOutput, MockScreens, MockSystem, MockVirtualAudio, MockWebClient,
-    audio_device, screen,
+    MockInjector, MockLocalOutput, MockPresence, MockScreens, MockSystem, MockVirtualAudio,
+    MockWebClient, audio_device, screen,
 };
 use deskbridge_platform::power::{PowerEvent, PowerManager};
+use deskbridge_platform::presence::Presence;
 use deskbridge_platform::screen::ScreenProvider;
 use deskbridge_platform::secret::{PlainProtector, SecretProtector};
 use deskbridge_platform::system::SystemServices;
@@ -36,6 +37,8 @@ pub struct Platform {
     pub virtual_audio: Arc<dyn VirtualAudio>,
     pub local_output: Arc<dyn LocalOutput>,
     pub system: Arc<dyn SystemServices>,
+    /// Teams presence ("keep me available").
+    pub presence: Arc<dyn Presence>,
     pub video: Arc<dyn VideoBackend>,
     pub display: Arc<dyn DisplayManager>,
     /// HTTPS GET for the release check.
@@ -75,6 +78,7 @@ pub struct MockHandles {
     pub display: Arc<MockDisplayManager>,
     pub web: Arc<MockWebClient>,
     pub system: Arc<MockSystem>,
+    pub presence: Arc<MockPresence>,
 }
 
 impl Platform {
@@ -100,6 +104,7 @@ impl Platform {
         let display = Arc::new(MockDisplayManager::new());
         let web = Arc::new(MockWebClient::default());
         let system = Arc::new(MockSystem::default());
+        let presence = Arc::new(MockPresence::default());
         let p = Self {
             capture: capture.clone(),
             injector: injector.clone(),
@@ -113,6 +118,7 @@ impl Platform {
             virtual_audio: virtual_audio.clone(),
             local_output: local_output.clone(),
             system: system.clone(),
+            presence: presence.clone(),
             video: video.clone(),
             display: display.clone(),
             web: web.clone(),
@@ -134,6 +140,7 @@ impl Platform {
                 display,
                 web,
                 system,
+                presence,
             },
         )
     }
