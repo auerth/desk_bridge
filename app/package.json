@@ -1,7 +1,7 @@
 {
   "name": "desk-bridge-ui",
   "private": true,
-  "version": "0.1.6-beta",
+  "version": "0.1.6",
   "type": "module",
   "description": "Desk Bridge UI (Tauri 2 + React 19)",
   "scripts": {

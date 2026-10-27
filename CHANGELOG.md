@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-27
+
+Install it on both devices; after installing it on the PC, "<Partner> aktualisieren" updates the
+laptop over the connection.
+
 ### Added
 
 - **Secure desktop in focus mode** ([ADR 0007](docs/adr/0007-secure-desktop-capture.md)): the UAC
@@ -25,15 +30,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
   "<Name> ist am Anmeldebildschirm". New setting *Schon am Anmeldebildschirm steuern* (target
   devices only, on by default); switching it off deletes the copy. The secure-desktop helper now also runs before the
   sign-in.
-
-## [0.1.6-beta] - 2026-10-22
-
-Beta test build, also for confirming the still-unverified 0.1.4/0.1.5 fixes on the laptop
-(taskbar hover previews, laptop sound at volume 0). Secure-desktop capture (showing the laptop's
-UAC prompt in focus mode) is designed in [ADR 0007](docs/adr/0007-secure-desktop-capture.md) but
-not yet implemented.
-
-### Added
 
 - "Eingeschränkte Rechte" warning: button **Als Administrator neu starten**. The agent starts its
   successor through the UAC prompt (`restart_agent { elevated: true }`); a declined prompt falls
