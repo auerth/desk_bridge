@@ -1,7 +1,13 @@
 //! Agent supervisor and helper keeper.
 //!
-//! The decisions are pure functions ([`decide_agent`], [`decide_helper`], [`Backoff`]) so they are
-//! unit-tested; [`Supervisor`] feeds them with real observations once per second.
+//! The decisions are pure functions ([`decide_agent`], [`decide_helper`], [`decide_logon_agent`],
+//! [`Backoff`]) so they are unit-tested; [`Supervisor`] feeds them with real observations once per
+//! second.
+//!
+//! Before anyone signs in (after a reboot, after a sign-out) the console session shows the logon
+//! screen: the helper runs there too, and so does the *logon-screen agent*
+//! (`deskbridge-agent --logon-screen`, SYSTEM, ADR 0008) when the user's agent left a profile for
+//! it. It is ended as soon as somebody signs in, before the user's own agent needs the port.
 
 use crate::control::{HelperStatus, SharedHelperStatus};
 use crate::launch::{self, Launched};
@@ -16,6 +22,8 @@ use tokio::sync::Notify;
 /// Name of the agent's single-instance mutex (kept in sync with `core::brand`, see tests).
 pub const AGENT_MUTEX: &str = "Global\\softwelop-deskbridge-agent";
 pub const AGENT_EXE: &str = "deskbridge-agent.exe";
+/// Switch that starts the agent at the logon screen (kept in sync with `core::brand`).
+pub const LOGON_SCREEN_ARG: &str = "--logon-screen";
 
 /// How long we leave the scheduled task time to start the agent after a logon.
 pub const INITIAL_GRACE: Duration = Duration::from_secs(20);
@@ -147,6 +155,62 @@ pub fn decide_helper(
     }
 }
 
+/// Observations the logon-screen agent decision is based on (ADR 0008).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogonView {
+    /// An interactive console session exists.
+    pub console: bool,
+    /// Somebody is signed in to it.
+    pub user: bool,
+    /// The user's agent left a profile for the logon screen (setting on, see `agent::logon`).
+    pub profile: bool,
+    /// A user's agent still runs (fast user switching: it holds the port and the partner).
+    pub user_agent_running: bool,
+    pub running: bool,
+    /// The last logon agent ended with code 0 (no usable profile, switched off): not again
+    /// until the console session or its user changes.
+    pub suppressed: bool,
+    pub since_exit: Option<Duration>,
+    pub backoff: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogonDecision {
+    Idle,
+    Wait,
+    Start,
+    /// Somebody signed in (or the setting went off): end it now.
+    Stop,
+}
+
+/// Should the logon-screen agent run?
+#[must_use]
+pub fn decide_logon_agent(v: &LogonView) -> LogonDecision {
+    let wanted = v.console && !v.user && v.profile && !v.user_agent_running;
+    match (wanted, v.running) {
+        (false, true) => LogonDecision::Stop,
+        (false, false) | (true, true) => LogonDecision::Idle,
+        (true, false) if v.suppressed => LogonDecision::Idle,
+        (true, false) => {
+            if v.since_exit.is_some_and(|s| s < v.backoff) {
+                LogonDecision::Wait
+            } else {
+                LogonDecision::Start
+            }
+        }
+    }
+}
+
+/// `%ProgramData%\softwelop\DeskBridge\logon\config\identity.bin`, written by the user's agent
+/// while `general.logon_screen` is on (kept in sync with `agent::logon`).
+#[must_use]
+pub fn logon_profile_identity() -> PathBuf {
+    crate::winutil::program_data_dir()
+        .join("logon")
+        .join("config")
+        .join("identity.bin")
+}
+
 /// Is `code` the exit code of an intentional shutdown?
 #[must_use]
 pub fn is_clean_exit(code: u32) -> bool {
@@ -199,6 +263,14 @@ struct SessionKey {
     user: String,
 }
 
+/// What a helper was started for: the console session and, once somebody signed in, the user
+/// (its SID is in the helper's pipe ACL).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HelperKey {
+    session: u32,
+    user: Option<String>,
+}
+
 struct Tracked {
     process: crate::winutil::OwnedHandle,
     pid: u32,
@@ -215,6 +287,9 @@ pub struct Options {
 pub struct Supervisor {
     opts: Options,
     shared: Arc<Shared>,
+    /// Interactive console session, also while it shows the logon screen.
+    console: Option<u32>,
+    /// Console session with a signed-in user.
     key: Option<SessionKey>,
     // agent
     agent: Option<Tracked>,
@@ -226,9 +301,14 @@ pub struct Supervisor {
     /// Agent liveness at the previous tick (for the cable microphone guard).
     agent_was_alive: Option<bool>,
     // helper
-    helper: Option<(Tracked, SessionKey)>,
+    helper: Option<(Tracked, HelperKey)>,
     helper_backoff: Backoff,
     helper_last_exit: Option<Instant>,
+    // logon-screen agent (session it runs in)
+    logon: Option<(Tracked, u32)>,
+    logon_backoff: Backoff,
+    logon_last_exit: Option<Instant>,
+    logon_suppressed: bool,
 }
 
 impl Supervisor {
@@ -237,6 +317,7 @@ impl Supervisor {
         Self {
             opts,
             shared,
+            console: None,
             key: None,
             agent: None,
             agent_backoff: Backoff::default(),
@@ -248,6 +329,10 @@ impl Supervisor {
             helper: None,
             helper_backoff: Backoff::default(),
             helper_last_exit: None,
+            logon: None,
+            logon_backoff: Backoff::default(),
+            logon_last_exit: None,
+            logon_suppressed: false,
         }
     }
 
@@ -273,6 +358,9 @@ impl Supervisor {
                 Err(RecvTimeoutError::Timeout) => {}
             }
         }
+        // Without the service nobody would end it at the sign-in, and it would keep the port
+        // the user's agent needs.
+        self.stop_logon_agent("service stopping");
         self.stop_helper("service stopping");
         self.publish_helper();
         self.shared.cable_mic.on_service_stop();
@@ -280,13 +368,23 @@ impl Supervisor {
     }
 
     fn observe_session(&mut self, now: Instant) {
-        let current = session::active_console_session()
+        let console = session::active_console_session();
+        if console != self.console {
+            tracing::info!(from = ?self.console, to = ?console, "console session id changed");
+            self.console = console;
+            self.logon_suppressed = false;
+            self.logon_backoff.reset();
+        }
+        let current = console
             .and_then(|s| session::session_user(s).map(|user| SessionKey { session: s, user }));
         if current == self.key {
             return;
         }
         tracing::info!(from = ?self.key, to = ?current, "console session changed");
         self.key = current;
+        // Signed out again: the logon screen gets its agent back.
+        self.logon_suppressed = false;
+        self.logon_backoff.reset();
         // New session / user: forget everything about the old one.
         self.agent = None;
         self.agent_seen_alive = false;
@@ -303,6 +401,11 @@ impl Supervisor {
 
     pub fn tick(&mut self, now: Instant) {
         self.observe_session(now);
+        // First: a sign-in ends the logon-screen agent before the user's agent is adopted or
+        // started (it must not be mistaken for the user's agent, and it holds the port).
+        if self.opts.manage_agent {
+            self.tick_logon_agent(now);
+        }
         if self.opts.manage_helper {
             self.tick_helper(now);
         }
@@ -410,6 +513,92 @@ impl Supervisor {
         }
     }
 
+    // ---- logon-screen agent (ADR 0008) --------------------------------------------------
+
+    fn tick_logon_agent(&mut self, now: Instant) {
+        if let Some((t, _)) = &self.logon
+            && let Some(code) = launch::exit_code(&t.process)
+        {
+            let ran_for = now.duration_since(t.since);
+            if is_clean_exit(code) {
+                tracing::info!(pid = t.pid, ?ran_for, "logon-screen agent ended (code 0)");
+                self.logon_suppressed = true;
+            } else {
+                tracing::warn!(
+                    pid = t.pid,
+                    exit_code = format!("{code:#010x}"),
+                    ?ran_for,
+                    "logon-screen agent crashed, will restart"
+                );
+                self.logon_backoff.on_exit(ran_for);
+            }
+            self.logon_last_exit = Some(now);
+            self.logon = None;
+        }
+        // Started for a console session that is gone (fast user switching, reconnect).
+        if let Some((_, s)) = &self.logon
+            && Some(*s) != self.console
+        {
+            self.stop_logon_agent("console session changed");
+        }
+        let view = LogonView {
+            console: self.console.is_some(),
+            user: self.key.is_some(),
+            profile: logon_profile_identity().is_file(),
+            user_agent_running: launch::mutex_exists(AGENT_MUTEX),
+            running: self.logon.is_some(),
+            suppressed: self.logon_suppressed,
+            since_exit: self.logon_last_exit.map(|t| now.duration_since(t)),
+            backoff: self.logon_backoff.delay(),
+        };
+        match decide_logon_agent(&view) {
+            LogonDecision::Idle | LogonDecision::Wait => {}
+            LogonDecision::Stop => self.stop_logon_agent(if view.user {
+                "user signed in"
+            } else {
+                "no longer wanted"
+            }),
+            LogonDecision::Start => self.start_logon_agent(now),
+        }
+    }
+
+    fn start_logon_agent(&mut self, now: Instant) {
+        let Some(session) = self.console else { return };
+        let exe = self.opts.exe_dir.join(AGENT_EXE);
+        let args = [LOGON_SCREEN_ARG.to_string()];
+        self.logon_last_exit = Some(now); // spacing for the next attempt if this one fails
+        match launch::launch_helper(session, &exe, &args) {
+            Ok(Launched { process, pid }) => {
+                tracing::info!(pid, session, "logon-screen agent started");
+                self.logon = Some((
+                    Tracked {
+                        process,
+                        pid,
+                        since: now,
+                    },
+                    session,
+                ));
+            }
+            Err(e) => {
+                tracing::error!(
+                    "cannot start the logon-screen agent ({}): {e}",
+                    exe.display()
+                );
+                self.logon_backoff.on_exit(Duration::ZERO);
+            }
+        }
+    }
+
+    fn stop_logon_agent(&mut self, why: &str) {
+        if let Some((t, _)) = self.logon.take() {
+            tracing::info!(pid = t.pid, "stopping logon-screen agent: {why}");
+            launch::terminate(&t.process);
+            // Wait until the UDP port is free again for the user's agent.
+            launch::wait_for_exit(&t.process, Duration::from_secs(3));
+            self.logon_last_exit = None;
+        }
+    }
+
     // ---- helper -------------------------------------------------------------------------
 
     fn tick_helper(&mut self, now: Instant) {
@@ -427,12 +616,15 @@ impl Supervisor {
             self.helper_last_exit = Some(now);
             self.helper = None;
         }
-        let key_matches = match (&self.helper, &self.key) {
+        let wanted = self.helper_key();
+        let key_matches = match (&self.helper, &wanted) {
             (Some((_, hk)), Some(k)) => hk == k,
             _ => false,
         };
+        // The helper also serves the logon screen (Ctrl+Alt+Del screen, password field): it is
+        // wanted whenever there is a console session, signed in or not.
         let action = decide_helper(
-            self.key.is_some(),
+            wanted.is_some(),
             self.helper.is_some(),
             key_matches,
             self.helper_last_exit.map(|t| now.duration_since(t)),
@@ -440,14 +632,26 @@ impl Supervisor {
         );
         match action {
             HelperDecision::Idle | HelperDecision::Wait => {}
-            HelperDecision::Stop => self.stop_helper("console session changed"),
+            HelperDecision::Stop => self.stop_helper("console session or user changed"),
             HelperDecision::Start => self.start_helper(now),
         }
         self.publish_helper();
     }
 
+    /// The helper the console needs right now.
+    fn helper_key(&self) -> Option<HelperKey> {
+        self.console.map(|session| HelperKey {
+            session,
+            user: self
+                .key
+                .as_ref()
+                .filter(|k| k.session == session)
+                .map(|k| k.user.clone()),
+        })
+    }
+
     fn start_helper(&mut self, now: Instant) {
-        let Some(key) = self.key.clone() else { return };
+        let Some(key) = self.helper_key() else { return };
         let exe = match std::env::current_exe() {
             Ok(e) => e,
             Err(e) => {
@@ -460,7 +664,10 @@ impl Supervisor {
             "--parent-pid".into(),
             std::process::id().to_string(),
         ];
-        if let Some(sid) = self.shared.user_sid.lock().clone() {
+        // Nobody signed in: the pipe is for SYSTEM only (the logon-screen agent).
+        if key.user.is_some()
+            && let Some(sid) = self.shared.user_sid.lock().clone()
+        {
             args.push("--user-sid".into());
             args.push(sid);
         }
@@ -649,6 +856,92 @@ mod tests {
         );
     }
 
+    fn logon_view() -> LogonView {
+        LogonView {
+            console: true,
+            user: false,
+            profile: true,
+            user_agent_running: false,
+            running: false,
+            suppressed: false,
+            since_exit: None,
+            backoff: BACKOFF_MIN,
+        }
+    }
+
+    #[test]
+    fn logon_agent_runs_only_at_the_logon_screen() {
+        assert_eq!(decide_logon_agent(&logon_view()), LogonDecision::Start);
+        // nothing to run with, or no console at all
+        for v in [
+            LogonView {
+                profile: false,
+                ..logon_view()
+            },
+            LogonView {
+                console: false,
+                ..logon_view()
+            },
+            LogonView {
+                user_agent_running: true,
+                ..logon_view()
+            },
+        ] {
+            assert_eq!(decide_logon_agent(&v), LogonDecision::Idle, "{v:?}");
+        }
+        // somebody signed in: stop it at once
+        let v = LogonView {
+            user: true,
+            running: true,
+            ..logon_view()
+        };
+        assert_eq!(decide_logon_agent(&v), LogonDecision::Stop);
+        // the user's agent of a disconnected session holds the port
+        let v = LogonView {
+            user_agent_running: true,
+            running: true,
+            ..logon_view()
+        };
+        assert_eq!(decide_logon_agent(&v), LogonDecision::Stop);
+        let v = LogonView {
+            running: true,
+            ..logon_view()
+        };
+        assert_eq!(decide_logon_agent(&v), LogonDecision::Idle);
+    }
+
+    #[test]
+    fn logon_agent_backoff_and_clean_exit() {
+        let v = LogonView {
+            since_exit: Some(Duration::from_millis(500)),
+            ..logon_view()
+        };
+        assert_eq!(decide_logon_agent(&v), LogonDecision::Wait);
+        let v = LogonView {
+            since_exit: Some(BACKOFF_MIN),
+            ..logon_view()
+        };
+        assert_eq!(decide_logon_agent(&v), LogonDecision::Start);
+        let v = LogonView {
+            suppressed: true,
+            since_exit: Some(Duration::from_secs(999)),
+            ..logon_view()
+        };
+        assert_eq!(decide_logon_agent(&v), LogonDecision::Idle);
+    }
+
+    #[test]
+    fn logon_profile_path_matches_the_agent() {
+        let p = logon_profile_identity();
+        let s = p.to_string_lossy();
+        assert!(
+            s.ends_with(r"softwelop\DeskBridge\logon\config\identity.bin"),
+            "{s}"
+        );
+        let agent = include_str!("../../agent/src/logon.rs");
+        assert!(agent.contains(r#"program_data_dir().join("logon")"#));
+    }
+
     #[test]
     fn mutex_name_matches_core_brand() {
         let core = include_str!("../../core/src/brand.rs");
@@ -661,5 +954,13 @@ mod tests {
             line.contains(&format!("\"{escaped}\"")),
             "drifted from core: {line}"
         );
+    }
+
+    #[test]
+    fn logon_switch_matches_core_brand() {
+        let core = include_str!("../../core/src/brand.rs");
+        assert!(core.contains(&format!(
+            "pub const LOGON_SCREEN_ARG: &str = \"{LOGON_SCREEN_ARG}\";"
+        )));
     }
 }

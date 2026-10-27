@@ -134,6 +134,8 @@ export interface ConnectionDto {
   error: string | null;
   version_mismatch: boolean;
   peer_version: string | null;
+  /** The partner is at its Windows sign-in screen: only mouse and keyboard until someone signs in. */
+  peer_logon_screen: boolean;
 }
 
 export interface DiscoveredDto {
@@ -308,6 +310,8 @@ export interface GeneralConfig {
   theme: 'system' | 'light' | 'dark';
   log_level: 'error' | 'warn' | 'info' | 'debug' | 'trace';
   paused: boolean;
+  /** Can be controlled from the partner already at the Windows sign-in screen (ADR 0008). */
+  logon_screen: boolean;
 }
 
 export interface NetworkConfig {
@@ -445,7 +449,7 @@ export function defaultConfig(): Config {
   return {
     schema_version: 1,
     device: { name: '', input_source: true, headset_sink: true, stream_source: false, onboarding_done: false },
-    general: { autostart: true, language: 'auto', theme: 'system', log_level: 'info', paused: false },
+    general: { autostart: true, language: 'auto', theme: 'system', log_level: 'info', paused: false, logon_screen: true },
     network: { port: 47820, manual_hosts: [], bind_address: '', advertise_addresses: [] },
     input: {
       enabled: true,

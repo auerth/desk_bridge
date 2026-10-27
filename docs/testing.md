@@ -163,6 +163,7 @@ M3b: virtual driver and microphone (only if ADR 0003 selects a driver; otherwise
 
 - [ ] UAC prompt on the laptop. Expected: operable from the PC keyboard/mouse.
 - [ ] Lock screen and sign-in screen of the laptop. Expected: operable from the PC; `Ctrl+Alt+End` sends Ctrl+Alt+Del.
+- [ ] Logon screen right after a reboot (ADR 0008, nobody signed in). Expected: the PC shows "Laptop ist am Anmeldebildschirm" within seconds, the password can be typed with the PC keyboard; after the sign-in the normal agent takes over (service log `stopping logon-screen agent: user signed in`), clipboard and sound work again. With *Schon am Anmeldebildschirm steuern* off: nothing at the logon screen.
 - [ ] Kill the agent. Expected: service restarts it and **first releases all keys**.
 - [ ] Sleep/wake of each device repeatedly, Wi-Fi <-> cable switch, router restart. Expected: automatic recovery each time.
 - [ ] Different app versions on the two devices. Expected: UI shows the version mismatch; incompatible major shows "Bitte beide Geräte aktualisieren".

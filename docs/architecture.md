@@ -41,6 +41,7 @@ flowchart LR
 | `deskbridge-agent.exe` | user session, **elevated** (scheduled task *DeskBridge Agent*, run level highest, no UAC prompt) | the product: network, input, audio, clipboard, files, capture/encode, decode/render | M1 |
 | `Desk Bridge.exe` | user session, normal | UI, tray, OSD; talks to the agent over `\\.\pipe\deskbridge-ui` (ACL: current user) | M0 |
 | `deskbridge-service.exe` | Windows service (SYSTEM) | starts/supervises the agent, secure-desktop helper (UAC, lock screen), `SendSAS`, watchdog (`release_all` on agent crash) | M6 |
+| `deskbridge-agent.exe --logon-screen` | console session, **SYSTEM**, `winsta0\Winlogon`, only while nobody is signed in | input target at the logon screen, on a protected copy of identity, peers and config ([ADR 0008](adr/0008-logon-screen-agent.md)) | after M7 |
 | `deskbridge-setup.exe` | elevated, short-lived | installer helper: firewall rule, scheduled task, SendTo shortcut, driver store/devices, uninstall | M0 |
 
 Why agent and UI are separate: the UI may crash or be closed without mouse and audio dropping out,
@@ -82,6 +83,11 @@ flowchart LR
   (user quit the agent) is respected. The crash exit code is logged to
   `%ProgramData%\softwelop\DeskBridge\logs\service.log.<date>`; the restarted agent calls
   `release_stuck_keys()` (target devices only) before doing anything else.
+* **Logon screen** ([ADR 0008](adr/0008-logon-screen-agent.md)): while the console session has
+  no signed-in user, the service runs the helper (pipe SYSTEM-only) and `deskbridge-agent
+  --logon-screen` (SYSTEM, input target only) if the user's agent left its profile copy in
+  `%ProgramData%\softwelop\DeskBridge\logon`. At the sign-in it is terminated before the user's
+  agent is started or adopted.
 * **Helper**: injects with the same `WinInputInjector` as the agent, on a dedicated thread that
   follows the input desktop (`OpenInputDesktop` + `SetThreadDesktop`). When the agent connection
   drops, the helper releases all keys itself.

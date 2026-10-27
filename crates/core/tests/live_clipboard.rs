@@ -37,6 +37,7 @@ async fn start(
         bind: "127.0.0.1:0".parse().unwrap(),
         enable_discovery: false,
         identity: None,
+        logon_screen: false,
     })
     .await
     .unwrap();

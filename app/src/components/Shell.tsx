@@ -168,6 +168,11 @@ export function WarningBanners() {
   return (
     <div className="banners">
       {!conn.connected && state && <Banner tone="warn" title={t('agent.lost')} />}
+      {state?.connection.peer_logon_screen && (
+        <Banner tone="info" title={t('logon.title', { name: state.connection.peer?.name ?? '' })}>
+          {t('logon.body')}
+        </Banner>
+      )}
       {mixed && !dismissed.includes('versions_mixed') && (
         <Banner
           tone="info"

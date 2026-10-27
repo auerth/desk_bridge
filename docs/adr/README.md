@@ -21,6 +21,7 @@ request.
 | [0005](0005-video-spike.md) | Video spike: 5120x1440@120 capture, encode, decode | see file |
 | [0006](0006-service-and-secure-desktop.md) | SYSTEM service, secure-desktop helper, Ctrl+Alt+Del | Accepted |
 | [0007](0007-secure-desktop-capture.md) | Showing the secure desktop in focus mode (UAC, lock, logon) | Proposed |
+| [0008](0008-logon-screen-agent.md) | Control at the Windows logon screen (agent before sign-in) | Proposed |
 
 Add new rows when you add a file.
 

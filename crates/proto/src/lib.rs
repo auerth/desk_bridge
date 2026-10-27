@@ -60,6 +60,9 @@ pub mod caps {
     pub const UPDATE_REMOTE: &str = "update.remote";
     /// Answers `LogsRequest` with its recent log files.
     pub const LOGS: &str = "logs";
+    /// The device is at the Windows logon screen (nobody signed in): only mouse, keyboard and
+    /// Ctrl+Alt+Del work, everything else starts once a user has signed in.
+    pub const LOGON_SCREEN: &str = "session.logon-screen";
 }
 
 #[cfg(test)]

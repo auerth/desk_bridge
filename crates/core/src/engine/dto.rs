@@ -76,6 +76,7 @@ impl Engine {
                 .session
                 .as_ref()
                 .map(|s| s.link.hello.app_version.clone()),
+            peer_logon_screen: self.peer_has_cap(deskbridge_proto::caps::LOGON_SCREEN),
         };
 
         let connected = matches!(self.conn_state, ConnState::Connected | ConnState::Degraded);

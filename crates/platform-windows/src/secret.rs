@@ -1,4 +1,5 @@
-//! DPAPI-backed [`SecretProtector`] (current-user scope).
+//! DPAPI-backed [`SecretProtector`] (current-user scope, or machine scope for the copy the
+//! logon-screen agent reads, ADR 0008).
 //!
 //! `identity.bin` (the device private key) is encrypted with `CryptProtectData` so it is only
 //! readable by the same Windows user on the same machine. A fixed application entropy is mixed
@@ -8,20 +9,39 @@
 use deskbridge_platform::{PlatformError, Result, secret::SecretProtector};
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
 use windows::Win32::Security::Cryptography::{
-    CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
+    CRYPT_INTEGER_BLOB, CRYPTPROTECT_LOCAL_MACHINE, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData,
+    CryptUnprotectData,
 };
 
 /// Application entropy mixed into every blob.
 pub const DPAPI_ENTROPY: &[u8] = b"softwelop.deskbridge.identity";
 
-/// DPAPI protector. `Default` uses [`DPAPI_ENTROPY`].
+/// DPAPI protector. `Default` uses [`DPAPI_ENTROPY`] and the current user's key.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DpapiProtector;
+pub struct DpapiProtector {
+    machine: bool,
+}
 
 impl DpapiProtector {
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self { machine: false }
+    }
+
+    /// Machine scope (`CRYPTPROTECT_LOCAL_MACHINE`): any account on this computer can decrypt,
+    /// so the file itself must be readable by SYSTEM and administrators only. Used for the copy
+    /// of the identity the agent at the logon screen (SYSTEM, no user profile) runs with.
+    #[must_use]
+    pub fn machine() -> Self {
+        Self { machine: true }
+    }
+
+    fn flags(self) -> u32 {
+        if self.machine {
+            CRYPTPROTECT_UI_FORBIDDEN | CRYPTPROTECT_LOCAL_MACHINE
+        } else {
+            CRYPTPROTECT_UI_FORBIDDEN
+        }
     }
 }
 
@@ -78,7 +98,7 @@ impl SecretProtector for DpapiProtector {
                 Some(&entropy),
                 None,
                 None,
-                CRYPTPROTECT_UI_FORBIDDEN,
+                self.flags(),
                 &mut out,
             )
             .map_err(|e| os_error("CryptProtectData", &e))?;
@@ -101,6 +121,7 @@ impl SecretProtector for DpapiProtector {
                 Some(&entropy),
                 None,
                 None,
+                // The scope is recorded in the blob.
                 CRYPTPROTECT_UI_FORBIDDEN,
                 &mut out,
             )
@@ -132,6 +153,19 @@ mod tests {
         assert_ne!(a, b, "DPAPI uses a random salt");
         assert_eq!(p.unprotect(&a).unwrap(), b"same");
         assert_eq!(p.unprotect(&b).unwrap(), b"same");
+    }
+
+    #[test]
+    fn machine_scope_round_trip() {
+        let p = DpapiProtector::machine();
+        let c = p.protect(b"logon screen").unwrap();
+        assert_eq!(p.unprotect(&c).unwrap(), b"logon screen");
+        // Both scopes decrypt each other's blobs (the scope is recorded in the blob); what
+        // matters is that the machine blob does not depend on a user profile.
+        assert_eq!(
+            DpapiProtector::new().unprotect(&c).unwrap(),
+            b"logon screen"
+        );
     }
 
     #[test]

@@ -166,6 +166,9 @@ pub struct EngineParams {
     pub enable_discovery: bool,
     /// Reuse an identity (tests); `None` loads or creates `identity.bin`.
     pub identity: Option<Identity>,
+    /// Agent at the Windows logon screen (ADR 0008): input target only, no clipboard, audio,
+    /// files, focus or updates, never writes the config.
+    pub logon_screen: bool,
 }
 
 /// Handle used by the IPC server and tests.
@@ -274,6 +277,8 @@ pub(crate) struct Engine {
     pub restart_elevated: Arc<std::sync::atomic::AtomicBool>,
     pub hello: Arc<parking_lot::RwLock<pb::Hello>>,
     pub session_ids: Arc<AtomicU64>,
+    /// See [`EngineParams::logon_screen`].
+    pub logon_screen: bool,
 
     pub session: Option<ActiveSession>,
     pub conn_state: ConnState,
@@ -341,9 +346,13 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         bind,
         enable_discovery,
         identity,
+        logon_screen,
     } = params;
     paths.ensure()?;
     config.sanitize();
+    if logon_screen {
+        config.restrict_to_logon_screen();
+    }
     if config.device.name.is_empty() {
         config.device.name = default_device_name();
     }
@@ -352,7 +361,9 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         None => Identity::load_or_create(&paths.identity_file(), platform.secrets.as_ref())?,
     });
     // A crash while the local speakers were silenced must not leave this device silent.
-    {
+    // (Not at the logon screen: that agent never touches audio or displays, and the user's
+    // agent does this recovery itself after the sign-in.)
+    if !logon_screen {
         let f = paths.data_dir.join("speaker-mute.json");
         if let Ok(text) = std::fs::read_to_string(&f) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -378,7 +389,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         }
     }
     // Same for the default microphone switched to the virtual cable.
-    {
+    if !logon_screen {
         let f = paths.data_dir.join("mic-default.json");
         if let Ok(text) = std::fs::read_to_string(&f) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -392,7 +403,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         }
     }
     // A crashed focus session on this device must not leave the displays rearranged (plan 8.7).
-    {
+    if !logon_screen {
         let (tp, dm) = (paths.topology_file(), platform.display.clone());
         match tokio::task::spawn_blocking(move || deskbridge_display::recover_on_startup(&tp, &dm))
             .await
@@ -472,6 +483,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         restart_elevated: restart_elevated.clone(),
         hello: Arc::new(parking_lot::RwLock::new(pb::Hello::default())),
         session_ids: Arc::new(AtomicU64::new(1)),
+        logon_screen,
         session: None,
         conn_state: ConnState::Idle,
         connecting: None,
@@ -756,17 +768,22 @@ impl Engine {
     pub(crate) fn refresh_hello(&mut self) {
         use deskbridge_proto::caps;
         let d = &self.cfg.device;
-        let mut c = vec![
-            caps::INPUT,
-            caps::CLIPBOARD_TEXT,
-            caps::CLIPBOARD_RICH,
-            caps::FILES,
-            caps::AUDIO_PCM,
-            caps::AUDIO_OPUS,
-            caps::UPDATE,
-            caps::UPDATE_REMOTE,
-            caps::LOGS,
-        ];
+        let mut c = if self.logon_screen {
+            // Only what works without a signed-in user; the partner offers nothing else.
+            vec![caps::INPUT, caps::LOGS, caps::LOGON_SCREEN]
+        } else {
+            vec![
+                caps::INPUT,
+                caps::CLIPBOARD_TEXT,
+                caps::CLIPBOARD_RICH,
+                caps::FILES,
+                caps::AUDIO_PCM,
+                caps::AUDIO_OPUS,
+                caps::UPDATE,
+                caps::UPDATE_REMOTE,
+                caps::LOGS,
+            ]
+        };
         if d.input_source {
             c.push("role.input_source");
             c.push(caps::FOCUS_VIEWER);
@@ -812,6 +829,10 @@ impl Engine {
     }
 
     pub(crate) fn persist_config(&mut self) {
+        if self.logon_screen {
+            // The logon-screen copy belongs to the user's agent (it rewrites it, ADR 0008).
+            return;
+        }
         if let Err(e) = self.cfg.save(&self.paths.config_file()) {
             tracing::error!("saving config failed: {e}");
         }

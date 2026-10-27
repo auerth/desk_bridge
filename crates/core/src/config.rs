@@ -79,6 +79,9 @@ pub struct GeneralConfig {
     /// "error" | "warn" | "info" | "debug" | "trace"
     pub log_level: String,
     pub paused: bool,
+    /// Control this device from the partner already at the Windows logon screen (after boot,
+    /// before anyone signed in). The service then runs a restricted agent there (ADR 0008).
+    pub logon_screen: bool,
 }
 
 impl Default for GeneralConfig {
@@ -89,6 +92,7 @@ impl Default for GeneralConfig {
             theme: "system".into(),
             log_level: "info".into(),
             paused: false,
+            logon_screen: true,
         }
     }
 }
@@ -400,6 +404,24 @@ impl Config {
         self.clipboard.max_size_mb = self.clipboard.max_size_mb.clamp(1, 16_384);
         self.schema_version = SCHEMA_VERSION;
     }
+
+    /// The settings the agent at the logon screen runs with (ADR 0008): this device is only an
+    /// input target. No roles (no capture, no headset, no focus source), no clipboard, audio,
+    /// microphone or updates; network, layout and hotkeys stay as the user configured them.
+    pub fn restrict_to_logon_screen(&mut self) {
+        self.device.input_source = false;
+        self.device.headset_sink = false;
+        self.device.stream_source = false;
+        self.general.paused = false;
+        self.clipboard.send = false;
+        self.clipboard.receive = false;
+        self.audio.laptop_to_pc.enabled = false;
+        self.audio.mic_to_laptop.enabled = false;
+        self.focus.lid_auto = false;
+        self.update.check_automatically = false;
+        self.update.offer_partner_update = false;
+        self.update.allow_partner_install = false;
+    }
 }
 
 /// Upgrades an older config document in place. Add a step per schema bump.
@@ -473,5 +495,24 @@ mod tests {
         c.sanitize();
         assert_eq!(c.input.switch_delay_ms, 500);
         assert_eq!(c.network.port, deskbridge_proto::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn logon_screen_is_on_by_default_and_restricts_to_input() {
+        let old: Config = toml::from_str("[general]\nautostart = true\n").unwrap();
+        assert!(
+            old.general.logon_screen,
+            "configs from before the setting default to on"
+        );
+        let mut c = Config::default();
+        c.device.input_source = true;
+        c.device.stream_source = true;
+        c.network.port = 47_999;
+        c.restrict_to_logon_screen();
+        assert!(!c.device.input_source && !c.device.headset_sink && !c.device.stream_source);
+        assert!(!c.clipboard.send && !c.clipboard.receive);
+        assert!(!c.audio.laptop_to_pc.enabled && !c.audio.mic_to_laptop.enabled);
+        assert!(!c.update.check_automatically && !c.update.allow_partner_install);
+        assert_eq!(c.network.port, 47_999);
     }
 }

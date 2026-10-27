@@ -411,6 +411,16 @@ pub fn uninstall(ctx: &Ctx, args: &UninstallArgs) -> Result<i32> {
     // lid action
     step(&mut failures, "lid action", || restore_lid(ctx));
 
+    // logon-screen profile (the service that used it is gone; it contains the device key)
+    if let Some(d) = paths::logon_profile_dir() {
+        ctx.plan(&format!("delete logon-screen profile {}", d.display()));
+        if !ctx.dry_run {
+            step(&mut failures, "logon-screen profile", || {
+                remove_dir_if_exists(&d)
+            });
+        }
+    }
+
     if args.purge_user_data {
         step(&mut failures, "user data", || purge_user_data(ctx));
     }
@@ -498,6 +508,14 @@ fn purge_user_data(ctx: &Ctx) -> Result<()> {
         remove_tree_except_setup_log(d)?;
     }
     Ok(())
+}
+
+fn remove_dir_if_exists(dir: &Path) -> Result<()> {
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("deleting {}", dir.display())),
+    }
 }
 
 fn remove_tree_except_setup_log(dir: &Path) -> Result<()> {

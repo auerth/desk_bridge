@@ -51,6 +51,7 @@ async fn node_with(
         bind: "127.0.0.1:0".parse().unwrap(),
         enable_discovery: false,
         identity: None,
+        logon_screen: false,
     })
     .await
     .unwrap();
@@ -1348,4 +1349,92 @@ async fn a_stalled_viewer_start_does_not_block_the_engine() {
     .await;
     pc.h.stop();
     lp.h.stop();
+}
+
+/// ADR 0008: after a reboot the laptop runs the agent at the logon screen with a copy of its
+/// identity, peers and config. The PC connects to it as usual, mouse and keyboard work, nothing
+/// else is exchanged, and the copy is never rewritten by the restricted agent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn logon_screen_agent_takes_mouse_and_keyboard_only() {
+    let (pc, lp) = setup().await;
+    let Node { h, _dir: dir, .. } = lp;
+    h.stop();
+    wait_for_async("pc notices the laptop is gone", || async {
+        pc.h.state().await.connection.state != ConnState::Connected
+    })
+    .await;
+
+    let paths = AppPaths::under(dir.path());
+    let config_before = std::fs::read_to_string(paths.config_file()).unwrap();
+    let (platform, m) = Platform::mock(1920, 1080);
+    let h = engine::start(EngineParams {
+        config: Config::load(&paths.config_file()).unwrap(),
+        paths: paths.clone(),
+        platform,
+        bind: "127.0.0.1:0".parse().unwrap(),
+        enable_discovery: false,
+        identity: None,
+        logon_screen: true,
+    })
+    .await
+    .unwrap();
+    let lp = Node { h, m, _dir: dir };
+    // The laptop dials the PC through the manual host stored in its config.
+    wait_connected(&pc.h, &lp.h).await;
+    let s = pc.h.state().await;
+    assert!(s.connection.peer_logon_screen, "pc shows the logon screen");
+    assert!(!lp.h.state().await.device.input_source);
+
+    pc.m.capture
+        .feed(CaptureEvent::MouseMove { x: 2559, y: 720 });
+    let injector = lp.m.injector.clone();
+    wait_for("laptop receives cursor", || {
+        injector
+            .ops()
+            .iter()
+            .any(|o| matches!(o, InjectedOp::MouseAbs { .. }))
+    })
+    .await;
+    pc.m.capture.feed(CaptureEvent::Key {
+        hid: hid::A,
+        down: true,
+    });
+    wait_for("key injected", || injector.pressed_keys().contains(&hid::A)).await;
+
+    // No clipboard towards (or from) the logon screen.
+    pc.m.clipboard
+        .user_copy_text("nicht an den Anmeldebildschirm");
+    lp.m.clipboard.user_copy_text("auch nicht zurück");
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(
+        text_of(&lp.m.clipboard).as_deref(),
+        Some("auch nicht zurück")
+    );
+    assert_ne!(
+        text_of(&pc.m.clipboard).as_deref(),
+        Some("auch nicht zurück")
+    );
+
+    lp.h.stop();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        std::fs::read_to_string(paths.config_file()).unwrap(),
+        config_before,
+        "the logon-screen agent leaves the config alone"
+    );
+    pc.h.stop();
+}
+
+async fn wait_for_async<F, Fut>(what: &str, mut f: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    for _ in 0..200 {
+        if f().await {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timeout: {what}");
 }

@@ -114,6 +114,7 @@ function seedState(): AppState {
       error: null,
       version_mismatch: false,
       peer_version: connected ? (has('mismatch') ? '0.0.9' : has('newer') ? '0.2.0' : '0.1.0') : null,
+      peer_logon_screen: connected && has('logon'),
     },
     peers: onboarding ? [] : [peer],
     discovered: onboarding

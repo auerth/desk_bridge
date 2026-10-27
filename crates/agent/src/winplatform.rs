@@ -59,3 +59,14 @@ pub fn build() -> Platform {
         os: "Windows".to_string(),
     }
 }
+
+/// Platform of the agent at the logon screen (ADR 0008). The same backends: the engine never
+/// starts clipboard, audio, focus or capture there (`EngineParams::logon_screen`), and input goes
+/// through the secure-desktop helper because the logon screen is on `winsta0\Winlogon`. Only the
+/// identity copy differs: it is encrypted for the machine, SYSTEM has no user DPAPI key.
+pub fn build_logon() -> Platform {
+    Platform {
+        secrets: Arc::new(DpapiProtector::machine()),
+        ..build()
+    }
+}

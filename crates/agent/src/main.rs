@@ -5,6 +5,8 @@
 //! * `deskbridge-agent --stop` – ask the running agent to quit
 //! * `deskbridge-agent --after-pid <pid>` – run the agent once process `pid` has exited (used by
 //!   "Agent neu starten": the old instance starts its successor right before it exits)
+//! * `deskbridge-agent --logon-screen` – the restricted agent at the Windows logon screen; only
+//!   the service starts it, as SYSTEM, while nobody is signed in (ADR 0008)
 //!
 //! Environment overrides (used by `scripts/dev-two-instances.ps1` and tests):
 //! `DESKBRIDGE_DATA_ROOT`, `DESKBRIDGE_PORT`, `DESKBRIDGE_PIPE`.
@@ -25,6 +27,8 @@ pub static NvOptimusEnablement: u32 = 1;
 pub static AmdPowerXpressRequestHighPerformance: u32 = 1;
 
 #[cfg(windows)]
+mod logon;
+#[cfg(windows)]
 mod pipe;
 #[cfg(windows)]
 mod secure;
@@ -44,6 +48,7 @@ fn main() {
             println!("deskbridge-agent {}", deskbridge_core::brand::VERSION);
             0
         }
+        Some(deskbridge_core::brand::LOGON_SCREEN_ARG) => run_logon_agent(),
         Some("--after-pid") => {
             if let Some(pid) = args.get(1).and_then(|p| p.parse::<u32>().ok()) {
                 wait_for_exit(pid, std::time::Duration::from_secs(15));
@@ -169,11 +174,14 @@ fn main() {
 
 #[cfg(windows)]
 fn run_agent() -> i32 {
-    use deskbridge_core::{brand, config::Config, engine, logging, paths::AppPaths};
+    use deskbridge_core::{brand, config::Config, logging, paths::AppPaths};
 
-    let paths = match std::env::var("DESKBRIDGE_DATA_ROOT") {
-        Ok(root) if !root.is_empty() => AppPaths::under(std::path::Path::new(&root)),
-        _ => AppPaths::system(),
+    let custom_root = std::env::var("DESKBRIDGE_DATA_ROOT")
+        .ok()
+        .filter(|r| !r.is_empty());
+    let paths = match &custom_root {
+        Some(root) => AppPaths::under(std::path::Path::new(root)),
+        None => AppPaths::system(),
     };
     if let Err(e) = paths.ensure() {
         eprintln!("cannot create data directories: {e}");
@@ -210,7 +218,94 @@ fn run_agent() -> i32 {
         // Target device: a crashed predecessor may have left injected keys pressed.
         secure::release_stuck_keys();
     }
+    // Dev instances (`DESKBRIDGE_DATA_ROOT`) never touch the machine-wide logon profile.
+    let logon_sync = custom_root.is_none().then(|| paths.clone());
+    run_engine(EngineRun {
+        paths,
+        config,
+        platform: winplatform::build(),
+        ui_pipe: Some(pipe_name),
+        logon_screen: false,
+        logon_sync,
+    })
+}
 
+/// The agent at the logon screen (ADR 0008): started by the service as SYSTEM on
+/// `winsta0\Winlogon` while nobody is signed in, ended by it at the sign-in. Runs on the copy of
+/// identity, peers and config the user's agent keeps in `%ProgramData%`, as an input target only.
+/// Exit code 0 (no profile, untrusted profile, switched off, already running) tells the service
+/// not to try again until the console session changes.
+#[cfg(windows)]
+fn run_logon_agent() -> i32 {
+    use deskbridge_core::{brand, config::Config, logging};
+
+    let paths = logon::paths();
+    let logs = logon::logs_dir();
+    let _ = std::fs::create_dir_all(&logs);
+    let _log = logging::init(&logs, "logon-agent", "info");
+    logging::install_panic_hook(&logs);
+    tracing::info!(version = brand::VERSION, "logon-screen agent starting");
+
+    if !logon::profile_present(&logon::root()) {
+        tracing::info!("no logon-screen profile (the user's agent has not written one yet)");
+        return 0;
+    }
+    if let Err(e) = logon::verify_trusted(&paths, &logon::win::owner_is_trusted) {
+        tracing::error!("logon-screen profile rejected: {e}");
+        return 0;
+    }
+    let Some(_instance) = pipe::SingleInstance::acquire_name(brand::LOGON_AGENT_INSTANCE_ID) else {
+        tracing::info!("logon-screen agent already running");
+        return 0;
+    };
+    let config = match Config::load(&paths.config_file()) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("logon-screen config unreadable: {e}");
+            return 0;
+        }
+    };
+    if !config.general.logon_screen {
+        tracing::info!("control at the logon screen is switched off");
+        return 0;
+    }
+    deskbridge_platform_windows::input::init_dpi_awareness();
+    secure::release_stuck_keys();
+    run_engine(EngineRun {
+        paths,
+        config,
+        platform: winplatform::build_logon(),
+        ui_pipe: None,
+        logon_screen: true,
+        logon_sync: None,
+    })
+}
+
+#[cfg(windows)]
+struct EngineRun {
+    paths: deskbridge_core::paths::AppPaths,
+    config: deskbridge_core::config::Config,
+    platform: deskbridge_core::platform::Platform,
+    /// Serve the UI on this pipe (`None` at the logon screen: there is no UI).
+    ui_pipe: Option<String>,
+    logon_screen: bool,
+    /// Keep the logon-screen copy of this profile current.
+    logon_sync: Option<deskbridge_core::paths::AppPaths>,
+}
+
+/// Runs the engine until it is asked to stop.
+#[cfg(windows)]
+fn run_engine(run: EngineRun) -> i32 {
+    use deskbridge_core::engine;
+
+    let EngineRun {
+        paths,
+        config,
+        platform,
+        ui_pipe,
+        logon_screen,
+        logon_sync,
+    } = run;
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("db-rt")
@@ -233,10 +328,11 @@ fn run_agent() -> i32 {
         let handle = match engine::start(engine::EngineParams {
             paths,
             config,
-            platform: winplatform::build(),
+            platform,
             bind,
             enable_discovery: true,
             identity: None,
+            logon_screen,
         })
         .await
         {
@@ -247,21 +343,32 @@ fn run_agent() -> i32 {
                 return 1;
             }
         };
-        if !deskbridge_platform_windows::input::is_elevated() {
+        if !logon_screen && !deskbridge_platform_windows::input::is_elevated() {
             handle.warn(
                 "elevation",
                 "Desk Bridge läuft ohne Administratorrechte: Eingaben in Programme mit erhöhten Rechten (z. B. Task-Manager) sind nicht möglich.",
             );
         }
-        let pipe_task = tokio::spawn(pipe::serve(pipe_name, handle.clone()));
+        let pipe_task = ui_pipe.map(|name| tokio::spawn(pipe::serve(name, handle.clone())));
+        let sync_task = logon_sync.map(|p| tokio::spawn(logon::sync_task(p)));
+        let signed_in = async {
+            if logon_screen {
+                logon::wait_for_sign_in().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
         tokio::select! {
             _ = handle.wait_shutdown() => tracing::info!("shutdown requested"),
             _ = tokio::signal::ctrl_c() => tracing::info!("ctrl-c"),
+            () = signed_in => {}
         }
         // Let the pipe deliver the reply to the request that asked for the shutdown.
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         handle.stop();
-        pipe_task.abort();
+        for t in pipe_task.into_iter().chain(sync_task) {
+            t.abort();
+        }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         if handle.restart_requested() {
             spawn_successor(handle.restart_elevated_requested());

@@ -110,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
         bind: ([0, 0, 0, 0], args.port).into(),
         enable_discovery: false,
         identity: None,
+        logon_screen: false,
     })
     .await?;
     println!("listening on {}", h.local_addr());

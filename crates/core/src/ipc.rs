@@ -296,6 +296,9 @@ pub struct ConnectionDto {
     pub version_mismatch: bool,
     /// Peer runs a different app version (hint in the UI).
     pub peer_version: Option<String>,
+    /// The peer is at its Windows logon screen: only mouse and keyboard until someone signs in.
+    #[serde(default)]
+    pub peer_logon_screen: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

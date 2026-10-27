@@ -10,6 +10,12 @@ impl Engine {
     /// A control message the core does not handle itself.
     pub(crate) fn on_feature_control(&mut self, msg: pb::control::Msg) {
         use pb::control::Msg as M;
+        if self.logon_screen && !matches!(msg, M::SendSas(_) | M::LogsRequest(_)) {
+            // Nobody is signed in: clipboard, files, audio, focus and updates wait for the
+            // user's agent (the partner sees `session.logon-screen` and should not ask).
+            tracing::debug!(?msg, "ignored at the logon screen");
+            return;
+        }
         if self.on_clipboard_control(msg.clone())
             || self.on_audio_control(&msg)
             || self.focus_control(&msg)
@@ -40,6 +46,11 @@ impl Engine {
     }
 
     pub(crate) fn on_session_up_features(&mut self) {
+        // Nothing but input either way while one side sits at the logon screen: the partner
+        // at the logon screen would only drop clipboard offers, audio and files.
+        if self.logon_screen || self.peer_has_cap(deskbridge_proto::caps::LOGON_SCREEN) {
+            return;
+        }
         self.start_transfers();
         self.on_session_up_update();
         self.start_clipboard();

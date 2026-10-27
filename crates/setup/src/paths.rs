@@ -51,6 +51,18 @@ pub fn machine_log_file() -> Option<PathBuf> {
     })
 }
 
+/// Copy of identity, peers and config for the agent at the logon screen (ADR 0008). Holds the
+/// device key (machine-scope DPAPI), so the uninstaller always removes it.
+#[must_use]
+pub fn logon_profile_dir() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|p| {
+        PathBuf::from(p)
+            .join(COMPANY)
+            .join(PRODUCT_DIR)
+            .join("logon")
+    })
+}
+
 #[must_use]
 pub fn lid_backup_file() -> Option<PathBuf> {
     local_data_dir().map(|p| p.join(crate::brand::LID_BACKUP_FILE))

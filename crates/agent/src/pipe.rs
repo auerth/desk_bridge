@@ -47,6 +47,11 @@ impl SingleInstance {
         } else {
             format!("{}-{suffix}", brand::AGENT_INSTANCE_ID)
         };
+        Self::acquire_name(&name)
+    }
+
+    /// Holds the mutex `name` (the logon-screen agent has its own, see `brand`).
+    pub fn acquire_name(name: &str) -> Option<Self> {
         // SAFETY: plain Win32 call with a valid, NUL-terminated name.
         unsafe {
             let h = CreateMutexW(None, false, &HSTRING::from(name)).ok()?;

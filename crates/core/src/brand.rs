@@ -8,6 +8,11 @@ pub const COMPANY_URL: &str = "https://softwelop.com";
 pub const UI_PIPE_NAME: &str = r"\\.\pipe\deskbridge-ui";
 /// Mutex / single-instance identifiers.
 pub const AGENT_INSTANCE_ID: &str = "Global\\softwelop-deskbridge-agent";
+/// Single instance of the agent at the logon screen (ADR 0008). Different from
+/// [`AGENT_INSTANCE_ID`]: the user's agent must never think it is already running.
+pub const LOGON_AGENT_INSTANCE_ID: &str = "Global\\softwelop-deskbridge-logon-agent";
+/// Command line switch the service starts the logon-screen agent with.
+pub const LOGON_SCREEN_ARG: &str = "--logon-screen";
 /// Scheduled task that starts the elevated agent at logon.
 pub const AGENT_TASK_NAME: &str = "DeskBridge Agent";
 pub const FIREWALL_RULE_NAME: &str = "Desk Bridge (UDP 47820 + mDNS)";

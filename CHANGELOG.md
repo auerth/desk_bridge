@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+### Added
+
+- **Control at the Windows logon screen** ([ADR 0008](docs/adr/0008-logon-screen-agent.md)): right
+  after booting, before anybody signs in, the partner's mouse and keyboard already work (password,
+  Ctrl+Alt+Del via Ctrl+Alt+End). The service runs a restricted agent (SYSTEM, input only) at the
+  logon screen and ends it at the sign-in; the user's agent keeps the protected copy of identity,
+  pairing and settings it needs in `%ProgramData%\softwelop\DeskBridge\logon`. The PC shows
+  "<Name> ist am Anmeldebildschirm". New setting *Schon am Anmeldebildschirm steuern* (target
+  devices only, on by default); switching it off deletes the copy. The secure-desktop helper now also runs before the
+  sign-in.
+
 ## [0.1.6-beta] - 2026-10-22
 
 Beta test build, also for confirming the still-unverified 0.1.4/0.1.5 fixes on the laptop

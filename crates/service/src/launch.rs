@@ -342,6 +342,16 @@ pub fn terminate(process: &OwnedHandle) {
     }
 }
 
+/// Waits up to `timeout` for the process to end (after [`terminate`]: until its handles, ports
+/// and mutexes are released).
+pub fn wait_for_exit(process: &OwnedHandle, timeout: std::time::Duration) {
+    let ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+    // SAFETY: valid process handle with SYNCHRONIZE access.
+    unsafe {
+        let _ = WaitForSingleObject(process.raw(), ms);
+    }
+}
+
 /// Opens `pid` for waiting and exit-code queries.
 #[must_use]
 pub fn open_for_wait(pid: u32) -> Option<OwnedHandle> {

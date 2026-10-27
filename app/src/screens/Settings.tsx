@@ -111,6 +111,9 @@ export function Settings() {
 
       <Card title={t('settings.general')}>
         <SwitchRow title={t('settings.autostart')} description={t('settings.autostartHint')} checked={config.general.autostart} onChange={(v) => update((c) => void (c.general.autostart = v))} />
+        {!config.device.input_source && (
+          <SwitchRow title={t('settings.logonScreen')} description={t('settings.logonScreenHint')} checked={config.general.logon_screen} onChange={(v) => update((c) => void (c.general.logon_screen = v))} />
+        )}
         <Row title={t('settings.language')}>
           <Select
             ariaLabel={t('settings.language')}
