@@ -260,7 +260,10 @@ export function usePartnerUpdate() {
   const upd = state?.update;
   const connected = state?.connection.state === 'connected' || state?.connection.state === 'degraded';
   const cmp = connected && peer && own ? compareVersions(own, peer) : null;
-  const direction: 'push' | 'pull' | null = cmp == null || cmp === 0 ? null : cmp > 0 ? 'push' : upd?.partner_remote ? 'pull' : null;
+  // Same number, other commit or local build: either side can push its build (the partner asks).
+  const otherBuild = cmp === 0 && peer !== own;
+  const direction: 'push' | 'pull' | null =
+    cmp == null || (cmp === 0 && !otherBuild) ? null : cmp > 0 || otherBuild ? 'push' : upd?.partner_remote ? 'pull' : null;
   const busy = direction === 'push' ? upd?.partner_updating != null : direction === 'pull' ? !!upd?.updating_from_partner : false;
 
   const run = async () => {
@@ -286,7 +289,7 @@ export function usePartnerUpdate() {
     if (r?.confirm_on_partner) toast({ level: 'info', text: t('pu.confirmOnPartner', { name: peerName }) });
   };
 
-  return { direction, own, peer, peerName, busy, run, installerAvailable: !!upd?.installer_available, partnerRemote: !!upd?.partner_remote };
+  return { direction, otherBuild, own, peer, peerName, busy, run, installerAvailable: !!upd?.installer_available, partnerRemote: !!upd?.partner_remote };
 }
 
 /** Partner update flow: offer (accept/decline) and "received, start now?" - never silent. */

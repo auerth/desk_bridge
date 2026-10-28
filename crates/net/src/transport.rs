@@ -45,7 +45,12 @@ pub enum Accepted {
 impl Transport {
     pub fn bind(identity: Arc<Identity>, peers: PeerStore, addr: SocketAddr) -> Result<Self> {
         let server = tls::server_config(&identity)?;
-        let endpoint = quinn::Endpoint::server(server, addr)?;
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            quinn::EndpointConfig::default(),
+            Some(server),
+            crate::socket::wrap(std::net::UdpSocket::bind(addr)?)?,
+            Arc::new(quinn::TokioRuntime),
+        )?;
         Ok(Self {
             endpoint,
             identity,
@@ -118,7 +123,7 @@ impl Transport {
     /// Rebinds the socket after a network change (keeps connections that survive).
     pub fn rebind(&self) -> Result<()> {
         let sock = std::net::UdpSocket::bind(self.local_addr()?)?;
-        self.endpoint.rebind(sock)?;
+        self.endpoint.rebind_abstract(crate::socket::wrap(sock)?)?;
         Ok(())
     }
 }

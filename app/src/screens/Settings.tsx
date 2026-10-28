@@ -277,7 +277,7 @@ export function Settings() {
               <span role="status">
                 {pu.busy
                   ? t('pu.pushBusy', { version: upd.partner_updating ?? pu.own })
-                  : `${t(pu.partnerRemote ? 'pu.pushHint' : 'pu.pushHintConfirm', { peer: pu.peer ?? '', own: pu.own })}${pu.installerAvailable ? '' : ` ${t('pu.pickHint', { own: pu.own })}`}`}
+                  : `${t(pu.otherBuild ? 'pu.pushHintBuild' : pu.partnerRemote ? 'pu.pushHint' : 'pu.pushHintConfirm', { peer: pu.peer ?? '', own: pu.own })}${pu.installerAvailable ? '' : ` ${t('pu.pickHint', { own: pu.own })}`}`}
               </span>
             }
           >

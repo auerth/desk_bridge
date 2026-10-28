@@ -12,6 +12,7 @@ pub mod error;
 pub mod identity;
 pub mod pairing;
 pub mod peers;
+mod socket;
 pub mod tls;
 pub mod transport;
 

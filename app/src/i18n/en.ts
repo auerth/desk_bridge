@@ -477,6 +477,7 @@ export const en: Record<MessageKey, string> = {
   'pu.pushTitle': 'Update {name}',
   'pu.pushHint': 'It runs version {peer}, this device {own}. The installer is transferred and installed there without asking; Desk Bridge restarts there briefly.',
   'pu.pushHintConfirm': 'It runs version {peer}, this device {own}. The installer is transferred; the other device asks this one time, from then on it installs without asking.',
+  'pu.pushHintBuild': 'Same version number, different build: {peer} there, {own} here. This device’s installer is transferred; the other device asks before installing.',
   'pu.pickHint': 'No installer is kept on this device – pick “DeskBridge-Setup-{own}.exe”.',
   'pu.pushBusy': 'Updating to version {version} … The connection drops briefly.',
   'pu.pushButton': 'Update {name}',

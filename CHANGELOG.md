@@ -6,6 +6,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.8-beta] - 2026-10-28
+
+Beta test build for the connection fix after the laptop wakes up. Install it on both devices.
+
+### Added
+
+- **Build version with the git commit.** The version shown in the app, sent to the partner and
+  written to the logs now carries the commit in front of the pre-release part:
+  `0.1.8-1a2b3c4-beta`, a release `0.1.8-1a2b3c4`, a build with uncommitted changes
+  `0.1.8-1a2b3c4-dirty-beta`. Installer file names keep the plain number
+  (`DeskBridge-Setup-0.1.8-beta.exe`). When both devices have the same version number but a
+  different build, the app shows "Beide Geräte aktualisieren", and "<Partner> aktualisieren" works
+  from either device. The partner always asks before installing another build of its own number
+  (the "install without asking" setting covers newer numbers only).
+
+### Fixed
+
+- **Devices did not connect after the laptop woke up, although both showed the partner.** For
+  about a quarter of an hour after the resume (and all night at the logon screen), Windows on the
+  laptop rejected every QUIC packet that carried the source address and ECN bits
+  (`sendmsg error 10022` in the agent log). Plain datagrams such as mDNS still went out. quinn
+  only logged the error, so every connection attempt timed out on both sides until the condition
+  cleared up by itself. When such a send fails, the packet now goes out again as a plain datagram
+  (the system picks the source address), and the next 30 s of sends skip the extra information.
+  The agent logs the switch once ("sending plain datagrams") and the recovery. Not yet verified
+  on the laptop while the fault is active.
+
+## [0.1.7-beta] - 2026-10-27
+
+Beta test build for the choppy headset microphone in focus mode and for "Teams verfügbar halten".
+Install it on both devices.
+
 ### Added
 
 - **Keep Teams available** (Settings, off by default): while Microsoft Teams runs on this device

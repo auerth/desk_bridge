@@ -477,6 +477,7 @@ export const de = {
   'pu.pushTitle': '{name} aktualisieren',
   'pu.pushHint': 'Dort läuft Version {peer}, hier {own}. Der Installer wird übertragen und dort ohne Rückfrage installiert; Desk Bridge startet dort kurz neu.',
   'pu.pushHintConfirm': 'Dort läuft Version {peer}, hier {own}. Der Installer wird übertragen; das andere Gerät fragt dieses eine Mal noch nach, ab dann geht es ohne Rückfrage.',
+  'pu.pushHintBuild': 'Gleiche Versionsnummer, aber ein anderer Stand: dort {peer}, hier {own}. Der Installer dieses Geräts wird übertragen; das andere Gerät fragt vor der Installation nach.',
   'pu.pickHint': 'Auf diesem Gerät ist kein Installer gespeichert – wähle „DeskBridge-Setup-{own}.exe“ aus.',
   'pu.pushBusy': 'Wird auf Version {version} aktualisiert … Die Verbindung trennt sich dabei kurz.',
   'pu.pushButton': '{name} aktualisieren',

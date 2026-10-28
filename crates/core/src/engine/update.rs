@@ -62,12 +62,12 @@ impl PartnerUpdate {
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf));
         let own_installer =
-            find_own_installer(exe_dir.as_deref(), updates_dir, crate::brand::VERSION);
+            find_own_installer(exe_dir.as_deref(), updates_dir, crate::brand::PACKAGE_VERSION);
         // Received packages are ~250 MB each: keep only what can still be used.
         let kept_by_setup = own_installer
             .as_deref()
             .is_some_and(|p| !p.starts_with(updates_dir));
-        prune_updates(updates_dir, crate::brand::VERSION, !kept_by_setup);
+        prune_updates(updates_dir, crate::brand::PACKAGE_VERSION, !kept_by_setup);
         if let Some(p) = &own_installer {
             tracing::info!(path = %p.display(), "installer for the partner update available");
         }
@@ -131,6 +131,17 @@ pub(crate) fn is_newer(a: &str, b: &str) -> bool {
     matches!((parse_version(a), parse_version(b)), (Some(a), Some(b)) if a > b)
 }
 
+/// Same version number, different build (another commit or local changes):
+/// `0.1.8-1a2b3c4-beta` vs. `0.1.8-9f8e7d6-beta`. Which one is current only the user knows.
+pub(crate) fn other_build(a: &str, b: &str) -> bool {
+    a.trim() != b.trim() && parse_version(a).is_some() && parse_version(a) == parse_version(b)
+}
+
+/// `offered` may replace `running`: a newer number or another build of the same number.
+fn may_replace(offered: &str, running: &str) -> bool {
+    is_newer(offered, running) || other_build(offered, running)
+}
+
 /// What to do with an offer that asks to be installed right away.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum RemoteInstall {
@@ -148,6 +159,14 @@ pub(crate) fn remote_install_decision(
 ) -> RemoteInstall {
     if parse_version(offered).is_none() {
         return RemoteInstall::Decline(format!("unbekanntes Versionsformat: {offered}"));
+    }
+    // Another build of the same number is no upgrade: the setting does not cover it.
+    if other_build(offered, running) {
+        return if requested {
+            RemoteInstall::Install
+        } else {
+            RemoteInstall::Ask
+        };
     }
     if !is_newer(offered, running) {
         return RemoteInstall::Decline(format!("Dort ist bereits Version {running} installiert."));
@@ -368,7 +387,8 @@ impl Engine {
             return Err("Partner-Update ist in den Einstellungen deaktiviert".into());
         }
         let peer_version = s.link.hello.app_version.clone();
-        if install && !is_newer(&version, &peer_version) {
+        let other = other_build(&version, &peer_version);
+        if install && !may_replace(&version, &peer_version) {
             return Err(format!(
                 "Das andere Gerät hat bereits Version {peer_version}."
             ));
@@ -400,8 +420,11 @@ impl Engine {
                 result,
             });
         });
-        // An older partner does not know `install` yet and asks its user.
-        let confirm = !install || !self.peer_has_cap(deskbridge_proto::caps::UPDATE_REMOTE);
+        // An older partner does not know `install` yet and asks its user, and so does every
+        // partner for another build of its own version number.
+        let confirm = !install
+            || !self.peer_has_cap(deskbridge_proto::caps::UPDATE_REMOTE)
+            || other;
         Ok(json!({ "offered": true, "confirm_on_partner": confirm }))
     }
 
@@ -457,7 +480,7 @@ impl Engine {
             return Err("Nicht verbunden".into());
         };
         let peer_version = s.link.hello.app_version.clone();
-        if !is_newer(&peer_version, crate::brand::VERSION) {
+        if !may_replace(&peer_version, crate::brand::VERSION) {
             return Err("Das andere Gerät hat keine neuere Version.".into());
         }
         if !self.peer_has_cap(deskbridge_proto::caps::UPDATE_REMOTE) {
@@ -796,6 +819,28 @@ mod tests {
         assert!(is_newer("0.2.0", "0.1.9"));
         assert!(!is_newer("0.1.9", "0.1.9"));
         assert!(!is_newer("", "0.1.9"));
+    }
+
+    #[test]
+    fn another_build_of_the_same_number_is_installed_only_after_asking() {
+        use RemoteInstall::{Ask, Install};
+        let (a, b) = ("0.1.8-1a2b3c4-beta", "0.1.8-9f8e7d6-beta");
+        assert!(other_build(a, b));
+        assert!(other_build(a, "0.1.8-beta"), "partner without the hash");
+        assert!(!other_build(a, a));
+        assert!(!other_build("0.1.9-1a2b3c4-beta", b), "a newer number is an upgrade");
+        // the setting allows upgrades only; asking for it on this device is enough
+        assert_eq!(remote_install_decision(a, b, true, false), Ask);
+        assert_eq!(remote_install_decision(a, b, false, true), Install);
+        assert!(matches!(
+            remote_install_decision(a, a, true, true),
+            RemoteInstall::Decline(_)
+        ));
+        // an older number stays refused, whatever the build
+        assert!(matches!(
+            remote_install_decision("0.1.7-1a2b3c4-beta", b, true, true),
+            RemoteInstall::Decline(_)
+        ));
     }
 
     #[test]
