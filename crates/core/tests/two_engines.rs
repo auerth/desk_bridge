@@ -1440,6 +1440,49 @@ async fn logon_screen_agent_takes_mouse_and_keyboard_only() {
     pc.h.stop();
 }
 
+/// A VPN tunnel that captures the LAN route (WireGuard with the LAN in `AllowedIPs`): mDNS still
+/// finds the partner, every connection times out. The device names the tunnel in a hint; while
+/// connected it never warns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_vpn_capturing_the_lan_route_is_reported() {
+    let (pc, lp) = setup().await;
+    *lp.m.system.diverted.lock() = Some("peer-Storage-wg0-1".into());
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        lp.h.state().await.warnings.iter().all(|w| w.code != "vpn_route"),
+        "no hint while the connection works"
+    );
+
+    pc.h.stop();
+    let mut warning = None;
+    for _ in 0..300 {
+        warning = lp
+            .h
+            .state()
+            .await
+            .warnings
+            .into_iter()
+            .find(|w| w.code == "vpn_route");
+        if warning.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let w = warning.expect("vpn_route hint after the connection failed");
+    assert!(w.message.contains("peer-Storage-wg0-1"), "{}", w.message);
+
+    // tunnel gone: the next check clears the hint
+    *lp.m.system.diverted.lock() = None;
+    for _ in 0..300 {
+        if lp.h.state().await.warnings.iter().all(|w| w.code != "vpn_route") {
+            lp.h.stop();
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("hint stays although the route is direct again");
+}
+
 async fn wait_for_async<F, Fut>(what: &str, mut f: F)
 where
     F: FnMut() -> Fut,

@@ -11,6 +11,13 @@ pub trait SystemServices: Send + Sync {
     fn public_networks(&self) -> Option<Vec<String>> {
         None
     }
+    /// The interface (typically a VPN tunnel such as WireGuard) that carries the traffic to
+    /// `peer` although `peer` is in the local network of another interface: the partner is then
+    /// unreachable although mDNS still finds it. `None` = direct route or unknown.
+    fn diverted_route(&self, peer: std::net::IpAddr) -> Option<String> {
+        let _ = peer;
+        None
+    }
     /// Switches the connected Public networks to Private (a system setting: only after the user
     /// confirmed it in the UI). Needs elevation or the service.
     fn make_network_private(&self) -> Result<()> {

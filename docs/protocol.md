@@ -43,6 +43,9 @@ A different ALPN (including a future `deskbridge/2`) is closed with code `0x426`
 
 Service type `_deskbridge._udp.local.`, instance label derived from the device name, port = QUIC
 port. TXT records: `id` (device UUID), `name`, `ver` (app version), `proto` (`proto_version`).
+Optional hints why the device cannot be reached: `net=public` (its network is classified as
+Public, the firewall rule does not open it) and `route=vpn` with `vpn=<interface>` (a VPN tunnel
+captures its route to the partner although the partner is on its local network).
 Fallbacks: last known IP/port from `peers.toml`, manually entered host/IP.
 
 ## 2. Channels

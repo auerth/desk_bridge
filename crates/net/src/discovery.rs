@@ -18,6 +18,9 @@ pub struct Discovered {
     pub version: String,
     /// The device reports that its network is classified as "Public" (firewall closed).
     pub public_network: bool,
+    /// The device reports that a VPN tunnel captures its route to the partner (`route=vpn`,
+    /// tunnel name in `vpn`; empty name when it was not sent).
+    pub vpn_route: Option<String>,
 }
 
 impl Discovered {
@@ -41,6 +44,7 @@ pub struct Discovery {
     own_id: Uuid,
     fullname: Option<String>,
     public_network: bool,
+    vpn_route: Option<String>,
 }
 
 fn sanitize_label(s: &str) -> String {
@@ -65,6 +69,7 @@ impl Discovery {
             own_id,
             fullname: None,
             public_network: false,
+            vpn_route: None,
         })
     }
 
@@ -73,6 +78,14 @@ impl Discovery {
     pub fn set_public_network(&mut self, public: bool) -> bool {
         let changed = self.public_network != public;
         self.public_network = public;
+        changed
+    }
+
+    /// Marks that the VPN tunnel `vpn` captures this device's route to the partner (next
+    /// [`Self::announce`]). Returns whether it changed.
+    pub fn set_vpn_route(&mut self, vpn: Option<String>) -> bool {
+        let changed = self.vpn_route != vpn;
+        self.vpn_route = vpn;
         changed
     }
 
@@ -104,6 +117,11 @@ impl Discovery {
             // Outgoing announcements still pass the firewall: lets the partner explain why it
             // cannot connect.
             props.insert("net".to_string(), "public".to_string());
+        }
+        if let Some(vpn) = &self.vpn_route {
+            // Multicast still leaves through the LAN while the unicast route is in the tunnel.
+            props.insert("route".to_string(), "vpn".to_string());
+            props.insert("vpn".to_string(), vpn.chars().take(60).collect());
         }
         let info = if addrs.is_empty() {
             ServiceInfo::new(MDNS_SERVICE, &instance, &host, "", port, props)
@@ -155,6 +173,10 @@ impl Discovery {
                                     .unwrap_or(0),
                                 version: info.get_property_val_str("ver").unwrap_or("").to_string(),
                                 public_network: info.get_property_val_str("net") == Some("public"),
+                                vpn_route: (info.get_property_val_str("route") == Some("vpn"))
+                                    .then(|| {
+                                        info.get_property_val_str("vpn").unwrap_or("").to_string()
+                                    }),
                             };
                             if tx.send(DiscoveryEvent::Found(d)).is_err() {
                                 break;

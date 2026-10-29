@@ -124,6 +124,8 @@ impl Engine {
         }
         self.connecting = None;
         self.last_error = Some(error.to_string());
+        // A VPN that captures the LAN route looks exactly like this (mDNS works, QUIC times out).
+        self.check_vpn_route();
         if matches!(self.conn_state, ConnState::Connecting) {
             self.conn_state = if self.had_session {
                 ConnState::Reconnecting
@@ -173,6 +175,8 @@ impl Engine {
 
     pub(crate) fn on_session_ready(&mut self, link: PeerLink) {
         self.connecting = None;
+        // Connected: whatever the route check said, the route works.
+        self.on_vpn_route(None);
         let own = self.own_id();
         let initiator_id = if link.conn.is_initiator() {
             own

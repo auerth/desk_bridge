@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+### Added
+
+- **Warning when a VPN takes over the route to the partner.** A VPN tunnel whose routes cover the
+  local network (WireGuard with the LAN in `AllowedIPs`, a Tailscale subnet router) sends the
+  packets for the partner into the tunnel, while mDNS still goes out over the LAN: the partner
+  shows as online, but every connection times out (`sendmsg error 10022` on the laptop). This was
+  the real cause of the laptop not connecting at the logon screen on 2026-10-29 (tunnel
+  `peer-Storage-wg0-1`), and very likely also of the 0.1.8 resume problem. While not connected,
+  each device checks how Windows routes the partner's addresses. When a tunnel captures them,
+  the device shows "Die Verbindung zu … läuft über „<Tunnel>“ statt über das lokale Netz", and
+  tells the partner through mDNS (`route=vpn`). The partner then shows "Auf „<Gerät>“ leitet das
+  VPN „<Tunnel>“ das lokale Netz um". The hint disappears with the next check or connection.
+
 ## [0.1.8-beta] - 2026-10-28
 
 Beta test build for the connection fix after the laptop wakes up. Install it on both devices.

@@ -306,6 +306,13 @@ impl SystemServices for ServiceClient {
         }
     }
 
+    fn diverted_route(&self, peer: std::net::IpAddr) -> Option<String> {
+        match peer {
+            std::net::IpAddr::V4(v4) => deskbridge_platform_windows::network::diverted_route(v4),
+            std::net::IpAddr::V6(_) => None,
+        }
+    }
+
     fn make_network_private(&self) -> Result<()> {
         // Elevated agent (the usual case, logon task "highest"): do it directly.
         if deskbridge_platform_windows::input::is_elevated() {

@@ -132,6 +132,8 @@ pub(crate) enum Msg {
     UpdateChecked(Result<Option<update::ReleaseInfo>, String>),
     /// Connected networks classified as Public (`None` = could not be determined).
     NetworkProfile(Option<Vec<String>>),
+    /// Result of the VPN route check (`None` = every partner address is routed directly).
+    VpnRoute(Option<netprofile::VpnRoute>),
     /// The focus viewer cannot decode any more, even after rebuilding its decoder.
     FocusViewerBroken {
         viewer: u64,
@@ -304,6 +306,10 @@ pub(crate) struct Engine {
     pub net_check_pending: bool,
     /// Connected networks classified as Public at the last check.
     pub public_networks: Vec<String>,
+    /// A VPN route check is running in the background.
+    pub route_check_pending: bool,
+    /// A VPN tunnel captures the route to the partner (last check).
+    pub vpn_route: Option<netprofile::VpnRoute>,
 
     pub pairing: Option<Arc<PairingWindow>>,
     pub local_screens: Vec<ScreenInfo>,
@@ -506,6 +512,8 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         teams_running: false,
         net_check_pending: false,
         public_networks: Vec::new(),
+        route_check_pending: false,
+        vpn_route: None,
         pairing: None,
         local_screens,
         layout: Layout::default(),
@@ -721,6 +729,7 @@ impl Engine {
                 self.on_partner_update_received(path, version);
             }
             Msg::NetworkProfile(p) => self.on_network_profile(p),
+            Msg::VpnRoute(r) => self.on_vpn_route(r),
             Msg::DisplayRestored { session, result } => self.on_display_restored(session, result),
             Msg::FocusViewerBroken { viewer, reason } => {
                 self.on_focus_viewer_broken(viewer, &reason);

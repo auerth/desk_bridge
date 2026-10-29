@@ -617,6 +617,8 @@ impl crate::web::WebClient for MockWebClient {
 pub struct MockSystem {
     pub launched: Mutex<Vec<PathBuf>>,
     pub fail_launch: std::sync::atomic::AtomicBool,
+    /// What [`crate::system::SystemServices::diverted_route`] reports (a VPN interface name).
+    pub diverted: Mutex<Option<String>>,
 }
 
 impl crate::system::SystemServices for MockSystem {
@@ -626,6 +628,10 @@ impl crate::system::SystemServices for MockSystem {
 
     fn send_sas(&self) -> Result<()> {
         Err(crate::PlatformError::Unsupported("mock: no service"))
+    }
+
+    fn diverted_route(&self, _peer: std::net::IpAddr) -> Option<String> {
+        self.diverted.lock().clone()
     }
 
     fn launch_installer(&self, path: &std::path::Path) -> Result<()> {

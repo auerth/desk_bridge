@@ -199,6 +199,7 @@ pub async fn sync_task(user: AppPaths) {
     use deskbridge_platform_windows::secret::DpapiProtector;
     let mut last_stamp = None;
     let mut last_error: Option<String> = None;
+    let mut last_result = None;
     loop {
         let stamp = inputs_stamp(&user);
         if last_stamp.as_ref() != Some(&stamp) {
@@ -216,9 +217,13 @@ pub async fn sync_task(user: AppPaths) {
             .unwrap_or_else(|e| Err(io::Error::other(e.to_string())));
             match r {
                 Ok(s) => {
-                    if s != Synced::Unchanged {
+                    // Every write, but "disabled" (the PC, or the setting off) only once:
+                    // peers.toml changes with every mDNS address update.
+                    let repeat = s == Synced::Disabled && last_result == Some(s);
+                    if s != Synced::Unchanged && !repeat {
                         tracing::info!(result = ?s, dir = %root().display(), "logon-screen profile");
                     }
+                    last_result = Some(s);
                     last_error = None;
                     last_stamp = Some(stamp);
                 }
