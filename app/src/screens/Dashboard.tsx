@@ -1,4 +1,4 @@
-import { ExternalLink, Lock, LockOpen, Mic, MoveRight, Play, Square } from 'lucide-react';
+import { ExternalLink, Lock, LockOpen, Mic, MoveRight, Play, Square, Video } from 'lucide-react';
 import { useMemo } from 'react';
 import type { AppState } from '../api/types';
 import { chipModels, FeatureChip } from '../components/FeatureChip';
@@ -189,6 +189,11 @@ export function Dashboard() {
       {state.features.mic.state === 'live' && state.features.mic.detail && (
         <p className="mic-hint" role="status">
           <Mic size={15} aria-hidden /> {state.features.mic.detail}
+        </p>
+      )}
+      {state.features.camera.state === 'live' && state.features.camera.detail && (
+        <p className="mic-hint" role="status">
+          <Video size={15} aria-hidden /> {state.features.camera.detail}
         </p>
       )}
 

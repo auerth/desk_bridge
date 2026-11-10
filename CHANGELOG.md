@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ### Added
 
+- **The PC's webcam on the laptop.** The webcam at the PC appears on the laptop as the camera
+  "Desk Bridge Kamera", for Teams, Zoom, the browser and the Camera app. Like the microphone it is
+  only switched on while an app on the laptop shows the camera; the PC then shows "Laptop nutzt
+  deine Kamera (…)". No driver needed: it is a Windows 11 virtual camera (`deskbridge_vcam.dll`,
+  loaded by the Windows camera Frame Server), registered by the agent when it runs as
+  administrator. New dashboard chip "Kamera"; the Audio page has the switch, the webcam choice and
+  a pause switch (placeholder picture).
+  Without a partner, paused or without a webcam the camera shows a placeholder. Laptops with
+  Windows 10 show the feature as unavailable. Details: ADR 0009.
+
 - **Warning when a VPN takes over the route to the partner.** A VPN tunnel whose routes cover the
   local network (WireGuard with the LAN in `AllowedIPs`, a Tailscale subnet router) sends the
   packets for the partner into the tunnel, while mDNS still goes out over the LAN: the partner

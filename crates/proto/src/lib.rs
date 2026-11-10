@@ -60,6 +60,10 @@ pub mod caps {
     pub const UPDATE_REMOTE: &str = "update.remote";
     /// Answers `LogsRequest` with its recent log files.
     pub const LOGS: &str = "logs";
+    /// Has a webcam it can forward (the PC).
+    pub const CAMERA_SOURCE: &str = "camera.source";
+    /// Shows a forwarded webcam as its virtual camera "Desk Bridge Kamera" (the laptop).
+    pub const CAMERA_SINK: &str = "camera.sink";
     /// The device is at the Windows logon screen (nobody signed in): only mouse, keyboard and
     /// Ctrl+Alt+Del work, everything else starts once a user has signed in.
     pub const LOGON_SCREEN: &str = "session.logon-screen";

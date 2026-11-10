@@ -97,6 +97,7 @@ impl Engine {
             },
             laptop_audio: AudioFeatureDto::default(),
             mic: AudioFeatureDto::default(),
+            camera: crate::ipc::CameraFeatureDto::default(),
             clipboard: FeatureDto {
                 enabled: self.cfg.clipboard.send || self.cfg.clipboard.receive,
                 state: if self.cfg.clipboard.send || self.cfg.clipboard.receive {
@@ -218,6 +219,7 @@ impl Engine {
     /// Feature modules overwrite their parts of the snapshot here.
     fn fill_feature_state(&self, f: &mut FeaturesDto) {
         self.fill_audio_state(f);
+        self.fill_camera_state(f);
         self.fill_focus_state(f);
     }
 

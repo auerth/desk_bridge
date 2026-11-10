@@ -1,4 +1,4 @@
-import { Clipboard, Maximize2, Mic, MousePointer2, Volume2 } from 'lucide-react';
+import { Clipboard, Maximize2, Mic, MousePointer2, Video, Volume2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { AppState, Feature, Live } from '../api/types';
 import type { MessageKey } from '../i18n';
@@ -7,7 +7,7 @@ import { useStore } from '../store';
 import { Tip } from './ui';
 
 export interface ChipModel {
-  feature: Extract<Feature, 'input' | 'laptop_audio' | 'mic' | 'clipboard' | 'focus'>;
+  feature: Extract<Feature, 'input' | 'laptop_audio' | 'mic' | 'camera' | 'clipboard' | 'focus'>;
   label: MessageKey;
   tip: MessageKey;
   icon: ReactNode;
@@ -19,7 +19,7 @@ export interface ChipModel {
 
 const ICON = { size: 18, 'aria-hidden': true } as const;
 
-/** The five dashboard chips, derived from the current state. */
+/** The dashboard chips, derived from the current state. */
 export function chipModels(state: AppState, t: ReturnType<typeof useT>): ChipModel[] {
   const f = state.features;
   const micDetail =
@@ -32,6 +32,7 @@ export function chipModels(state: AppState, t: ReturnType<typeof useT>): ChipMod
     { feature: 'input', label: 'chip.input', tip: 'chip.input.tip', icon: <MousePointer2 {...ICON} />, enabled: f.input.enabled, state: f.input.state, detail: f.input.detail },
     { feature: 'laptop_audio', label: 'chip.laptopAudio', tip: 'chip.laptopAudio.tip', icon: <Volume2 {...ICON} />, enabled: f.laptop_audio.enabled, state: f.laptop_audio.state, detail: f.laptop_audio.device_missing ? t('warn.headset_missing') : f.laptop_audio.detail },
     { feature: 'mic', label: 'chip.mic', tip: 'chip.mic.tip', icon: <Mic {...ICON} />, enabled: f.mic.enabled, state: f.mic.state, detail: micDetail },
+    { feature: 'camera', label: 'chip.camera', tip: 'chip.camera.tip', icon: <Video {...ICON} />, enabled: f.camera.enabled, state: f.camera.state, detail: f.camera.detail },
     { feature: 'clipboard', label: 'chip.clipboard', tip: 'chip.clipboard.tip', icon: <Clipboard {...ICON} />, enabled: f.clipboard.enabled, state: f.clipboard.state, detail: f.clipboard.detail },
     { feature: 'focus', label: 'chip.focus', tip: 'chip.focus.tip', icon: <Maximize2 {...ICON} />, enabled: f.focus.enabled, state: f.focus.state, detail: f.focus.state === 'unavailable' ? f.focus.unavailable_reason : f.focus.detail },
   ];

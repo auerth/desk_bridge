@@ -142,6 +142,16 @@ function seedState(): AppState {
         latency_ms: micLive ? 21 : null,
         device_name: 'Headset-Mikrofon (USB-Dongle)',
       },
+      camera: {
+        enabled: true,
+        state: micLive ? 'live' : connected ? 'ready' : 'off',
+        detail: micLive ? 'Laptop nutzt deine Kamera (ms-teams.exe)' : null,
+        muted: false,
+        device_name: 'WEB CAMERA M9 Pro',
+        app: micLive ? 'ms-teams.exe' : null,
+        resolution: micLive ? '1280×720' : null,
+        fps: micLive ? 30 : null,
+      },
       clipboard: { enabled: true, state: connected ? 'ready' : 'off', detail: null },
       focus: {
         enabled: true,
@@ -270,6 +280,8 @@ export function createMockBackend(): Backend {
     state.device.stream_source = config.device.stream_source;
     state.features.laptop_audio.muted = config.audio.laptop_to_pc.mute;
     state.features.mic.muted = config.audio.mic_to_laptop.mute;
+    state.features.camera.muted = config.camera.mute;
+    state.features.camera.enabled = config.camera.enabled;
     state.features.input.enabled = config.input.enabled;
     state.features.laptop_audio.enabled = config.audio.laptop_to_pc.enabled;
     state.features.clipboard.enabled = config.clipboard.send || config.clipboard.receive;
@@ -478,6 +490,8 @@ export function createMockBackend(): Backend {
           case 'focus': f.focus.enabled = req.enabled; break;
           case 'mute_laptop_audio': config.audio.laptop_to_pc.mute = req.enabled; break;
           case 'mute_mic': config.audio.mic_to_laptop.mute = req.enabled; break;
+          case 'camera': config.camera.enabled = req.enabled; break;
+          case 'mute_camera': config.camera.mute = req.enabled; break;
         }
         applyConfigToState();
         if (req.feature === 'mute_mic') emitEvent({ kind: 'osd', icon: req.enabled ? 'mic-off' : 'mic', text: req.enabled ? 'Mikro stumm' : 'Mikro aktiv' });
@@ -509,6 +523,8 @@ export function createMockBackend(): Backend {
       case 'list_audio_devices':
         setTimeout(() => emitEvent({ kind: 'audio_devices', render: clone(RENDER), capture: clone(CAPTURE) }), 90);
         return null;
+      case 'list_cameras':
+        return { cameras: [{ id: 'cam-1', name: 'WEB CAMERA M9 Pro' }] };
       case 'play_test_tone':
         testToneUntil = Date.now() + 1400;
         return null;

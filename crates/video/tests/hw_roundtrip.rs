@@ -53,6 +53,50 @@ fn cpu_frames_roundtrip_through_hardware_encoder_and_software_decoder() {
     assert!(decoded >= 8, "decoded {decoded}");
 }
 
+/// The webcam path (ADR 0009): a 1080p CPU picture from the webcam, H.264 at the 720p the laptop
+/// app asked for (the encoder scales), the software decoder hands BGRA back.
+#[test]
+#[ignore = "needs a GPU with a hardware encoder"]
+fn webcam_pictures_roundtrip_through_the_camera_codecs() {
+    use deskbridge_video::backend::VideoBackend;
+    let backend = deskbridge_video::WindowsVideoBackend::new();
+    let cfg = EncoderConfig {
+        codec: VideoCodec::H264,
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_kbps: 2_500,
+        yuv444: false,
+    };
+    let mut enc = backend.create_camera_encoder(&cfg).expect("encoder");
+    let mut dec = backend.create_camera_decoder(&cfg).expect("decoder");
+    let mut decoded = 0;
+    let mut last = None;
+    for i in 0..15u64 {
+        let pk = enc
+            .encode(&bgra_frame(1920, 1080, 0, i * 33_333), i == 0)
+            .expect("encode");
+        for p in pk {
+            if let Some(f) = dec.decode_with_ts(&p.data, p.key, p.ts_us).expect("decode") {
+                decoded += 1;
+                last = Some(f);
+            }
+        }
+    }
+    assert!(decoded >= 12, "decoded {decoded}");
+    let f = last.expect("a picture");
+    assert_eq!((f.width, f.height), (1280, 720));
+    let FrameData::Bgra { data, stride } = &f.data else {
+        panic!("camera decoder must hand out CPU pictures");
+    };
+    // centre pixel = source x 960: B = 960 % 256 = 192, G = 128, R = 255 - 192 = 63
+    let o = 360 * stride + 640 * 4;
+    let (b, g, r) = (data[o], data[o + 1], data[o + 2]);
+    assert!(g.abs_diff(128) < 16, "green {g}");
+    assert!(b.abs_diff(192) < 16 && r.abs_diff(63) < 16, "b {b} r {r}");
+    println!("encoder {}, decoder {}, centre bgr ({b},{g},{r})", enc.describe(), dec.name());
+}
+
 #[test]
 #[ignore = "needs a GPU with a hardware encoder"]
 fn force_key_produces_an_idr() {

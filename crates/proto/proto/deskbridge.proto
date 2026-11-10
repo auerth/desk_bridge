@@ -231,6 +231,22 @@ message MicStats {
 message AudioCodecChoice { Stream stream = 1; bool opus = 2; uint32 bitrate_kbps = 3; }
 
 // ---------------------------------------------------------------------------
+// Webcam: the PC's webcam appears on the laptop as "Desk Bridge Kamera" (caps camera.source /
+// camera.sink). Like the microphone it only flows while an app on the laptop streams from it.
+// Pictures: uni stream kind 4, `VideoHeader` + H.264 access unit.
+// ---------------------------------------------------------------------------
+
+// Webcam side -> camera side: forwarding switched on (`enabled`), and whether there is a webcam
+// at all (`available`, `device` = its name).
+message CameraRoute { bool enabled = 1; bool available = 2; string device = 3; }
+// Camera side -> webcam side: an app streams from the virtual camera, at this size and rate.
+message CameraInUse { bool in_use = 1; uint32 width = 2; uint32 height = 3; uint32 fps = 4; string process = 5; }
+// Webcam side -> camera side: the webcam is streaming (`error` empty) or could not be opened.
+message CameraStatus { bool streaming = 1; string error = 2; string device = 3; uint32 width = 4; uint32 height = 5; }
+// Camera side -> webcam side: the decoder needs a key frame.
+message CameraKeyframe {}
+
+// ---------------------------------------------------------------------------
 // Clipboard and files
 // ---------------------------------------------------------------------------
 
@@ -375,5 +391,9 @@ message Control {
     UpdateStatus update_status = 43;
     LogsRequest logs_request = 50;
     LogsResponse logs_response = 51;
+    CameraRoute camera_route = 60;
+    CameraInUse camera_in_use = 61;
+    CameraStatus camera_status = 62;
+    CameraKeyframe camera_keyframe = 63;
   }
 }

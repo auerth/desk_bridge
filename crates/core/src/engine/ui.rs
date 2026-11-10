@@ -174,6 +174,8 @@ impl Engine {
             Feature::Mic => self.cfg.audio.mic_to_laptop.enabled = enabled,
             Feature::MuteLaptopAudio => self.cfg.audio.laptop_to_pc.mute = enabled,
             Feature::MuteMic => self.cfg.audio.mic_to_laptop.mute = enabled,
+            Feature::Camera => self.cfg.camera.enabled = enabled,
+            Feature::MuteCamera => self.cfg.camera.mute = enabled,
             Feature::Focus => return self.set_focus(if enabled { "full" } else { "off" }),
         }
         self.persist_config();

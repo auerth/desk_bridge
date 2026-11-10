@@ -18,6 +18,7 @@ pub struct Config {
     pub clipboard: ClipboardConfig,
     pub files: FilesConfig,
     pub audio: AudioConfig,
+    pub camera: CameraConfig,
     pub focus: FocusConfig,
     pub layout: LayoutConfig,
     pub update: UpdateConfig,
@@ -35,6 +36,7 @@ impl Default for Config {
             clipboard: ClipboardConfig::default(),
             files: FilesConfig::default(),
             audio: AudioConfig::default(),
+            camera: CameraConfig::default(),
             focus: FocusConfig::default(),
             layout: LayoutConfig::default(),
             update: UpdateConfig::default(),
@@ -263,6 +265,31 @@ impl Default for MicAudio {
             only_when_used: true,
             mute: false,
             set_as_default: true,
+        }
+    }
+}
+
+/// Webcam of the PC as "Desk Bridge Kamera" on the laptop. Like the microphone it is only opened
+/// while an app on the laptop streams from the virtual camera.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CameraConfig {
+    pub enabled: bool,
+    /// Webcam on the PC (symbolic link); empty = the first one.
+    pub input_device: String,
+    /// Privacy switch: the laptop gets the placeholder instead of the picture.
+    pub mute: bool,
+    /// H.264 bitrate; 0 = by picture size (~2.5 Mbit/s at 720p).
+    pub bitrate_kbps: u32,
+}
+
+impl Default for CameraConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            input_device: String::new(),
+            mute: false,
+            bitrate_kbps: 0,
         }
     }
 }

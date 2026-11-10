@@ -16,6 +16,8 @@ pub mod uni {
     pub const CLIPBOARD_DATA: u8 = 1;
     pub const FILE: u8 = 2;
     pub const VIDEO: u8 = 3;
+    /// The forwarded webcam: one stream per sender run, frames back to back.
+    pub const CAMERA: u8 = 4;
 }
 
 pub type UniSink = UnboundedSender<quinn::RecvStream>;

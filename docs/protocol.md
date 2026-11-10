@@ -58,6 +58,7 @@ Fallbacks: last known IP/port from `peers.toml`, manually entered host/IP.
 | clipboard data | uni stream per transfer, first byte `0x01` | sender to receiver | `ClipboardDataHeader` then raw bytes | reliable |
 | files | uni stream per file, first byte `0x02` | sender to receiver | `FileHeader`, raw chunks (256 KiB), `FileTrailer` (BLAKE3) | reliable, parallel (max 4), resumable |
 | video | uni stream per frame, first byte `0x03` | stream source to viewer | `VideoHeader` + encoded frame | a late frame is dropped, then `KeyframeRequest` |
+| camera | **one** uni stream per webcam run, first byte `0x04` | webcam side (PC) to virtual camera side (laptop) | frames back to back: `VideoHeader` + `u32` length + H.264 | in order; when behind, frames are dropped until the next key frame, then `CameraKeyframe` (ADR 0009) |
 
 Uni streams carry a one-byte *kind* before their payload; unknown kinds are dropped by the receiver.
 Datagrams are sent with `send_datagram` and limited by `max_datagram_size()`.
@@ -156,7 +157,7 @@ connect anyway, the duplicate is closed with `0x409`.
 max size/fps, encoder name). Well-known capability names live in `deskbridge_proto::caps`
 (`input`, `clipboard.text`, `clipboard.rich`, `files`, `files.virtual`, `audio.pcm`, `audio.opus`,
 `audio.speaker-source`, `audio.mic-sink`, `audio.headset`, `focus.source`, `focus.viewer`, `update`,
-`update.remote`, `logs`).
+`update.remote`, `logs`, `camera.source`, `camera.sink`).
 
 ### Input stream
 
@@ -175,6 +176,7 @@ state always results in `release_all()` on the target.**
 | Layout | `LayoutUpdate{placements, revision}`, `ScreensUpdate` |
 | Focus mode | `FocusStart{width,height,fps,codec,bitrate_kbps,yuv444,layout,disable_internal_display}`, `FocusReady`, `FocusFailed`, `FocusStop`, `KeyframeRequest`, `BitrateHint`, `CursorShape`, `CursorPos`, `StreamStats` |
 | Audio | `AudioRoute{stream, enabled}`, `MicInUse{in_use, process}`, `AudioCodecChoice` |
+| Webcam | `CameraRoute{enabled, available, device}` (PC → laptop), `CameraInUse{in_use, width, height, fps, process}` (laptop → PC: an app shows the virtual camera, the PC opens its webcam only then), `CameraStatus{streaming, error, …}`, `CameraKeyframe` |
 | Clipboard | `ClipboardOffer{id, formats, files, inline_text}`, `ClipboardRequest`, `ClipboardClear` (+ data on a uni stream) |
 | Files | `SendFiles`, `FileRequest{transfer_id, index, offset}`, `TransferProgress` |
 | Update | `UpdateOffer{version, size, sha256, install}`, `UpdateAnswer{accept, reason}`, `UpdateRequest`, `UpdateStatus{version, error}` |

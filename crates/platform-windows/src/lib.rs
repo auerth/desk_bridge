@@ -5,6 +5,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 pub mod audio;
+pub mod camera;
 pub mod clipboard;
 pub mod display;
 pub mod input;

@@ -5,6 +5,7 @@
 //! whole stack is testable without hardware.
 
 pub mod audio;
+pub mod camera;
 pub mod clipboard;
 pub mod display;
 pub mod error;

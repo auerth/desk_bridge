@@ -56,6 +56,15 @@ pub trait VideoBackend: Send + Sync {
     /// Forgets the shared viewer device: a viewer thread hangs on it (inside the driver), so the
     /// next decoder and presenter must not touch it.
     fn discard_view_device(&self) {}
+    /// Encoder for the forwarded webcam: BGRA pictures in system memory.
+    fn create_camera_encoder(&self, cfg: &EncoderConfig) -> Result<Box<dyn VideoEncoder>> {
+        self.create_encoder(cfg, "")
+    }
+    /// Decoder for the forwarded webcam: must return BGRA pictures in system memory (they go
+    /// into the virtual camera's shared memory, not to the screen).
+    fn create_camera_decoder(&self, cfg: &EncoderConfig) -> Result<Box<dyn VideoDecoder>> {
+        self.create_decoder(cfg)
+    }
 }
 
 /// No video support (platform without a video stack): focus mode is reported unavailable.

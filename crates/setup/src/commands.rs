@@ -321,6 +321,25 @@ pub fn uninstall(ctx: &Ctx, args: &UninstallArgs) -> Result<i32> {
         step(&mut failures, "firewall rule", firewall::remove_rule);
     }
 
+    // The virtual camera (registered by an elevated agent on the laptop): the agent knows how
+    // to remove it; nothing to do when it was never registered.
+    let agent = ctx.agent_exe();
+    if agent.is_file() {
+        ctx.plan("remove the virtual camera \"Desk Bridge Kamera\" (if registered)");
+        if !ctx.dry_run {
+            step(&mut failures, "virtual camera", || {
+                let out = Process::new(&agent)
+                    .arg("--unregister-camera")
+                    .output()
+                    .context("running the agent")?;
+                if !out.status.success() {
+                    bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+                }
+                Ok(())
+            });
+        }
+    }
+
     // SendTo shortcut: prefer the recorded path, fall back to the default location.
     let lnk = manifest
         .as_ref()

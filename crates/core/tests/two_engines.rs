@@ -1449,20 +1449,23 @@ async fn a_vpn_capturing_the_lan_route_is_reported() {
     *lp.m.system.diverted.lock() = Some("peer-Storage-wg0-1".into());
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(
-        lp.h.state().await.warnings.iter().all(|w| w.code != "vpn_route"),
+        lp.h.state()
+            .await
+            .warnings
+            .iter()
+            .all(|w| w.code != "vpn_route"),
         "no hint while the connection works"
     );
 
     pc.h.stop();
     let mut warning = None;
     for _ in 0..300 {
-        warning = lp
-            .h
-            .state()
-            .await
-            .warnings
-            .into_iter()
-            .find(|w| w.code == "vpn_route");
+        warning =
+            lp.h.state()
+                .await
+                .warnings
+                .into_iter()
+                .find(|w| w.code == "vpn_route");
         if warning.is_some() {
             break;
         }
@@ -1474,7 +1477,14 @@ async fn a_vpn_capturing_the_lan_route_is_reported() {
     // tunnel gone: the next check clears the hint
     *lp.m.system.diverted.lock() = None;
     for _ in 0..300 {
-        if lp.h.state().await.warnings.iter().all(|w| w.code != "vpn_route") {
+        if lp
+            .h
+            .state()
+            .await
+            .warnings
+            .iter()
+            .all(|w| w.code != "vpn_route")
+        {
             lp.h.stop();
             return;
         }
@@ -1495,4 +1505,129 @@ where
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("timeout: {what}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn webcam_flows_only_while_a_laptop_app_shows_the_camera() {
+    use deskbridge_core::ipc::Live;
+    use deskbridge_platform::camera::CameraFeedState;
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pc, lp) = setup().await;
+    let vcam = &lp.m.virtual_camera;
+    wait_for(
+        "virtual camera offered while the PC forwards its webcam",
+        || *vcam.enabled.lock() == Some(true),
+    )
+    .await;
+    wait_for("placeholder: waiting for the PC", || {
+        *vcam.feed.lock() == Some(CameraFeedState::Waiting)
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(
+        !pc.m.camera_capture.open.load(SeqCst),
+        "the webcam must stay closed while no laptop app shows the camera"
+    );
+
+    vcam.set_in_use(Some((1280, 720)));
+    wait_for("webcam opens on the pc", || {
+        pc.m.camera_capture.open.load(SeqCst)
+    })
+    .await;
+    assert_eq!(
+        *pc.m.camera_capture.last_request.lock(),
+        Some((1280, 720, 30))
+    );
+    wait_for("pictures reach the virtual camera", || {
+        vcam.frames.load(SeqCst) > 5
+    })
+    .await;
+    wait_for_async("pc shows who uses the camera", || async {
+        let c = pc.h.state().await.features.camera;
+        c.base.state == Live::Live
+            && c.base
+                .detail
+                .unwrap_or_default()
+                .contains("Laptop nutzt deine Kamera (ms-teams.exe)")
+    })
+    .await;
+    assert_eq!(lp.h.state().await.features.camera.base.state, Live::Live);
+
+    // Another size: the webcam is reopened at that size.
+    vcam.set_in_use(Some((1920, 1080)));
+    wait_for("webcam reopened at 1080p", || {
+        *pc.m.camera_capture.last_request.lock() == Some((1920, 1080, 30))
+    })
+    .await;
+
+    vcam.set_in_use(None);
+    wait_for("webcam closes again", || {
+        !pc.m.camera_capture.open.load(SeqCst)
+    })
+    .await;
+
+    pc.h.stop();
+    wait_for("placeholder without a partner", || {
+        *vcam.feed.lock() == Some(CameraFeedState::Idle)
+    })
+    .await;
+    assert_eq!(
+        *vcam.enabled.lock(),
+        Some(true),
+        "kept during the reconnect grace period"
+    );
+    lp.h.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn webcam_mute_and_a_missing_webcam_keep_the_camera_closed() {
+    use deskbridge_core::ipc::Live;
+    use deskbridge_platform::camera::CameraFeedState;
+    use std::sync::atomic::Ordering::SeqCst;
+    let pc = node("PC", true, 2560, 1440).await;
+    let lp = node("Laptop", false, 1920, 1080).await;
+    pc.m.camera_capture.none.store(true, SeqCst);
+    let (pc, lp) = connect_nodes(pc, lp).await;
+    let vcam = &lp.m.virtual_camera;
+    vcam.set_in_use(Some((1280, 720)));
+    wait_for("placeholder says unavailable", || {
+        *vcam.feed.lock() == Some(CameraFeedState::Unavailable)
+    })
+    .await;
+    wait_for_async("the pc saw the laptop app", || async {
+        pc.h.state().await.features.camera.app.as_deref() == Some("ms-teams.exe")
+    })
+    .await;
+    let st = pc.h.state().await.features.camera;
+    assert_eq!(st.base.state, Live::Unavailable);
+    assert_eq!(st.base.detail.as_deref(), Some("Keine Webcam gefunden"));
+    assert_eq!(pc.m.camera_capture.opened_count.load(SeqCst), 0);
+
+    // A webcam appears and the user pauses the forwarding: still nothing is opened.
+    pc.m.camera_capture.none.store(false, SeqCst);
+    let mut cfg: deskbridge_core::config::Config =
+        serde_json::from_value(pc.h.request(UiRequest::GetConfig).await.unwrap()).unwrap();
+    cfg.camera.mute = true;
+    pc.h.request(UiRequest::SetConfig {
+        config: Box::new(cfg.clone()),
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(pc.m.camera_capture.opened_count.load(SeqCst), 0);
+    assert_eq!(*vcam.feed.lock(), Some(CameraFeedState::Unavailable));
+
+    cfg.camera.mute = false;
+    pc.h.request(UiRequest::SetConfig {
+        config: Box::new(cfg),
+    })
+    .await
+    .unwrap();
+    wait_for("webcam opens after unpausing", || {
+        pc.m.camera_capture.open.load(SeqCst)
+    })
+    .await;
+    wait_for("pictures flow", || vcam.frames.load(SeqCst) > 3).await;
+    pc.h.stop();
+    lp.h.stop();
 }

@@ -136,6 +136,17 @@ impl VideoBackend for WindowsVideoBackend {
         Ok(Box::new(FfmpegDecoder::new(cfg.codec, Some(&dev.device))?))
     }
 
+    fn create_camera_encoder(&self, cfg: &EncoderConfig) -> Result<Box<dyn VideoEncoder>> {
+        // Opened on the first (CPU) picture: hardware encoder, system-memory NV12.
+        Ok(Box::new(FfmpegEncoder::new(cfg.clone(), None)?))
+    }
+
+    fn create_camera_decoder(&self, cfg: &EncoderConfig) -> Result<Box<dyn VideoDecoder>> {
+        // A webcam picture is small: the software decoder keeps the GPU free for focus mode
+        // and hands out BGRA in system memory, which is what the virtual camera needs.
+        Ok(Box::new(FfmpegDecoder::new_software(cfg.codec)?))
+    }
+
     fn create_presenter(
         &self,
         mode: PresenterMode,

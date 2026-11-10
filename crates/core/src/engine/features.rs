@@ -18,6 +18,7 @@ impl Engine {
         }
         if self.on_clipboard_control(msg.clone())
             || self.on_audio_control(&msg)
+            || self.on_camera_control(&msg)
             || self.focus_control(&msg)
         {
             return;
@@ -55,11 +56,13 @@ impl Engine {
         self.on_session_up_update();
         self.start_clipboard();
         self.start_audio();
+        self.start_camera();
     }
 
     pub(crate) fn on_session_down_features(&mut self) {
         self.focus_session_down();
         self.on_session_down_update();
+        self.stop_camera();
         self.stop_audio();
         self.stop_clipboard();
         self.stop_transfers();
@@ -114,6 +117,7 @@ impl Engine {
                 Ok(serde_json::json!({ "ok": true }))
             }
             R::ListAudioDevices => self.list_audio_devices(),
+            R::ListCameras => self.list_cameras(),
             R::PlayTestTone => self.play_test_tone(),
             R::ExportDiagnostics { target } => self.export_diagnostics(target),
             R::OfferPartnerUpdate {
@@ -137,6 +141,7 @@ impl Engine {
     pub(crate) fn apply_config_to_features(&mut self) {
         self.apply_clip_config();
         self.apply_audio_config();
+        self.apply_camera_config();
     }
 }
 

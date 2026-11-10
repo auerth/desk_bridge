@@ -7,6 +7,7 @@
     installer/stage/deskbridge-agent.exe
     installer/stage/deskbridge-service.exe
     installer/stage/deskbridge-setup.exe
+    installer/stage/deskbridge_vcam.dll   (virtual camera "Desk Bridge Kamera", loaded by the Frame Server)
     installer/stage/ffmpeg/*.dll          (from vendor/ffmpeg/bin, unless -NoFfmpeg)
     installer/stage/drivers/<name>/...    (driver packages that opt in with drivers/<name>/driver.json)
     installer/stage/drivers/drivers.json  (catalogue read by `deskbridge-setup install`)
@@ -49,7 +50,7 @@ $bin = Join-Path $targetDir $profileDir
 
 if (-not $SkipBuild) {
     Write-Host "==> cargo build ($Config): agent, service, setup" -ForegroundColor Cyan
-    $cargoArgs = @('build', '-p', 'deskbridge-agent', '-p', 'deskbridge-service', '-p', 'deskbridge-setup')
+    $cargoArgs = @('build', '-p', 'deskbridge-agent', '-p', 'deskbridge-service', '-p', 'deskbridge-setup', '-p', 'deskbridge-vcam')
     if ($Config -eq 'Release') { $cargoArgs += '--release' }
     Push-Location $root
     try {
@@ -63,7 +64,7 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 Write-Host '==> staging binaries' -ForegroundColor Cyan
-foreach ($exe in 'deskbridge-agent.exe', 'deskbridge-service.exe', 'deskbridge-setup.exe') {
+foreach ($exe in 'deskbridge-agent.exe', 'deskbridge-service.exe', 'deskbridge-setup.exe', 'deskbridge_vcam.dll') {
     $src = Join-Path $bin $exe
     if (-not (Test-Path $src)) { throw "missing $src (build first or drop -SkipBuild)" }
     Copy-Item $src $stage

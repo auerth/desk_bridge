@@ -2,6 +2,7 @@
 //! capture forwarders, IPC connections, timers) only sends [`Msg`]s to it.
 
 mod audio;
+mod camera;
 mod clip;
 mod connect;
 mod dto;
@@ -114,6 +115,13 @@ pub(crate) enum Msg {
         message: String,
     },
     MicUsage(deskbridge_platform::audio::MicUsage),
+    /// An app on this machine opened or closed the virtual camera.
+    CameraUsage(deskbridge_platform::camera::CameraUsage),
+    /// The webcam sender ended (`error` = why it could not run).
+    CameraSenderEnded {
+        generation: u64,
+        error: Option<String>,
+    },
     ToneDone,
     FocusSourceUp {
         screen_id: u32,
@@ -323,6 +331,7 @@ pub(crate) struct Engine {
     pub(crate) edge_recheck_pending: bool,
     pub(crate) clip: Option<clip::ClipRuntime>,
     pub(crate) audio: audio::AudioState,
+    pub(crate) camera: camera::CameraState,
     pub(crate) focus: focus::FocusRt,
     pub(crate) remote_logs: remote_logs::RemoteLogs,
     pub(crate) cursor_shape: Option<deskbridge_platform::video::CursorShapeData>,
@@ -525,6 +534,7 @@ pub async fn start(params: EngineParams) -> anyhow::Result<EngineHandle> {
         edge_recheck_pending: false,
         clip: None,
         audio: audio::AudioState::default(),
+        camera: camera::CameraState::default(),
         focus: focus::FocusRt::default(),
         remote_logs: remote_logs::RemoteLogs::default(),
         cursor_shape: None,
@@ -706,6 +716,10 @@ impl Engine {
             Msg::Tick => self.on_tick(),
             Msg::Warn { code, message } => self.warn_once(&code, &message),
             Msg::MicUsage(u) => self.on_mic_usage(u),
+            Msg::CameraUsage(u) => self.on_camera_usage(u),
+            Msg::CameraSenderEnded { generation, error } => {
+                self.on_camera_sender_ended(generation, error);
+            }
             Msg::ToneDone => self.on_tone_done(),
             Msg::FocusSourceUp {
                 screen_id,
@@ -803,6 +817,7 @@ impl Engine {
         }
         if d.headset_sink {
             c.push(caps::AUDIO_HEADSET);
+            c.push(caps::CAMERA_SOURCE);
         }
         if d.stream_source {
             c.push(caps::FOCUS_SOURCE);
@@ -812,6 +827,9 @@ impl Engine {
             c.push(caps::AUDIO_SPEAKER_SOURCE);
             if self.platform.virtual_audio.available() {
                 c.push(caps::AUDIO_MIC_SINK);
+            }
+            if self.platform.virtual_camera.available() {
+                c.push(caps::CAMERA_SINK);
             }
         }
         let hello = pb::Hello {
@@ -996,6 +1014,7 @@ impl Engine {
         }
         self.tick_focus();
         self.sync_mic_render_depth();
+        self.tick_camera();
         self.update_idle_state();
         self.tick_input();
         if self.has_running_transfers() || self.audio_is_active() || self.focus_is_active() {

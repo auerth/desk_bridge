@@ -11,6 +11,8 @@ members = [
     "crates/files",
     "crates/video",
     "crates/display",
+    "crates/camera",
+    "crates/vcam",
     "crates/core",
     "crates/agent",
     "crates/service",
@@ -42,6 +44,7 @@ deskbridge-clipboard = { path = "crates/clipboard" }
 deskbridge-files = { path = "crates/files" }
 deskbridge-video = { path = "crates/video" }
 deskbridge-display = { path = "crates/display" }
+deskbridge-camera = { path = "crates/camera" }
 deskbridge-core = { path = "crates/core" }
 
 # external

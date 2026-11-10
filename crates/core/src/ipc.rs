@@ -73,6 +73,8 @@ pub enum UiRequest {
         locked: bool,
     },
     ListAudioDevices,
+    /// Webcams of this device (answer: `{ "cameras": [CameraDeviceDto] }`).
+    ListCameras,
     /// Play a test tone "from the laptop" on the headset.
     PlayTestTone,
     SendFiles {
@@ -136,6 +138,8 @@ pub enum Feature {
     Focus,
     MuteLaptopAudio,
     MuteMic,
+    Camera,
+    MuteCamera,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -399,8 +403,30 @@ pub struct FeaturesDto {
     pub input: FeatureDto,
     pub laptop_audio: AudioFeatureDto,
     pub mic: AudioFeatureDto,
+    pub camera: CameraFeatureDto,
     pub clipboard: FeatureDto,
     pub focus: FocusDto,
+}
+
+/// Webcam forwarding (PC webcam → "Desk Bridge Kamera" on the laptop).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CameraFeatureDto {
+    #[serde(flatten)]
+    pub base: FeatureDto,
+    pub muted: bool,
+    /// The webcam that is (or would be) forwarded.
+    pub device_name: Option<String>,
+    /// The app on the laptop that shows the camera ("ms-teams.exe"), while it does.
+    pub app: Option<String>,
+    /// "1280×720", while pictures flow.
+    pub resolution: Option<String>,
+    pub fps: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct CameraDeviceDto {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

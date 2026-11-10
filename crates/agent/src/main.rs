@@ -7,6 +7,8 @@
 //!   "Agent neu starten": the old instance starts its successor right before it exits)
 //! * `deskbridge-agent --logon-screen` – the restricted agent at the Windows logon screen; only
 //!   the service starts it, as SYSTEM, while nobody is signed in (ADR 0008)
+//! * `deskbridge-agent --register-camera` / `--unregister-camera` – registers or removes the
+//!   virtual camera "Desk Bridge Kamera" (`deskbridge_vcam.dll` next to the agent; administrator)
 //!
 //! Environment overrides (used by `scripts/dev-two-instances.ps1` and tests):
 //! `DESKBRIDGE_DATA_ROOT`, `DESKBRIDGE_PORT`, `DESKBRIDGE_PIPE`.
@@ -49,6 +51,8 @@ fn main() {
             0
         }
         Some(deskbridge_core::brand::LOGON_SCREEN_ARG) => run_logon_agent(),
+        Some("--register-camera") => camera_cmd(true),
+        Some("--unregister-camera") => camera_cmd(false),
         Some("--after-pid") => {
             if let Some(pid) = args.get(1).and_then(|p| p.parse::<u32>().ok()) {
                 wait_for_exit(pid, std::time::Duration::from_secs(15));
@@ -58,6 +62,73 @@ fn main() {
         _ => run_agent(),
     };
     std::process::exit(code);
+}
+
+/// `deskbridge_vcam.dll` next to this executable.
+#[cfg(windows)]
+fn camera_dll() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join(deskbridge_camera::VCAM_DLL))
+}
+
+/// `--register-camera` / `--unregister-camera` (installer, administrator).
+#[cfg(windows)]
+fn camera_cmd(register: bool) -> i32 {
+    use deskbridge_platform_windows::camera::register;
+    let r = if register {
+        match camera_dll() {
+            Some(dll) => register::install(&dll)
+                .map(|()| format!("Desk Bridge Kamera registered ({})", dll.display())),
+            None => Err(deskbridge_platform::PlatformError::other(
+                "no executable path",
+            )),
+        }
+    } else {
+        register::uninstall().map(|()| "Desk Bridge Kamera removed".to_string())
+    };
+    match r {
+        Ok(msg) => {
+            println!("{msg}");
+            0
+        }
+        Err(e) => {
+            eprintln!("virtual camera: {e}");
+            1
+        }
+    }
+}
+
+/// The laptop offers "Desk Bridge Kamera" (Windows 11). An elevated agent repairs the
+/// registration when it is missing or points at another installation; without administrator
+/// rights it can only report what is missing (the UI shows it).
+#[cfg(windows)]
+fn ensure_virtual_camera() {
+    use deskbridge_platform_windows::camera::register;
+    if !register::os_supported() {
+        tracing::info!("virtual camera: not offered by this Windows version");
+        return;
+    }
+    let Some(dll) = camera_dll().filter(|d| d.is_file()) else {
+        tracing::warn!(
+            "virtual camera: {} missing next to the agent",
+            deskbridge_camera::VCAM_DLL
+        );
+        return;
+    };
+    if register::registered_dll().as_deref() == Some(dll.as_path()) {
+        return;
+    }
+    if !deskbridge_platform_windows::input::is_elevated() {
+        tracing::warn!(
+            "virtual camera not registered for {}; needs administrator rights",
+            dll.display()
+        );
+        return;
+    }
+    match register::install(&dll) {
+        Ok(()) => tracing::info!(dll = %dll.display(), "virtual camera registered"),
+        Err(e) => tracing::warn!("virtual camera registration failed: {e}"),
+    }
 }
 
 /// Lets the command line modes print into the terminal they were started from.
@@ -217,6 +288,9 @@ fn run_agent() -> i32 {
     if !config.device.input_source {
         // Target device: a crashed predecessor may have left injected keys pressed.
         secure::release_stuck_keys();
+    }
+    if config.device.stream_source && custom_root.is_none() {
+        ensure_virtual_camera();
     }
     // Dev instances (`DESKBRIDGE_DATA_ROOT`) never touch the machine-wide logon profile.
     let logon_sync = custom_root.is_none().then(|| paths.clone());

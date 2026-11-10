@@ -48,6 +48,8 @@ pub fn build() -> Platform {
         audio_playback: Arc::new(WasapiPlayback::new()),
         virtual_audio: virtual_audio(),
         local_output: Arc::new(WinLocalOutput::new()),
+        camera_capture: Arc::new(deskbridge_platform_windows::camera::WinCameraCapture),
+        virtual_camera: Arc::new(deskbridge_platform_windows::camera::WinVirtualCamera::new()),
         system: Arc::new(ServiceClient::new()),
         presence: Arc::new(WinPresence::new()),
         // UAC, lock screen and logon are captured by the SYSTEM helper and handed over as shared

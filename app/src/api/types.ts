@@ -7,7 +7,7 @@
 // Client -> agent
 // ---------------------------------------------------------------------------------------------
 
-export type Feature = 'input' | 'laptop_audio' | 'mic' | 'clipboard' | 'focus' | 'mute_laptop_audio' | 'mute_mic';
+export type Feature = 'input' | 'laptop_audio' | 'mic' | 'camera' | 'clipboard' | 'focus' | 'mute_laptop_audio' | 'mute_mic' | 'mute_camera';
 
 export interface PlacementDto {
   device_id: string;
@@ -33,6 +33,8 @@ export type UiRequest =
   | { type: 'jump_to_other_device' }
   | { type: 'set_cursor_lock'; locked: boolean }
   | { type: 'list_audio_devices' }
+  /** Answer: `{ cameras: CameraDeviceDto[] }`. */
+  | { type: 'list_cameras' }
   | { type: 'play_test_tone' }
   | { type: 'send_files'; paths: string[] }
   | { type: 'open_incoming_folder' }
@@ -196,10 +198,26 @@ export interface FocusDto extends FeatureDto {
   unavailable_reason: string | null;
 }
 
+/** PC webcam -> "Desk Bridge Kamera" on the laptop. */
+export interface CameraFeatureDto extends FeatureDto {
+  muted: boolean;
+  device_name: string | null;
+  /** App on the laptop that shows the camera. */
+  app: string | null;
+  resolution: string | null;
+  fps: number | null;
+}
+
+export interface CameraDeviceDto {
+  id: string;
+  name: string;
+}
+
 export interface FeaturesDto {
   input: FeatureDto;
   laptop_audio: AudioFeatureDto;
   mic: AudioFeatureDto;
+  camera: CameraFeatureDto;
   clipboard: FeatureDto;
   focus: FocusDto;
 }
@@ -378,6 +396,16 @@ export interface AudioConfig {
   mic_to_laptop: MicAudioConfig;
 }
 
+export interface CameraConfig {
+  enabled: boolean;
+  /** Webcam id on the PC; empty = the first one. */
+  input_device: string;
+  /** Paused: the laptop shows a placeholder. */
+  mute: boolean;
+  /** 0 = by picture size. */
+  bitrate_kbps: number;
+}
+
 export interface FocusConfig {
   mode: 'full' | 'split' | 'window';
   split_side: 'left' | 'right';
@@ -417,6 +445,7 @@ export interface Config {
   clipboard: ClipboardConfig;
   files: FilesConfig;
   audio: AudioConfig;
+  camera: CameraConfig;
   focus: FocusConfig;
   layout: LayoutConfig;
   update: UpdateConfig;
@@ -490,6 +519,7 @@ export function defaultConfig(): Config {
       },
       mic_to_laptop: { enabled: true, input_device: '', only_when_used: true, mute: false, set_as_default: true },
     },
+    camera: { enabled: true, input_device: '', mute: false, bitrate_kbps: 0 },
     focus: {
       mode: 'full',
       split_side: 'right',

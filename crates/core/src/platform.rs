@@ -5,6 +5,9 @@ use deskbridge_display::mock::MockDisplayManager;
 use deskbridge_platform::audio::{
     AudioCapture, AudioDevices, AudioPlayback, DeviceKind, LocalOutput, VirtualAudio,
 };
+use deskbridge_platform::camera::{
+    CameraCapture, MockCameraCapture, MockVirtualCamera, VirtualCamera,
+};
 use deskbridge_platform::clipboard::ClipboardBackend;
 use deskbridge_platform::display::DisplayManager;
 use deskbridge_platform::input::{InputCapture, InputInjector};
@@ -36,6 +39,10 @@ pub struct Platform {
     pub audio_playback: Arc<dyn AudioPlayback>,
     pub virtual_audio: Arc<dyn VirtualAudio>,
     pub local_output: Arc<dyn LocalOutput>,
+    /// The webcam that is forwarded (PC).
+    pub camera_capture: Arc<dyn CameraCapture>,
+    /// "Desk Bridge Kamera" that shows the forwarded webcam (laptop).
+    pub virtual_camera: Arc<dyn VirtualCamera>,
     pub system: Arc<dyn SystemServices>,
     /// Teams presence ("keep me available").
     pub presence: Arc<dyn Presence>,
@@ -74,6 +81,8 @@ pub struct MockHandles {
     pub audio_playback: Arc<MockAudioPlayback>,
     pub virtual_audio: Arc<MockVirtualAudio>,
     pub local_output: Arc<MockLocalOutput>,
+    pub camera_capture: Arc<MockCameraCapture>,
+    pub virtual_camera: Arc<MockVirtualCamera>,
     pub video: Arc<MockVideoBackend>,
     pub display: Arc<MockDisplayManager>,
     pub web: Arc<MockWebClient>,
@@ -100,6 +109,8 @@ impl Platform {
         let audio_playback = Arc::new(MockAudioPlayback::default());
         let virtual_audio = Arc::new(MockVirtualAudio::default());
         let local_output = Arc::new(MockLocalOutput::default());
+        let camera_capture = Arc::new(MockCameraCapture::default());
+        let virtual_camera = Arc::new(MockVirtualCamera::default());
         let video = Arc::new(MockVideoBackend::new((64, 36)));
         let display = Arc::new(MockDisplayManager::new());
         let web = Arc::new(MockWebClient::default());
@@ -117,6 +128,8 @@ impl Platform {
             audio_playback: audio_playback.clone(),
             virtual_audio: virtual_audio.clone(),
             local_output: local_output.clone(),
+            camera_capture: camera_capture.clone(),
+            virtual_camera: virtual_camera.clone(),
             system: system.clone(),
             presence: presence.clone(),
             video: video.clone(),
@@ -136,6 +149,8 @@ impl Platform {
                 audio_playback,
                 virtual_audio,
                 local_output,
+                camera_capture,
+                virtual_camera,
                 video,
                 display,
                 web,

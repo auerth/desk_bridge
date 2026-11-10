@@ -953,6 +953,7 @@ name = "deskbridge-agent"
 version = "0.1.8-beta"
 dependencies = [
  "anyhow",
+ "deskbridge-camera",
  "deskbridge-core",
  "deskbridge-net",
  "deskbridge-platform",
@@ -978,6 +979,13 @@ dependencies = [
  "parking_lot",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "deskbridge-camera"
+version = "0.1.8-beta"
+dependencies = [
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -1115,6 +1123,7 @@ dependencies = [
 name = "deskbridge-platform-windows"
 version = "0.1.8-beta"
 dependencies = [
+ "deskbridge-camera",
  "deskbridge-display",
  "deskbridge-platform",
  "parking_lot",
@@ -1166,6 +1175,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "deskbridge-vcam"
+version = "0.1.8-beta"
+dependencies = [
+ "deskbridge-camera",
+ "windows 0.58.0",
+ "windows-core 0.58.0",
 ]
 
 [[package]]

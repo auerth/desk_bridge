@@ -1,6 +1,6 @@
-import { Mic, RefreshCw, Volume2 } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
-import type { AudioDeviceDto } from '../api/types';
+import { Mic, RefreshCw, Video, Volume2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { AudioDeviceDto, CameraDeviceDto } from '../api/types';
 import { Banner, Button, Card, Kbd, Meter, PageHeader, Pill, Row, Segmented, Select, Slider, SwitchRow, type Option } from '../components/ui';
 import { useT } from '../i18n/useT';
 import { useLang } from '../i18n/useT';
@@ -30,6 +30,18 @@ export function Audio() {
     void send({ type: 'list_audio_devices' }, { silent: true });
   }, [send]);
 
+  const [cameras, setCameras] = useState<CameraDeviceDto[]>([]);
+  const loadCameras = useCallback(
+    (silent: boolean) =>
+      void send<{ cameras: CameraDeviceDto[] }>({ type: 'list_cameras' }, { silent }).then((r) => setCameras(r?.cameras ?? [])),
+    [send],
+  );
+  useEffect(() => loadCameras(true), [loadCameras]);
+  const cameraOpts = useMemo(
+    () => [{ value: DEFAULT_ID, label: t('audio.cameraFirst') }, ...cameras.map((c) => ({ value: c.id, label: c.name }))],
+    [cameras, t],
+  );
+
   const renderOpts = useMemo(() => deviceOptions(devices?.render ?? [], t('audio.systemDefault'), t('audio.virtualTag')), [devices, t]);
   const captureOpts = useMemo(() => deviceOptions(devices?.capture ?? [], t('audio.defaultComm'), t('audio.virtualTag')), [devices, t]);
 
@@ -40,6 +52,9 @@ export function Audio() {
   const online = state.connection.state === 'connected' || state.connection.state === 'degraded';
   const micUnavailable = mic.state === 'unavailable';
   const micKeys = hotkeyParts(config.hotkeys.mic_mute ?? DEFAULT_HOTKEYS.mic_mute, lang);
+  const cam = state.features.camera;
+  const camCfg = config.camera;
+  const camUnavailable = cam.state === 'unavailable';
 
   return (
     <>
@@ -184,6 +199,52 @@ export function Audio() {
             onChange={(v) => update((c) => void (c.audio.mic_to_laptop.set_as_default = v))}
           />
         </div>
+      </Card>
+
+      <Card
+        icon={<Video size={20} aria-hidden />}
+        title={t('audio.cameraTitle')}
+        subtitle={t('audio.cameraSub')}
+        actions={<Pill tone={cam.state === 'live' ? 'accent' : cam.state === 'unavailable' ? 'warn' : 'neutral'}>{t(`live.${cam.state}`)}</Pill>}
+      >
+        {cam.detail && (cam.state === 'unavailable' || cam.state === 'live' || camCfg.mute) && (
+          <Banner tone="info" title={cam.detail}>
+            {cam.state === 'live' && cam.resolution
+              ? t('audio.cameraNow', { res: cam.resolution, fps: cam.fps != null ? String(Math.round(cam.fps)) : '–' })
+              : null}
+          </Banner>
+        )}
+        <SwitchRow
+          title={t('audio.cameraOn')}
+          description={t('audio.cameraOnlyWhenUsed')}
+          checked={camCfg.enabled}
+          onChange={(v) => update((c) => void (c.camera.enabled = v))}
+        />
+        {state.device.headset_sink && (
+          <>
+            <Row title={t('audio.cameraDevice')} stack>
+              <div className="inline">
+                <Select
+                  ariaLabel={t('audio.cameraDevice')}
+                  width={340}
+                  value={camCfg.input_device || DEFAULT_ID}
+                  options={cameraOpts}
+                  onChange={(v) => update((c) => void (c.camera.input_device = v === DEFAULT_ID ? '' : v))}
+                />
+                <Button variant="ghost" size="sm" icon={<RefreshCw size={14} aria-hidden />} onClick={() => loadCameras(false)}>
+                  {t('audio.refresh')}
+                </Button>
+              </div>
+            </Row>
+            <SwitchRow
+              title={t('audio.cameraPause')}
+              description={t('audio.cameraPauseHint')}
+              disabled={camUnavailable}
+              checked={camCfg.mute}
+              onChange={(v) => update((c) => void (c.camera.mute = v))}
+            />
+          </>
+        )}
       </Card>
     </>
   );
