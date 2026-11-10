@@ -15,6 +15,7 @@
 
 #[cfg(windows)]
 fn main() {
+    let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
     if let Err(e) = imp::run() {
         eprintln!("error: {e}");
         std::process::exit(1);
@@ -46,7 +47,7 @@ mod imp {
                     println!("{}  [{}]", d.name, d.id);
                 }
             }
-            Some("webcam") => webcam(secs(1))?,
+            Some("webcam") => webcam(secs(1), args.get(2).cloned())?,
             Some("register") => {
                 let dll = std::path::absolute(args.get(1).ok_or("dll path missing")?)?;
                 register::register_com(&dll)?;
@@ -72,7 +73,8 @@ mod imp {
         Ok(())
     }
 
-    fn webcam(secs: u64) -> R<()> {
+    /// Opens the webcam like the agent does; saves the first picture (top-down BGRA) as PNG.
+    fn webcam(secs: u64, png_path: Option<String>) -> R<()> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let h = WinCameraCapture.start(None, 1280, 720, 30, tx)?;
         let t0 = Instant::now();
@@ -95,6 +97,25 @@ mod imp {
                             f.height,
                             t0.elapsed()
                         );
+                        if let Some(path) = &png_path {
+                            let (w, h) = (f.width as usize, f.height as usize);
+                            let mut rgb = Vec::with_capacity(w * h * 3);
+                            for y in 0..h {
+                                for x in 0..w {
+                                    let o = y * stride + x * 4;
+                                    rgb.extend_from_slice(&[data[o + 2], data[o + 1], data[o]]);
+                                }
+                            }
+                            let file = std::fs::File::create(path)?;
+                            let mut e = png::Encoder::new(
+                                std::io::BufWriter::new(file),
+                                w as u32,
+                                h as u32,
+                            );
+                            e.set_color(png::ColorType::Rgb);
+                            e.write_header()?.write_image_data(&rgb)?;
+                            println!("saved first picture to {path}");
+                        }
                     }
                 }
                 Err(_) => std::thread::sleep(Duration::from_millis(5)),
@@ -233,8 +254,13 @@ mod imp {
                     out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
                     out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
                     reader.SetCurrentMediaType(stream, None, &out)?;
-                    let size = reader.GetCurrentMediaType(stream)?.GetUINT64(&MF_MT_FRAME_SIZE)?;
+                    let cur = reader.GetCurrentMediaType(stream)?;
+                    let size = cur.GetUINT64(&MF_MT_FRAME_SIZE)?;
                     let (w, h) = ((size >> 32) as usize, (size as u32) as usize);
+                    // Only a negative default stride means bottom-up rows.
+                    let stride = cur.GetUINT32(&MF_MT_DEFAULT_STRIDE).ok().map(|s| s as i32);
+                    let bottom_up = stride.is_some_and(|s| s < 0);
+                    println!("reader: {w}x{h}, default stride {stride:?}");
                     let t0 = Instant::now();
                     let (mut n, mut placeholder) = (0u32, 0u32);
                     while !stop.load(std::sync::atomic::Ordering::SeqCst) {
@@ -250,23 +276,26 @@ mod imp {
                         let px = std::slice::from_raw_parts(p, len as usize);
                         // the placeholder's corner is the brand background
                         let c = (px[2], px[1], px[0]);
-                        if c.0.abs_diff(0x1D) < 8 && c.1.abs_diff(0x2B) < 8 && c.2.abs_diff(0x4F) < 8 {
+                        if c.0.abs_diff(0x1D) < 8
+                            && c.1.abs_diff(0x2B) < 8
+                            && c.2.abs_diff(0x4F) < 8
+                        {
                             placeholder += 1;
                         }
                         if n == 60
                             && let Some(path) = &png_path
                             && px.len() >= w * h * 4
                         {
-                            // RGB32 from the source reader is bottom-up.
                             let mut rgb = Vec::with_capacity(w * h * 3);
-                            for y in (0..h).rev() {
+                            for y in (0..h).map(|y| if bottom_up { h - 1 - y } else { y }) {
                                 for x in 0..w {
                                     let o = (y * w + x) * 4;
                                     rgb.extend_from_slice(&[px[o + 2], px[o + 1], px[o]]);
                                 }
                             }
                             let f = std::fs::File::create(path)?;
-                            let mut e = png::Encoder::new(std::io::BufWriter::new(f), w as u32, h as u32);
+                            let mut e =
+                                png::Encoder::new(std::io::BufWriter::new(f), w as u32, h as u32);
                             e.set_color(png::ColorType::Rgb);
                             e.write_header()?.write_image_data(&rgb)?;
                             println!("reader: saved picture {n} ({w}x{h}) to {path}");

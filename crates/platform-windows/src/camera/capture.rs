@@ -263,6 +263,7 @@ fn open(device: Option<&str>, w: u32, h: u32, fps: u32) -> Result<(IMFSourceRead
 fn read_loop(reader: &IMFSourceReader, stop: &AtomicBool, sink: &UnboundedSender<Frame>) {
     let stream = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
     let mut size = (0u32, 0u32);
+    let mut bottom_up = false;
     let mut errors = 0u32;
     let mut last_log = Instant::now();
     while !stop.load(Ordering::SeqCst) {
@@ -287,18 +288,25 @@ fn read_loop(reader: &IMFSourceReader, stop: &AtomicBool, sink: &UnboundedSender
             break;
         }
         if size == (0, 0) || flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED.0 as u32 != 0 {
-            // SAFETY: plain COM getter.
-            if let Ok(v) = unsafe {
-                reader
-                    .GetCurrentMediaType(stream)
-                    .and_then(|mt| mt.GetUINT64(&MF_MT_FRAME_SIZE))
-            } {
-                size = ((v >> 32) as u32, v as u32);
+            // SAFETY: plain COM getters.
+            if let Ok(mt) = unsafe { reader.GetCurrentMediaType(stream) } {
+                if let Ok(v) = unsafe { mt.GetUINT64(&MF_MT_FRAME_SIZE) } {
+                    size = ((v >> 32) as u32, v as u32);
+                }
+                let stride = unsafe { mt.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
+                    .ok()
+                    .map(|s| s as i32);
+                bottom_up = stride_is_bottom_up(stride);
+                tracing::info!(
+                    "webcam picture {}x{}, default stride {stride:?}",
+                    size.0,
+                    size.1
+                );
             }
         }
         let Some(sample) = sample else { continue };
         errors = 0;
-        match to_bgra(&sample, size) {
+        match to_bgra(&sample, size, bottom_up) {
             Some(frame) => {
                 if sink.send(frame).is_err() {
                     break;
@@ -315,7 +323,15 @@ fn read_loop(reader: &IMFSourceReader, stop: &AtomicBool, sink: &UnboundedSender
     tracing::info!("webcam closed");
 }
 
-fn to_bgra(sample: &IMFSample, (w, h): (u32, u32)) -> Option<Frame> {
+/// Row order of the reader's RGB32 output. The video processor of the source reader writes
+/// top-down pictures and says so with a positive `MF_MT_DEFAULT_STRIDE`; only a negative stride
+/// means bottom-up. (Treating a missing stride as bottom-up, as the RGB default in the docs
+/// suggests, turned the picture upside down.)
+fn stride_is_bottom_up(stride: Option<i32>) -> bool {
+    stride.is_some_and(|s| s < 0)
+}
+
+fn to_bgra(sample: &IMFSample, (w, h): (u32, u32), bottom_up: bool) -> Option<Frame> {
     if w == 0 || h == 0 {
         return None;
     }
@@ -323,7 +339,12 @@ fn to_bgra(sample: &IMFSample, (w, h): (u32, u32)) -> Option<Frame> {
     let mut data = vec![0u8; row * h as usize];
     // SAFETY: the buffer is locked while rows inside its pitch are copied.
     unsafe {
-        let buf = sample.ConvertToContiguousBuffer().ok()?;
+        // The sample's own buffer first: a 2D buffer states the row order itself (Lock2D hands
+        // out the top row and a signed pitch); the contiguous copy may lose that interface.
+        let buf = match sample.GetBufferCount() {
+            Ok(1) => sample.GetBufferByIndex(0).ok()?,
+            _ => sample.ConvertToContiguousBuffer().ok()?,
+        };
         if let Ok(b2) = buf.cast::<IMF2DBuffer>() {
             let mut scan0 = std::ptr::null_mut();
             let mut pitch = 0i32;
@@ -340,9 +361,9 @@ fn to_bgra(sample: &IMFSample, (w, h): (u32, u32)) -> Option<Frame> {
             let mut len = 0u32;
             buf.Lock(&mut p, None, Some(&mut len)).ok()?;
             if !p.is_null() && len as usize >= data.len() {
-                // RGB32 without a stride attribute is bottom-up.
                 for y in 0..h as usize {
-                    let src = p.add((h as usize - 1 - y) * row);
+                    let src_y = if bottom_up { h as usize - 1 - y } else { y };
+                    let src = p.add(src_y * row);
                     std::ptr::copy_nonoverlapping(src, data.as_mut_ptr().add(y * row), row);
                 }
             }
@@ -393,5 +414,13 @@ mod tests {
         assert_eq!((p.width, p.height), (1920, 1080));
         let p = pick(&list, 640, 360, 30).unwrap();
         assert_eq!((p.width, p.height), (1280, 720), "16:9 before 4:3");
+    }
+
+    #[test]
+    fn only_a_negative_stride_means_bottom_up() {
+        // The reader on PC-TA reports +5120 for 1280x720 RGB32 (top-down).
+        assert!(!stride_is_bottom_up(Some(5120)));
+        assert!(!stride_is_bottom_up(None));
+        assert!(stride_is_bottom_up(Some(-5120)));
     }
 }

@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-11-10
+
+Fix for the webcam forwarding of 0.1.8. Only the PC needs the update (it reads the webcam);
+"<Partner> aktualisieren" brings the laptop to the same version.
+
+### Fixed
+
+- **Webcam picture upside down on the laptop** (Teams, Camera app). The PC read the webcam's
+  pictures bottom-up although Windows hands them out top-down; it now follows the row order the
+  webcam states.
+
 ## [0.1.8] - 2026-11-10
 
 Release with everything since 0.1.6: the changes of the test builds 0.1.7-beta and 0.1.8-beta
@@ -363,7 +374,10 @@ code. Everything stays on your LAN: end-to-end encrypted, no cloud, no account, 
 - Install the same version on both devices.
 - Several hardware scenarios are not signed off yet, see [docs/testing.md](docs/testing.md).
 
-[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/auerth/desk_bridge/compare/v0.1.8...v0.1.9
+[0.1.8]: https://github.com/auerth/desk_bridge/compare/v0.1.6...v0.1.8
+[0.1.6]: https://github.com/auerth/desk_bridge/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/auerth/desk_bridge/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/auerth/desk_bridge/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/auerth/desk_bridge/compare/v0.1.2...v0.1.3

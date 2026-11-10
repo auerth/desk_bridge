@@ -11,7 +11,9 @@ fn bgra_frame(w: u32, h: u32, shade: u8, ts: u64) -> Frame {
     let mut data = vec![0u8; (w * h * 4) as usize];
     for (i, px) in data.chunks_exact_mut(4).enumerate() {
         let x = (i as u32 % w) as u8;
-        px.copy_from_slice(&[x.wrapping_add(shade), 128, 255 - x, 255]);
+        // green runs from 0 (top row) to 255 (bottom row): shows a picture turned upside down
+        let y = (i as u32 / w * 255 / (h - 1).max(1)) as u8;
+        px.copy_from_slice(&[x.wrapping_add(shade), y, 255 - x, 255]);
     }
     Frame {
         width: w,
@@ -94,7 +96,20 @@ fn webcam_pictures_roundtrip_through_the_camera_codecs() {
     let (b, g, r) = (data[o], data[o + 1], data[o + 2]);
     assert!(g.abs_diff(128) < 16, "green {g}");
     assert!(b.abs_diff(192) < 16 && r.abs_diff(63) < 16, "b {b} r {r}");
-    println!("encoder {}, decoder {}, centre bgr ({b},{g},{r})", enc.describe(), dec.name());
+    // the right way up: dark green at the top, bright green at the bottom
+    let (top, bottom) = (
+        data[20 * stride + 640 * 4 + 1],
+        data[700 * stride + 640 * 4 + 1],
+    );
+    assert!(
+        top < 32 && bottom > 223,
+        "upside down? top green {top}, bottom green {bottom}"
+    );
+    println!(
+        "encoder {}, decoder {}, centre bgr ({b},{g},{r})",
+        enc.describe(),
+        dec.name()
+    );
 }
 
 #[test]
