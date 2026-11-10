@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+### Fixed
+
+- **Update stopped at "deskbridge_vcam.dll" ("Error opening file for writing")** on a device
+  where an app had used "Desk Bridge Kamera": the Windows camera service keeps the camera DLL
+  loaded. The installer now moves the loaded DLL aside (`deskbridge_vcam.dll.<n>.old`) and copies
+  the new one; the old file is deleted at the next restart, by the agent or by the next update.
+  The uninstaller removes a still-loaded DLL at the next restart.
+
 ## [0.1.9] - 2026-11-10
 
 Fix for the webcam forwarding of 0.1.8. Only the PC needs the update (it reads the webcam);

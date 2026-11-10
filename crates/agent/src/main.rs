@@ -71,6 +71,40 @@ fn camera_dll() -> Option<std::path::PathBuf> {
     Some(exe.parent()?.join(deskbridge_camera::VCAM_DLL))
 }
 
+/// Deletes `deskbridge_vcam.dll.<n>.old` next to this executable: an update renames the camera
+/// DLL aside while the Windows camera service still has it loaded (installer/hooks.nsh). Files
+/// that are still loaded, or that this process may not delete, stay for the next start.
+#[cfg(windows)]
+fn remove_stale_camera_dlls() {
+    let Some(dir) = camera_dll().and_then(|d| d.parent().map(std::path::Path::to_path_buf)) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let prefix = format!("{}.", deskbridge_camera::VCAM_DLL);
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if is_stale_camera_dll(&name, &prefix) {
+            match std::fs::remove_file(e.path()) {
+                Ok(()) => tracing::info!("removed old camera DLL {name}"),
+                Err(err) => tracing::debug!("old camera DLL {name} stays: {err}"),
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn is_stale_camera_dll(name: &str, prefix: &str) -> bool {
+    name.len() > prefix.len() + 4
+        && name
+            .get(..prefix.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(prefix))
+        && name
+            .get(name.len() - 4..)
+            .is_some_and(|s| s.eq_ignore_ascii_case(".old"))
+}
+
 /// `--register-camera` / `--unregister-camera` (installer, administrator).
 #[cfg(windows)]
 fn camera_cmd(register: bool) -> i32 {
@@ -289,6 +323,9 @@ fn run_agent() -> i32 {
         // Target device: a crashed predecessor may have left injected keys pressed.
         secure::release_stuck_keys();
     }
+    if custom_root.is_none() {
+        remove_stale_camera_dlls();
+    }
     if config.device.stream_source && custom_root.is_none() {
         ensure_virtual_camera();
     }
@@ -449,4 +486,20 @@ fn run_engine(run: EngineRun) -> i32 {
         }
         0
     })
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::is_stale_camera_dll;
+
+    #[test]
+    fn only_moved_aside_camera_dlls_are_stale() {
+        let p = "deskbridge_vcam.dll.";
+        assert!(is_stale_camera_dll("deskbridge_vcam.dll.1.old", p));
+        assert!(is_stale_camera_dll("DESKBRIDGE_VCAM.DLL.12.OLD", p));
+        assert!(!is_stale_camera_dll("deskbridge_vcam.dll", p));
+        assert!(!is_stale_camera_dll("deskbridge_vcam.dll.old", p));
+        assert!(!is_stale_camera_dll("deskbridge-agent.exe", p));
+        assert!(!is_stale_camera_dll("deskbridge_vcam.dll.1.öld", p));
+    }
 }

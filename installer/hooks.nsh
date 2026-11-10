@@ -23,6 +23,7 @@
 !define DB_AGENT_EXE "deskbridge-agent.exe"
 !define DB_SERVICE_EXE "deskbridge-service.exe"
 !define DB_TASK_NAME "DeskBridge Agent"
+!define DB_VCAM_DLL "deskbridge_vcam.dll"
 
 Var DbPayloadDir
 Var DbPurgeArg
@@ -99,10 +100,58 @@ Var DbPurgeArg
   ; Tauri's own CheckIfAppIsRunning right after this hook then finds nothing left to close.
 !macroend
 
+; Deletes $R0 at the next restart (MoveFileEx, MOVEFILE_DELAY_UNTIL_REBOOT). Unlike
+; `Delete /REBOOTOK` this does not set the reboot flag, so nobody is asked to restart now.
+!macro DeskBridgeDeleteAtRestart
+  System::Call 'kernel32::MoveFileExW(w "$R0", p 0, i 4) i .r0'
+!macroend
+
+; The virtual camera DLL (ADR 0009) is loaded by the Windows camera service (Frame Server,
+; svchost) whenever an app looked at "Desk Bridge Kamera" - it cannot be stopped like our own
+; processes, and Windows refuses to overwrite a loaded DLL ("Error opening file for writing").
+; A loaded DLL can be renamed, though: move it aside to deskbridge_vcam.dll.<n>.old, so the new
+; one can be copied to the registered path. The Frame Server keeps the old code until it unloads
+; it; the next load picks up the new file. The renamed file is deleted at the next restart, by
+; the agent once nothing has it loaded, or by the next install.
+!macro DeskBridgeMoveCameraDllAside
+  Push $R0
+  Push $R1
+  ; leftovers of earlier updates that are no longer loaded
+  FindFirst $R1 $R0 "$INSTDIR\${DB_VCAM_DLL}.*.old"
+  ${DoWhile} $R0 != ""
+    Delete "$INSTDIR\$R0"
+    FindNext $R1 $R0
+  ${Loop}
+  FindClose $R1
+  ${If} ${FileExists} "$INSTDIR\${DB_VCAM_DLL}"
+    ClearErrors
+    Delete "$INSTDIR\${DB_VCAM_DLL}"
+    ${If} ${Errors}
+      ; still loaded: free name deskbridge_vcam.dll.<n>.old
+      StrCpy $R1 1
+      ${While} ${FileExists} "$INSTDIR\${DB_VCAM_DLL}.$R1.old"
+        IntOp $R1 $R1 + 1
+      ${EndWhile}
+      ClearErrors
+      Rename "$INSTDIR\${DB_VCAM_DLL}" "$INSTDIR\${DB_VCAM_DLL}.$R1.old"
+      ${If} ${Errors}
+        DetailPrint "${DB_VCAM_DLL} is in use and could not be moved aside"
+      ${Else}
+        DetailPrint "${DB_VCAM_DLL} is in use by the camera service; moved aside, removed later"
+        StrCpy $R0 "$INSTDIR\${DB_VCAM_DLL}.$R1.old"
+        !insertmacro DeskBridgeDeleteAtRestart
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  Pop $R1
+  Pop $R0
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro DeskBridgeResolvePayload
   ; On first install nothing exists yet and every command above simply fails silently.
   !insertmacro DeskBridgeStopProcesses
+  !insertmacro DeskBridgeMoveCameraDllAside
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -183,6 +232,27 @@ Var DbPurgeArg
 
 !macro NSIS_HOOK_POSTUNINSTALL
   ${If} $UpdateMode <> 1
+    ; The camera DLL stays loaded by the camera service until it unloads it, so Tauri's Delete
+    ; may have failed: remove it (and moved-aside copies) at the next restart instead.
+    Push $R0
+    Push $R1
+    ${If} ${FileExists} "$INSTDIR\${DB_VCAM_DLL}"
+      StrCpy $R0 "$INSTDIR\${DB_VCAM_DLL}"
+      !insertmacro DeskBridgeDeleteAtRestart
+    ${EndIf}
+    FindFirst $R1 $R0 "$INSTDIR\${DB_VCAM_DLL}.*.old"
+    ${DoWhile} $R0 != ""
+      ClearErrors
+      Delete "$INSTDIR\$R0"
+      ${If} ${Errors}
+        StrCpy $R0 "$INSTDIR\$R0"
+        !insertmacro DeskBridgeDeleteAtRestart
+      ${EndIf}
+      FindNext $R1 $R0
+    ${Loop}
+    FindClose $R1
+    Pop $R1
+    Pop $R0
     ; Files that were not part of the bundle manifest and therefore not removed by Tauri.
     Delete "$INSTDIR\installed.json"
     Delete "$INSTDIR\installed.json.tmp"
