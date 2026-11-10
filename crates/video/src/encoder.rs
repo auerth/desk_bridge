@@ -19,12 +19,12 @@ use deskbridge_platform_windows::video::{
     ConvKind, GpuFrame, VpConverter, device_adapter_info, enable_multithread_protection,
 };
 use ffmpeg_next::ffi;
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_READ, D3D11_MAP_READ,
     D3D11_MAPPED_SUBRESOURCE, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING,
     ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
 };
-use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{IDXGIAdapter, IDXGIDevice};
 use windows::core::Interface;
@@ -825,8 +825,13 @@ unsafe fn readback_nv12(
     f: *mut ffi::AVFrame,
     size: (u32, u32),
 ) -> Result<()> {
-    rb.vp
-        .blt(&g.texture, g.subresource, &rb.nv12, 0, Some(fit_rect((g.width, g.height), size)))?;
+    rb.vp.blt(
+        &g.texture,
+        g.subresource,
+        &rb.nv12,
+        0,
+        Some(fit_rect((g.width, g.height), size)),
+    )?;
     let dst: ID3D11Resource = rb
         .staging
         .cast()

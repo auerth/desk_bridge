@@ -61,8 +61,11 @@ impl PartnerUpdate {
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf));
-        let own_installer =
-            find_own_installer(exe_dir.as_deref(), updates_dir, crate::brand::PACKAGE_VERSION);
+        let own_installer = find_own_installer(
+            exe_dir.as_deref(),
+            updates_dir,
+            crate::brand::PACKAGE_VERSION,
+        );
         // Received packages are ~250 MB each: keep only what can still be used.
         let kept_by_setup = own_installer
             .as_deref()
@@ -422,9 +425,8 @@ impl Engine {
         });
         // An older partner does not know `install` yet and asks its user, and so does every
         // partner for another build of its own version number.
-        let confirm = !install
-            || !self.peer_has_cap(deskbridge_proto::caps::UPDATE_REMOTE)
-            || other;
+        let confirm =
+            !install || !self.peer_has_cap(deskbridge_proto::caps::UPDATE_REMOTE) || other;
         Ok(json!({ "offered": true, "confirm_on_partner": confirm }))
     }
 
@@ -828,7 +830,10 @@ mod tests {
         assert!(other_build(a, b));
         assert!(other_build(a, "0.1.8-beta"), "partner without the hash");
         assert!(!other_build(a, a));
-        assert!(!other_build("0.1.9-1a2b3c4-beta", b), "a newer number is an upgrade");
+        assert!(
+            !other_build("0.1.9-1a2b3c4-beta", b),
+            "a newer number is an upgrade"
+        );
         // the setting allows upgrades only; asking for it on this device is enough
         assert_eq!(remote_install_decision(a, b, true, false), Ask);
         assert_eq!(remote_install_decision(a, b, false, true), Install);

@@ -31,7 +31,11 @@ pub async fn agent_request(
                 .get("elevated")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            client.hold_starts(std::time::Duration::from_secs(if elevated { 120 } else { 15 }));
+            client.hold_starts(std::time::Duration::from_secs(if elevated {
+                120
+            } else {
+                15
+            }));
         }
         "shutdown_agent" => client.hold_starts(std::time::Duration::from_secs(15)),
         _ => {}

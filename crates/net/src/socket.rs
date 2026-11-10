@@ -1,4 +1,4 @@
-﻿//! UDP socket under the QUIC endpoint: quinn's socket plus a plain `send_to` fallback.
+//! UDP socket under the QUIC endpoint: quinn's socket plus a plain `send_to` fallback.
 //!
 //! quinn-udp sends every datagram with control messages (the source address as `IP_PKTINFO`,
 //! the ECN bits) and only logs a failed send. On the laptop, after a resume from sleep, Windows
@@ -78,8 +78,7 @@ impl FallbackSocket {
                 Err(e) => {
                     let now = Instant::now();
                     let mut s = self.state.lock();
-                    if s
-                        .last_plain_error_log
+                    if s.last_plain_error_log
                         .is_none_or(|l| now.duration_since(l) >= LOG_INTERVAL)
                     {
                         s.last_plain_error_log = Some(now);
@@ -210,7 +209,14 @@ mod tests {
         assert_eq!(&buf[..n], b"hello");
 
         // the next send skips the control messages right away
-        send(&tx, &Transmit { contents: b"again", ..t }).await;
+        send(
+            &tx,
+            &Transmit {
+                contents: b"again",
+                ..t
+            },
+        )
+        .await;
         let n = tokio::time::timeout(Duration::from_secs(2), rx.recv(&mut buf))
             .await
             .expect("second datagram arrives")
