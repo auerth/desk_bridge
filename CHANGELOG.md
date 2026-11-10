@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-10
+
+Release with everything since 0.1.6: the changes of the test builds 0.1.7-beta and 0.1.8-beta
+below, plus the webcam forwarding and the VPN warning. Install it on both devices (on a device
+with 0.1.8-beta it is an update); after installing it on the PC, "<Partner> aktualisieren"
+updates the laptop over the connection. For the webcam the laptop needs Windows 11 and Desk
+Bridge running as administrator once.
+
 ### Added
 
 - **The PC's webcam on the laptop.** The webcam at the PC appears on the laptop as the camera
