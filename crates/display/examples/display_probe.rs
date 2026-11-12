@@ -61,6 +61,7 @@ fn cmd_plan(args: &[String]) {
     };
     let opts = PlanOptions {
         even_widths: has(args, "--even"),
+        ..PlanOptions::default()
     };
     match plan_focus(mode, layout, opts) {
         Ok(p) => {

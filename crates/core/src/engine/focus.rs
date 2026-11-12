@@ -545,6 +545,14 @@ impl Engine {
             .clone();
         let hz = (mon.refresh_mhz / 1000).max(30);
         let (layout, mode_name) = layout_of(&self.cfg);
+        // The split window is a side AppBar, which the shell keeps clear of the taskbar: plan
+        // the laptop picture for exactly that height so it is shown 1:1 instead of scaled.
+        let split_band = self
+            .platform
+            .screens
+            .work_area(&mon)
+            .map(|(_, wy, _, wh)| ((wy - mon.y).max(0) as u32, wh))
+            .filter(|&(_, wh)| wh < mon.h);
         let plan = plan_focus(
             Mode {
                 width: mon.w,
@@ -554,9 +562,20 @@ impl Engine {
             layout,
             // Odd widths (3413/1707) were rounded differently by the encoder negotiation, so
             // stream, virtual mode and pointer region disagreed by a pixel.
-            PlanOptions { even_widths: true },
+            PlanOptions {
+                even_widths: true,
+                split_band,
+            },
         )
         .map_err(|e| format!("Monitormodus nicht nutzbar: {e}"))?;
+        if matches!(layout, FocusLayout::Split { .. }) {
+            tracing::info!(
+                stream = %format!("{}x{}", plan.virtual_mode.width, plan.virtual_mode.height),
+                region = ?plan.viewer_region,
+                work_band = ?split_band,
+                "focus split plan"
+            );
+        }
         let want_fps = if self.cfg.focus.fps == 0 {
             plan.virtual_mode.hz
         } else {

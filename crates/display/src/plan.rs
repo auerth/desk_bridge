@@ -109,6 +109,12 @@ pub struct PlanOptions {
     /// Round split widths to even numbers (3414 + 1706 instead of 3413 + 1707). Needed when the
     /// driver or the video encoder rejects odd widths (ADR 0004: untested on hardware).
     pub even_widths: bool,
+    /// Vertical band of the monitor the split region may use, `(offset from the top, height)`:
+    /// the PC's work area. A side AppBar never covers the taskbar, so the shell trims the viewer
+    /// window to this band; a picture planned for the full height was then scaled down
+    /// (2560x1440 into 2560x1392 = blurry text). `None` = the full monitor height. Ignored in
+    /// full mode and when it does not fit the monitor.
+    pub split_band: Option<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -183,9 +189,8 @@ pub fn plan_focus(
 ) -> Result<FocusPlan, PlanError> {
     validate(pc_mode)?;
     let h = pc_mode.height;
-    let (virtual_w, region, pc_region) = match layout {
+    let (region, pc_region) = match layout {
         FocusLayout::Full => (
-            pc_mode.width,
             Rect {
                 x: 0,
                 y: 0,
@@ -204,9 +209,22 @@ pub fn plan_focus(
                 Side::Left => (0, w as i32),
                 Side::Right => (rest as i32, 0),
             };
+            // Even height: the encoder rounds odd sizes down, and a stream one pixel off the
+            // virtual mode is scaled again. The window is then at most one pixel taller.
+            let (vy, vh) = opts
+                .split_band
+                .map(|(top, bh)| (top, bh & !1))
+                .filter(|&(top, bh)| {
+                    bh >= MIN_DIM && u64::from(top) + u64::from(bh) <= u64::from(h)
+                })
+                .unwrap_or((0, h));
             (
-                w,
-                Rect { x: vx, y: 0, w, h },
+                Rect {
+                    x: vx,
+                    y: vy as i32,
+                    w,
+                    h: vh,
+                },
                 Some(Rect {
                     x: px,
                     y: 0,
@@ -219,9 +237,10 @@ pub fn plan_focus(
     Ok(FocusPlan {
         layout,
         pc_mode,
+        // 1:1 with the viewer window: any difference is scaled on the PC.
         virtual_mode: Mode {
-            width: virtual_w,
-            height: h,
+            width: region.w,
+            height: region.h,
             hz: pc_mode.hz,
         },
         viewer_region: region,
@@ -377,6 +396,49 @@ mod tests {
     }
 
     #[test]
+    fn split_uses_the_work_area_band() {
+        let split = FocusLayout::Split {
+            side: Side::Right,
+            share: SplitShare::Half,
+        };
+        // Taskbar at the bottom (48 px): the shell trims the AppBar to 1392 rows, the laptop
+        // gets exactly that, so the picture is shown 1:1.
+        let opts = PlanOptions {
+            even_widths: true,
+            split_band: Some((0, 1392)),
+        };
+        let p = plan_focus(UW, split, opts).unwrap();
+        assert_eq!(p.virtual_mode, m(2560, 1392, 120));
+        assert_eq!(
+            p.viewer_region,
+            Rect {
+                x: 2560,
+                y: 0,
+                w: 2560,
+                h: 1392
+            }
+        );
+        // Taskbar at the top, odd height: offset kept, height rounded down to even.
+        let top = PlanOptions {
+            split_band: Some((40, 1399)),
+            ..opts
+        };
+        let p = plan_focus(UW, split, top).unwrap();
+        assert_eq!((p.viewer_region.y, p.viewer_region.h), (40, 1398));
+        assert_eq!(p.virtual_mode.height, 1398);
+        // A band that does not fit the monitor, or full mode: full height.
+        for bad in [Some((100, 1400)), Some((0, 100)), None] {
+            let o = PlanOptions {
+                split_band: bad,
+                ..opts
+            };
+            assert_eq!(plan_focus(UW, split, o).unwrap().virtual_mode.height, 1440);
+        }
+        let full = plan_focus(UW, FocusLayout::Full, opts).unwrap();
+        assert_eq!(full.virtual_mode, UW);
+    }
+
+    #[test]
     fn even_widths_option() {
         let p = plan_focus(
             UW,
@@ -384,7 +446,10 @@ mod tests {
                 side: Side::Left,
                 share: SplitShare::TwoThirds,
             },
-            PlanOptions { even_widths: true },
+            PlanOptions {
+                even_widths: true,
+                ..PlanOptions::default()
+            },
         )
         .unwrap();
         assert_eq!(p.virtual_mode.width, 3414);
@@ -395,7 +460,10 @@ mod tests {
                 side: Side::Right,
                 share: SplitShare::OneThird,
             },
-            PlanOptions { even_widths: true },
+            PlanOptions {
+                even_widths: true,
+                ..PlanOptions::default()
+            },
         )
         .unwrap();
         assert_eq!(one.virtual_mode.width, 1706);
@@ -431,7 +499,10 @@ mod tests {
                     let p = plan_focus(
                         UW,
                         FocusLayout::Split { side, share },
-                        PlanOptions { even_widths: even },
+                        PlanOptions {
+                            even_widths: even,
+                            ..PlanOptions::default()
+                        },
                     )
                     .unwrap();
                     assert!(p.driver_modes.contains(&p.virtual_mode));

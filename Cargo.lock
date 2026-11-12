@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "desk-bridge-app"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "directories",
  "serde",
@@ -950,7 +950,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-agent"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "deskbridge-camera",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-audio"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "audiopus_sys",
  "bytes",
@@ -983,14 +983,14 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-camera"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "windows 0.58.0",
 ]
 
 [[package]]
 name = "deskbridge-clipboard"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "blake3",
  "deskbridge-files",
@@ -1004,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-core"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-display"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "deskbridge-platform",
  "deskbridge-platform-windows",
@@ -1056,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-files"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "blake3",
  "deskbridge-proto",
@@ -1071,7 +1071,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-input"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "deskbridge-platform",
  "deskbridge-proto",
@@ -1082,7 +1082,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-net"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1111,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-platform"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1121,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-platform-windows"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "deskbridge-camera",
  "deskbridge-display",
@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-proto"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "bytes",
  "prost",
@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-service"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "deskbridge-platform",
  "deskbridge-platform-windows",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-setup"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -1180,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-vcam"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "deskbridge-camera",
  "windows 0.58.0",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "deskbridge-video"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "deskbridge-platform",
  "deskbridge-platform-windows",
@@ -1469,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "fake-peer"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "deskbridge-core",
@@ -2508,7 +2508,7 @@ dependencies = [
 
 [[package]]
 name = "latency-probe"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "deskbridge-core",
@@ -5414,7 +5414,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "video-spike"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "deskbridge-platform",

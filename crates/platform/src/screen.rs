@@ -43,4 +43,9 @@ pub trait ScreenProvider: Send + Sync {
     fn cursor_pos(&self) -> Point;
     /// Notifies when the display configuration changes (monitor plugged, resolution, DPI).
     fn watch(&self, tx: UnboundedSender<()>) -> Result<()>;
+    /// The part of `screen` not reserved by the taskbar and other AppBars (the work area), in
+    /// the same physical pixels as `screen`, as `(x, y, w, h)`. `None` = unknown.
+    fn work_area(&self, _screen: &ScreenInfo) -> Option<(i32, i32, u32, u32)> {
+        None
+    }
 }

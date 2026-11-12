@@ -316,6 +316,70 @@ fn read_raw_screens() -> Vec<RawScreen> {
     out
 }
 
+/// Work area of the monitor `s` describes (matched by its physical position and size).
+///
+/// `rcMonitor`/`rcWork` are in the coordinates of the calling thread's DPI awareness, `s` in
+/// physical pixels: the work area is mapped through the monitor rectangle, so both agree.
+fn work_area_of(s: &ScreenInfo) -> Option<(i32, i32, u32, u32)> {
+    let mut mons: Vec<HMONITOR> = Vec::new();
+    // SAFETY: the callback only pushes into `mons`, which outlives the call.
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            HDC::default(),
+            None,
+            Some(monitor_enum),
+            LPARAM((&mut mons as *mut Vec<HMONITOR>) as isize),
+        );
+    }
+    for hmon in mons {
+        let mut mi = MONITORINFOEXW::default();
+        mi.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
+        // SAFETY: MONITORINFOEXW starts with a MONITORINFO and cbSize announces the full size.
+        let ok = unsafe {
+            GetMonitorInfoW(hmon, (&mut mi as *mut MONITORINFOEXW).cast::<MONITORINFO>())
+        };
+        if !ok.as_bool() {
+            continue;
+        }
+        let mut dm = DEVMODEW {
+            dmSize: size_of::<DEVMODEW>() as u16,
+            ..Default::default()
+        };
+        // SAFETY: `mi.szDevice` is NUL-terminated; `dm` has dmSize set.
+        if !unsafe {
+            EnumDisplaySettingsW(PCWSTR(mi.szDevice.as_ptr()), ENUM_CURRENT_SETTINGS, &mut dm)
+        }
+        .as_bool()
+        {
+            continue;
+        }
+        // SAFETY: the display variant of the DEVMODE union is the active one for displays.
+        let pos = unsafe { dm.Anonymous1.Anonymous2.dmPosition };
+        if (pos.x, pos.y, dm.dmPelsWidth, dm.dmPelsHeight) != (s.x, s.y, s.w, s.h) {
+            continue;
+        }
+        return map_work_area(mi.monitorInfo.rcMonitor, mi.monitorInfo.rcWork, s);
+    }
+    None
+}
+
+/// Maps `work` (inside `monitor`, both in one coordinate space) onto the physical `s`.
+fn map_work_area(monitor: RECT, work: RECT, s: &ScreenInfo) -> Option<(i32, i32, u32, u32)> {
+    let (mw, mh) = (monitor.right - monitor.left, monitor.bottom - monitor.top);
+    if mw <= 0 || mh <= 0 || work.right <= work.left || work.bottom <= work.top {
+        return None;
+    }
+    let sx = |v: i32| (i64::from(v - monitor.left) * i64::from(s.w) / i64::from(mw)) as i32;
+    let sy = |v: i32| (i64::from(v - monitor.top) * i64::from(s.h) / i64::from(mh)) as i32;
+    let (l, t, r, b) = (
+        sx(work.left).clamp(0, s.w as i32),
+        sy(work.top).clamp(0, s.h as i32),
+        sx(work.right).clamp(0, s.w as i32),
+        sy(work.bottom).clamp(0, s.h as i32),
+    );
+    (r > l && b > t).then(|| (s.x + l, s.y + t, (r - l) as u32, (b - t) as u32))
+}
+
 fn snapshot() -> Vec<ScreenInfo> {
     let raw = read_raw_screens();
     let mut guard = IDS.lock();
@@ -411,6 +475,10 @@ impl ScreenProvider for WinScreenProvider {
         snapshot()
     }
 
+    fn work_area(&self, screen: &ScreenInfo) -> Option<(i32, i32, u32, u32)> {
+        work_area_of(screen)
+    }
+
     fn cursor_pos(&self) -> Point {
         let mut p = POINT::default();
         // SAFETY: valid out pointer.
@@ -489,6 +557,41 @@ impl Drop for WinScreenProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn work_area_maps_onto_physical_pixels() {
+        let s = ScreenInfo {
+            id: 0,
+            x: -5120,
+            y: 0,
+            w: 5120,
+            h: 1440,
+            dpi: 96,
+            refresh_mhz: 120_000,
+            primary: false,
+            name: String::new(),
+        };
+        let rect = |left, top, right, bottom| RECT {
+            left,
+            top,
+            right,
+            bottom,
+        };
+        // DPI aware: same coordinates, taskbar at the bottom.
+        assert_eq!(
+            map_work_area(rect(-5120, 0, 0, 1440), rect(-5120, 0, 0, 1392), &s),
+            Some((-5120, 0, 5120, 1392))
+        );
+        // Not DPI aware at 150 %: logical coordinates are scaled back.
+        assert_eq!(
+            map_work_area(rect(-3413, 0, 0, 960), rect(-3413, 32, 0, 960), &s),
+            Some((-5120, 48, 5120, 1392))
+        );
+        assert_eq!(
+            map_work_area(rect(0, 0, 0, 0), rect(0, 0, 10, 10), &s),
+            None
+        );
+    }
 
     fn raw(key: &str, x: i32, y: i32, primary: bool) -> RawScreen {
         RawScreen {
@@ -577,6 +680,10 @@ mod tests {
             assert!((48..=960).contains(&s.dpi), "{s:?}");
             assert!((24_000..=1_000_000).contains(&s.refresh_mhz), "{s:?}");
             assert!(!s.name.is_empty());
+            // The work area is found and lies on the monitor.
+            let (wx, wy, ww, wh) = p.work_area(s).expect("work area");
+            assert!(wx >= s.x && wy >= s.y && ww <= s.w && wh <= s.h, "{s:?}");
+            eprintln!("work area of {}: {wx},{wy} {ww}x{wh}", s.id);
         }
         eprintln!("screens: {screens:#?}");
         // Ids are stable across calls.

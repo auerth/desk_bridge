@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-11-12
+
+Sharper split mode and a fix for updates over a used webcam. Only the PC needs the update for
+the split fix; "<Partner> aktualisieren" brings the laptop to the same version.
+
 ### Fixed
 
 - **Update stopped at "deskbridge_vcam.dll" ("Error opening file for writing")** on a device
@@ -13,6 +18,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it re
   loaded. The installer now moves the loaded DLL aside (`deskbridge_vcam.dll.<n>.old`) and copies
   the new one; the old file is deleted at the next restart, by the agent or by the next update.
   The uninstaller removes a still-loaded DLL at the next restart.
+- **Blurry picture in split mode.** The split window is an AppBar, which Windows keeps clear of
+  the taskbar, so it was 1392 instead of 1440 pixels high on a 5120x1440 monitor; the laptop's
+  2560x1440 picture was scaled down into it (2475x1392 with black bars), which made text
+  blurry. The laptop's virtual monitor is now planned for the height left next to the taskbar
+  (2560x1392 there) and shown 1:1. Only the PC needs the update.
 
 ## [0.1.9] - 2026-11-10
 
@@ -382,7 +392,8 @@ code. Everything stays on your LAN: end-to-end encrypted, no cloud, no account, 
 - Install the same version on both devices.
 - Several hardware scenarios are not signed off yet, see [docs/testing.md](docs/testing.md).
 
-[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/auerth/desk_bridge/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/auerth/desk_bridge/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/auerth/desk_bridge/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/auerth/desk_bridge/compare/v0.1.6...v0.1.8
 [0.1.6]: https://github.com/auerth/desk_bridge/compare/v0.1.5...v0.1.6
